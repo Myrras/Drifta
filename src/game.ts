@@ -195,6 +195,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           drift,
           handbrake: s.handbrake,
           fade: s.fade,
+          blend: null,
           shake: s.shake,
           runId: s.runId,
         },

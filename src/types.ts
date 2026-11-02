@@ -28,11 +28,34 @@ export interface Floor {
   bays: Rect[];
   lights: Vec[];
   ramps: Ramp[];
+  /** round solids, e.g. helix cores */
+  circles: Circle[];
+}
+export interface Circle {
+  x: number;
+  y: number;
+  r: number;
+}
+/**
+ * Half-circle ramp around a round core joining floor `from` (upper) to `from + 1`.
+ * Same world position on both floors. Polar angles use the heading convention
+ * (0 = +x, positive = clockwise on screen). Progress p = (polar(car) - enterAngle) / sweep, 0..1.
+ * The floor switches at p = 0.5.
+ */
+export interface Helix {
+  from: number;
+  center: Vec;
+  rCore: number;
+  rOuter: number;
+  enterAngle: number;
+  /** signed, normally +PI or -PI: direction of travel around the center */
+  sweep: number;
 }
 export interface GameMap {
   name: string;
   parTime: number;
   floors: Floor[];
+  helixes: Helix[];
   start: { floor: number } & Spawn;
   finish: { floor: number; zone: Rect };
 }
