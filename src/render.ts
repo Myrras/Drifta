@@ -1,6 +1,6 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
 import type { CarState, Floor, GameMap, Helix, Rect, Vec } from './types';
-import { garageRoute } from './maps/garage';
+import { garage, garageRoute } from './maps/garage';
 import type { RenderView } from './view';
 
 // --- visual tuning ---
@@ -310,7 +310,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   g.stroke();
 
   // lane arrows: every ~14 m along this floor's route, in travel direction, clear of obstacles
-  const route = garageRoute.find((r) => r.floor === idx)?.points ?? [];
+  const route = map === garage ? (garageRoute.find((r) => r.floor === idx)?.points ?? []) : [];
   const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const blocked = (p: Vec) =>
     p.x < 1 ||
