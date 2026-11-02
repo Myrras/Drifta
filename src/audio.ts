@@ -1,6 +1,8 @@
 import type { CarState, DriftInfo } from './types';
+import { engineRpm } from './engine';
+import engineWorkletUrl from './engineWorklet.ts?worker&url';
 
-const FILES = { engine: 'engine.ogg', squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
+const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
 /** Loop window [startSec, endSec] of `seconds` with high, steady RMS (50 ms blocks). */
@@ -40,7 +42,8 @@ export function createAudio() {
   let master: GainNode;
   let engGain: GainNode;
   let sqGain: GainNode;
-  let engSrc: AudioBufferSourceNode | null = null;
+  let engNode: AudioWorkletNode | null = null;
+  let lastPost = -1;
   let sqSrc: AudioBufferSourceNode | null = null;
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
@@ -65,7 +68,6 @@ export function createAudio() {
       if (!res.ok) return;
       const buf = await ctx!.decodeAudioData(await res.arrayBuffer());
       bufs[name] = buf;
-      if (name === 'engine') engSrc = loop(buf, engGain);
       if (name === 'squeal')
         sqSrc = loop(buf, sqGain, pickLoopWindow(buf.getChannelData(0), buf.sampleRate, 2));
     } catch {
@@ -83,16 +85,23 @@ export function createAudio() {
     master = c.createGain();
     master.gain.value = 0.5;
     master.connect(c.destination);
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 4000;
-    lp.connect(master);
     engGain = c.createGain();
     engGain.gain.value = 0;
-    engGain.connect(lp);
+    engGain.connect(master);
     sqGain = c.createGain();
     sqGain.gain.value = 0;
     sqGain.connect(master);
+  }
+
+  async function startEngine(): Promise<void> {
+    try {
+      if (!ctx?.audioWorklet) return; // no worklet support: engine stays silent
+      await ctx.audioWorklet.addModule(engineWorkletUrl);
+      engNode = new AudioWorkletNode(ctx, 'engine', { numberOfInputs: 0, outputChannelCount: [1] });
+      engNode.connect(engGain);
+    } catch {
+      engNode = null;
+    }
   }
 
   function set(p: AudioParam, v: number, tc: number): void {
@@ -125,6 +134,7 @@ export function createAudio() {
         if (ctx.state === 'suspended') void ctx.resume();
         if (!started) {
           started = true;
+          void startEngine();
           for (const n of Object.keys(FILES) as Name[]) void load(n);
         }
       } catch {
@@ -133,9 +143,10 @@ export function createAudio() {
     },
     update(car: CarState, drift: DriftInfo, throttle: number): void {
       if (!ctx) return;
-      if (engSrc) {
-        set(engSrc.playbackRate, 0.7 + car.rpm * 1.3, 0.08);
-        set(engGain.gain, 0.15 + throttle * 0.25, 0.05);
+      if (engNode && ctx.currentTime - lastPost >= 1 / 60) {
+        lastPost = ctx.currentTime;
+        engNode.port.postMessage({ rpm: engineRpm(car.rpm), throttle });
+        set(engGain.gain, 0.35, 0.05);
       }
       if (sqSrc) {
         const slip = Math.min(Math.abs(drift.slip) / 0.6, 1);
