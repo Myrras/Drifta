@@ -16,7 +16,7 @@ const best = {
   get() {
     try {
       const n = Number(localStorage.getItem(BEST_SCORE_KEY));
-      return Number.isNaN(n) ? 0 : n;
+      return Math.max(mem, Number.isNaN(n) ? 0 : n);
     } catch {
       return mem;
     }
