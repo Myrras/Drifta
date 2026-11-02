@@ -20,8 +20,6 @@ const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
-const STEER_EDGE = 0.5;
-
 export function createGame(
   maps: GameMap[],
   audio: AudioLike,
@@ -29,7 +27,6 @@ export function createGame(
 ) {
   let sel = 0;
   let map = maps[0];
-  let prevSteer = 0;
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   const fresh = () => ({
@@ -168,10 +165,7 @@ export function createGame(
       s.popups = s.popups.filter((p) => p.age <= POPUP_LIFE);
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
 
-      const dir =
-        (input.steer >= STEER_EDGE && prevSteer < STEER_EDGE ? 1 : 0) -
-        (input.steer <= -STEER_EDGE && prevSteer > -STEER_EDGE ? 1 : 0);
-      prevSteer = input.steer;
+      const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const toTitle = () => {
         audio.stop();
         Object.assign(s, fresh(), { phase: 'title' });

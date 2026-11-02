@@ -22,6 +22,8 @@ const IDLE: InputState = {
   pause: false,
   restart: false,
   confirm: false,
+  left: false,
+  right: false,
 };
 
 function memBest(v = 0): BestStore {
@@ -333,9 +335,9 @@ describe('menu', () => {
     const step = (input: Partial<InputState> = {}, n = 1) => {
       for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
     };
-    const tap = (steer: number) => {
-      step({ steer });
-      step({ steer: 0 });
+    const tap = (dir: number) => {
+      step(dir > 0 ? { right: true } : { left: true });
+      step();
     };
     return { game, step, tap };
   };

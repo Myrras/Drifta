@@ -135,12 +135,22 @@ export function createInput(
   const smooth = keyboardSmoother();
   let last = now();
   const held = new Set<string>();
-  const kbEdge = { pause: latchedEdge(), restart: latchedEdge(), confirm: latchedEdge() };
+  const kbEdge = {
+    pause: latchedEdge(),
+    restart: latchedEdge(),
+    confirm: latchedEdge(),
+    left: latchedEdge(),
+    right: latchedEdge(),
+  };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
     KeyR: kbEdge.restart,
     Enter: kbEdge.confirm,
     NumpadEnter: kbEdge.confirm,
+    KeyA: kbEdge.left,
+    ArrowLeft: kbEdge.left,
+    KeyD: kbEdge.right,
+    ArrowRight: kbEdge.right,
   };
   win.addEventListener('keydown', (e) => {
     if (!MAPPED.has(e.code)) return;
@@ -151,7 +161,13 @@ export function createInput(
   win.addEventListener('keyup', (e) => held.delete(e.code));
   win.addEventListener('blur', () => held.clear());
 
-  const padEdge = { pause: edgeTracker(), restart: edgeTracker(), confirm: edgeTracker() };
+  const padEdge = {
+    pause: edgeTracker(),
+    restart: edgeTracker(),
+    confirm: edgeTracker(),
+    left: edgeTracker(),
+    right: edgeTracker(),
+  };
 
   return {
     poll() {
@@ -169,6 +185,12 @@ export function createInput(
         pause: kbEdge.pause.poll(kbRaw.pause) || padEdge.pause(gp.pause),
         restart: kbEdge.restart.poll(kbRaw.restart) || padEdge.restart(gp.restart),
         confirm: kbEdge.confirm.poll(kbRaw.confirm) || padEdge.confirm(gp.confirm),
+        left:
+          kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')) ||
+          padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5),
+        right:
+          kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')) ||
+          padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5),
       };
     },
   };

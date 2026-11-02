@@ -46,7 +46,7 @@ document.addEventListener('visibilitychange', () => document.hidden && game.paus
 
 let last = performance.now();
 let acc = 0;
-const pending = { pause: false, restart: false, confirm: false };
+const pending = { pause: false, restart: false, confirm: false, left: false, right: false };
 function frame(now: number) {
   const frameDt = Math.min((now - last) / 1000, 0.25);
   last = now;
@@ -55,10 +55,12 @@ function frame(now: number) {
   pending.pause ||= s.pause;
   pending.restart ||= s.restart;
   pending.confirm ||= s.confirm;
+  pending.left ||= s.left;
+  pending.right ||= s.right;
   if (s.confirm) resume();
   while (acc >= DT) {
     game.update({ ...s, ...pending }, DT);
-    pending.pause = pending.restart = pending.confirm = false;
+    pending.pause = pending.restart = pending.confirm = pending.left = pending.right = false;
     acc -= DT;
   }
   const v = game.view();

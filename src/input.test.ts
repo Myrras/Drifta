@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createInput,
   deadzone,
   edgeTracker,
   keyboardSmoother,
@@ -95,5 +96,17 @@ describe('keyboard smoothing', () => {
   });
   it('clamps dt to 0.1s', () => {
     expect(run(keyboardSmoother(), { steer: 1 }, 5, 1).steer).toBeCloseTo(0.5);
+  });
+});
+
+describe('createInput left/right edges', () => {
+  it('a tap between polls fires once', () => {
+    const w = new EventTarget() as unknown as Window;
+    const input = createInput(w);
+    const key = (type: string) =>
+      w.dispatchEvent(Object.assign(new Event(type), { code: 'ArrowLeft', repeat: false }));
+    key('keydown');
+    key('keyup');
+    expect([input.poll().left, input.poll().left]).toEqual([true, false]);
   });
 });

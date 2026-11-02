@@ -11,6 +11,8 @@ const input = (o: Partial<InputState> = {}): InputState => ({
   pause: false,
   restart: false,
   confirm: false,
+  left: false,
+  right: false,
   ...o,
 });
 const speed = (c: CarState) => Math.hypot(c.vel.x, c.vel.y);

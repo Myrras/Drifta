@@ -70,6 +70,8 @@ export interface InputState {
   /** edge-triggered: true for one poll on press */ pause: boolean;
   restart: boolean;
   confirm: boolean;
+  /** edge-triggered: true for one poll on press */ left: boolean;
+  right: boolean;
 }
 /** rpm normalized 0..1 */
 export interface CarState {
