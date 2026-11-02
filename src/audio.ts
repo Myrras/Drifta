@@ -1,6 +1,6 @@
 import type { CarState, DriftInfo } from './types';
 
-const FILES = { engine: 'engine.ogg', squeal: 'squeal.ogg', hit: 'hit.ogg', bank: 'bank.ogg' };
+const FILES = { engine: 'engine.ogg', squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
 export function createAudio() {
