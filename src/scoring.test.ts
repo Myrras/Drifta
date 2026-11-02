@@ -135,4 +135,33 @@ describe('scoring', () => {
     expect(timeBonus(100, 60)).toBe(0);
     expect(timeBonus(50, 60)).toBe(1000);
   });
+
+  it('drift flicker adds no trick or multiplier', () => {
+    const s = createScoring();
+    run(s, F({ drifting: true }), 0.5);
+    const m = s.combo!.multiplier;
+    const n = s.combo!.tricks.length;
+    run(s, F(), 0.1);
+    const ev = run(s, F({ drifting: true }), 0.1);
+    expect(tricks(ev)).not.toContain('DRIFT');
+    expect(s.combo!.multiplier).toBe(m);
+    expect(s.combo!.tricks.length).toBe(n);
+  });
+
+  it('0.4 s gap same sign adds DRIFT', () => {
+    const s = createScoring();
+    run(s, F({ drifting: true }), 0.5);
+    run(s, F(), 0.4);
+    const ev = stepScoring(s, F({ drifting: true }), 0.1);
+    expect(tricks(ev)).toContain('DRIFT');
+  });
+
+  it('long drift survives a short flicker', () => {
+    const s = createScoring();
+    const a = run(s, F({ drifting: true }), 1.5, 0.5);
+    run(s, F(), 0.1);
+    const b = run(s, F({ drifting: true }), 1.0, 0.5);
+    expect(tricks([...a, ...b]).filter((t) => t === 'LONG DRIFT')).toHaveLength(1);
+    expect(tricks(b)).not.toContain('DRIFT');
+  });
 });

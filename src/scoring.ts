@@ -14,6 +14,7 @@ import {
 } from './config';
 
 const SWITCHBACK_WINDOW = 0.5; // s of non-drift gap that still counts as a switchback
+const DRIFT_REENTRY_GAP = 0.3; // s; shorter gaps are slip flicker, not a new drift
 const TWO_PI = Math.PI * 2;
 
 export interface Scoring extends ScoringState {
@@ -94,9 +95,13 @@ export function stepScoring(s: Scoring, f: ScoreFrame, dt: number): ScoreEvent[]
       ev.push({ type: 'trick', trick: 'DRIFT' });
       s.segTime = 0;
     } else if (!s.wasDrifting) {
-      s.segTime = 0;
-      if (flipped && s.gap < SWITCHBACK_WINDOW) addTrick(s, ev, 'SWITCHBACK', SWITCHBACK_BONUS);
-      else addTrick(s, ev, 'DRIFT');
+      if (flipped && s.gap < SWITCHBACK_WINDOW) {
+        s.segTime = 0;
+        addTrick(s, ev, 'SWITCHBACK', SWITCHBACK_BONUS);
+      } else if (s.gap >= DRIFT_REENTRY_GAP) {
+        s.segTime = 0;
+        addTrick(s, ev, 'DRIFT');
+      }
     } else if (flipped) {
       addTrick(s, ev, 'SWITCHBACK', SWITCHBACK_BONUS);
     }
