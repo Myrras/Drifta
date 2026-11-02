@@ -39,7 +39,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     resultsAge: 0,
   });
   let bestScore = best.get();
-  const s = { phase: 'title' as Phase, runId: 0, handbrake: false, ...fresh() };
+  const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
   const newRun = () => {
     audio.stop();
@@ -153,6 +153,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
   return {
     update(input: InputState, dt: number): void {
       s.handbrake = input.handbrake;
+      s.brake = input.brake;
       for (const p of s.popups) p.age += dt;
       s.popups = s.popups.filter((p) => p.age <= POPUP_LIFE);
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
@@ -207,6 +208,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           car,
           drift,
           handbrake: s.handbrake,
+          brake: s.brake,
           fade: 0,
           blend,
           shake: s.shake,

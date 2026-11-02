@@ -7,8 +7,17 @@ export interface Rect {
   w: number;
   h: number;
 }
+export type CarModel =
+  'civic' | 'supra' | 'rx7' | 'r32' | 's13' | '180sx' | 'ae86' | 'nsx' | 'evo4' | 'wrx';
 export interface Solid extends Rect {
   kind: SolidKind;
+  /** parked cars only */
+  model?: CarModel;
+  color?: string;
+  /** heading the nose points (rad, multiple of PI/2) */
+  facing?: number;
+  /** parked car lights: headlights on, or hazards blinking */
+  lights?: 'on' | 'hazard';
 }
 /** angle in radians, 0 = facing +x, positive = clockwise on screen (y down) */
 export interface Spawn {

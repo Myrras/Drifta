@@ -6,6 +6,8 @@ export interface RenderView {
   car: CarState;
   drift: DriftInfo;
   handbrake: boolean;
+  /** 0..1 brake input, for brake lights */
+  brake: number;
   /** 0 = clear, 1 = fully black (floor transition) */
   fade: number;
   /** helix crossfade: draw floorIndex blended toward toFloor by t (0..1); null when not in a helix */

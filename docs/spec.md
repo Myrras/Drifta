@@ -16,6 +16,10 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 - Score: banked combos + 100 per second under par. Best score in localStorage.
 - Flow: title → 3-2-1 → run → results (breakdown, NEW BEST). Esc/Start = pause, auto-pause on blur, R = restart.
 - HUD: timer + par, floor, combo string + multiplier + combo points, total score, speedometer. No minimap.
+- Map name: JAPAN GARAGE. Parked cars are 90s JDM models (Civic EG, Supra MK4, RX-7 FD, Skyline R32, Silvia S13, 180SX, AE86, NSX, Evo IV, Impreza WRX), recognizable top-down silhouettes, no badges/logos.
+- Lighting: dark garage, soft ceiling light pools (no fixtures drawn), player car pop-up headlight cones + tail/brake/reverse lights, ~1 in 5 parked cars with headlights on, some with blinking hazards.
+- Floor arrows: large painted garage arrows only before turns and at helix entries.
+- Engine: physically modelled 4-cylinder synth (firing pulses + exhaust resonance).
 - Look: flat vector, dark concrete, painted bays, fluorescent light patches, persistent tire marks per floor, smoke.
 - Audio: CC0 samples (engine loop pitched by rpm, tire squeal loop, hit, bank ding) in public/sounds, sources in CREDITS.md.
 - Input: keyboard (WASD/arrows, Space handbrake, R restart, Esc pause, Enter confirm) + gamepad standard mapping (left stick steer, RT throttle, LT brake/reverse, A handbrake, Start pause/confirm).
