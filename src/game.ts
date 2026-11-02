@@ -15,13 +15,23 @@ export interface BestStore {
 const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
 const POPUP_LIFE = 1.5; // s
 const SHAKE_DECAY = 3; // per s
-const RING_MARGIN = 0.5; // m beyond the ring still counted as inside
 const RAMP_DRIFT_MIN = 0.6; // fraction of the helix that must be drifted
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
-export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
+const STEER_EDGE = 0.5;
+
+export function createGame(
+  maps: GameMap[],
+  audio: AudioLike,
+  best: (mapName: string) => BestStore,
+) {
+  let sel = 0;
+  let map = maps[0];
+  let prevSteer = 0;
+  const stores = maps.map((m) => best(m.name));
+  const bests = stores.map((b) => b.get());
   const fresh = () => ({
     car: createCar(map.start),
     floorIndex: map.start.floor,
@@ -38,7 +48,6 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     results: null as Results | null,
     resultsAge: 0,
   });
-  let bestScore = best.get();
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
   const newRun = () => {
@@ -64,11 +73,11 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
   const smooth = (x: number) => x * x * (3 - 2 * x);
 
   /** progress along a helix; null if the car is outside the ring (with margin) */
-  function progress(h: Helix, margin: number): number | null {
+  function progress(h: Helix, margin: number, outer = margin): number | null {
     const dx = s.car.pos.x - h.center.x;
     const dy = s.car.pos.y - h.center.y;
     const r = Math.hypot(dx, dy);
-    if (r < h.rCore - margin || r > h.rOuter + margin) return null;
+    if (r < h.rCore - margin || r > h.rOuter + outer) return null;
     let d = Math.atan2(dy, dx) - h.enterAngle;
     d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
     return d / h.sweep;
@@ -90,7 +99,8 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
       return false;
     }
     const h = s.helix;
-    const raw = progress(h, RING_MARGIN);
+    // wide band: a wall bounce must not end the transition
+    const raw = progress(h, 2, 4);
     const period = (2 * Math.PI) / Math.abs(h.sweep); // p wraps every period
     let p = s.p;
     if (raw !== null) p = raw + Math.round((s.p - raw) / period) * period;
@@ -109,9 +119,9 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     const comboPoints = s.scoring.banked;
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
-    const newBest = total > bestScore;
-    if (newBest) best.set((bestScore = total));
-    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bestScore, newBest };
+    const newBest = total > bests[sel];
+    if (newBest) stores[sel].set((bests[sel] = total));
+    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bests[sel], newBest };
     s.phase = 'results';
     audio.stop();
   }
@@ -158,12 +168,26 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
       s.popups = s.popups.filter((p) => p.age <= POPUP_LIFE);
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
 
+      const dir =
+        (input.steer >= STEER_EDGE && prevSteer < STEER_EDGE ? 1 : 0) -
+        (input.steer <= -STEER_EDGE && prevSteer > -STEER_EDGE ? 1 : 0);
+      prevSteer = input.steer;
+      const toTitle = () => {
+        audio.stop();
+        Object.assign(s, fresh(), { phase: 'title' });
+      };
+
       if (input.restart && s.phase !== 'title') {
         newRun();
         return;
       }
       switch (s.phase) {
         case 'title':
+          if (dir) {
+            sel = (sel + dir + maps.length) % maps.length;
+            map = maps[sel];
+            Object.assign(s, fresh());
+          }
           if (input.confirm) {
             audio.resume();
             newRun();
@@ -180,11 +204,13 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           } else run(input, dt);
           break;
         case 'paused':
-          if (input.pause || input.confirm) s.phase = 'run';
+          if (input.pause) toTitle();
+          else if (input.confirm) s.phase = 'run';
           break;
         case 'results':
           s.resultsAge += dt;
-          if (input.confirm && s.resultsAge >= RESULTS_LOCKOUT) newRun();
+          if (input.pause) toTitle();
+          else if (input.confirm && s.resultsAge >= RESULTS_LOCKOUT) newRun();
           break;
       }
     },
@@ -225,7 +251,8 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           popups: s.popups,
           speedKmh: speed * 3.6,
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
-          best: bestScore,
+          best: bests[sel],
+          menu: s.phase === 'title' ? { items: maps.map((m) => m.name), selected: sel } : null,
           results: s.phase === 'results' ? s.results : null,
         },
       };
