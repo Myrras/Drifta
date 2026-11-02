@@ -41,6 +41,22 @@ export function edgeTracker(): (down: boolean) => boolean {
   };
 }
 
+/** Edge tracker that also reports presses latched since the last poll (catches taps between polls). */
+export function latchedEdge(): { latch(): void; poll(down: boolean): boolean } {
+  const edge = edgeTracker();
+  let latched = false;
+  return {
+    latch() {
+      latched = true;
+    },
+    poll(down) {
+      const fire = edge(down) || latched; // always run edge() to keep its state current
+      latched = false;
+      return fire;
+    },
+  };
+}
+
 const any = (keys: Set<string>, ...codes: string[]) => codes.some((c) => keys.has(c));
 
 export function keyboardInput(k: Set<string>): RawInput {
@@ -86,15 +102,22 @@ const MAPPED = new Set([
 
 export function createInput(win: Window): { poll(): InputState } {
   const held = new Set<string>();
+  const kbEdge = { pause: latchedEdge(), restart: latchedEdge(), confirm: latchedEdge() };
+  const latchFor: Record<string, { latch(): void }> = {
+    Escape: kbEdge.pause,
+    KeyR: kbEdge.restart,
+    Enter: kbEdge.confirm,
+    NumpadEnter: kbEdge.confirm,
+  };
   win.addEventListener('keydown', (e) => {
     if (!MAPPED.has(e.code)) return;
     e.preventDefault();
-    held.add(e.code); // repeats just re-add; edges come from the trackers
+    held.add(e.code);
+    if (!e.repeat) latchFor[e.code]?.latch();
   });
   win.addEventListener('keyup', (e) => held.delete(e.code));
   win.addEventListener('blur', () => held.clear());
 
-  const kbEdge = { pause: edgeTracker(), restart: edgeTracker(), confirm: edgeTracker() };
   const padEdge = { pause: edgeTracker(), restart: edgeTracker(), confirm: edgeTracker() };
 
   return {
@@ -106,9 +129,9 @@ export function createInput(win: Window): { poll(): InputState } {
       const m = mergeInput(kb, gp);
       return {
         ...m,
-        pause: kbEdge.pause(kb.pause) || padEdge.pause(gp.pause),
-        restart: kbEdge.restart(kb.restart) || padEdge.restart(gp.restart),
-        confirm: kbEdge.confirm(kb.confirm) || padEdge.confirm(gp.confirm),
+        pause: kbEdge.pause.poll(kb.pause) || padEdge.pause(gp.pause),
+        restart: kbEdge.restart.poll(kb.restart) || padEdge.restart(gp.restart),
+        confirm: kbEdge.confirm.poll(kb.confirm) || padEdge.confirm(gp.confirm),
       };
     },
   };

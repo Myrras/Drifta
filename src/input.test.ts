@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deadzone, edgeTracker, mergeInput, type RawInput } from './input';
+import { deadzone, edgeTracker, latchedEdge, mergeInput, type RawInput } from './input';
 
 const base: RawInput = {
   steer: 0,
@@ -35,5 +35,22 @@ describe('edgeTracker', () => {
   it('fires once per press', () => {
     const e = edgeTracker();
     expect([e(true), e(true), e(false), e(true)]).toEqual([true, false, false, true]);
+  });
+});
+
+describe('latchedEdge', () => {
+  it('tap between polls fires once', () => {
+    const e = latchedEdge();
+    e.latch();
+    expect([e.poll(false), e.poll(false)]).toEqual([true, false]);
+  });
+  it('hold fires once', () => {
+    const e = latchedEdge();
+    expect([e.poll(true), e.poll(true), e.poll(false)]).toEqual([true, false, false]);
+  });
+  it('tap + hold does not double-fire', () => {
+    const e = latchedEdge();
+    e.latch();
+    expect([e.poll(true), e.poll(true), e.poll(false)]).toEqual([true, false, false]);
   });
 });
