@@ -51,6 +51,66 @@ describe('car', () => {
     expect(speed(c)).toBeLessThanOrEqual(TUNING.reverseTopSpeed);
   });
 
+  it('backs up straight along -heading with brake held from rest', () => {
+    const angle = 0.7;
+    const c = createCar({ pos: { x: 0, y: 0 }, angle });
+    const infos = run(c, input({ brake: 1 }), 3);
+    const along = c.vel.x * Math.cos(angle) + c.vel.y * Math.sin(angle);
+    expect(along).toBeLessThan(-0.99 * speed(c));
+    expect(Math.abs(c.angVel)).toBeLessThan(1e-6);
+    expect(infos.at(-1)!.speedKmh).toBeGreaterThan(10);
+    expect(Math.max(...infos.map((d) => d.speedKmh))).toBeLessThanOrEqual(25);
+  });
+
+  it('tracks a stable circle reversing with constant steer', () => {
+    const c = movingCar(-15);
+    const angVels: number[] = [];
+    let maxSlip = 0;
+    for (const d of run(c, input({ brake: 1, steer: 0.5 }), 4)) {
+      angVels.push(Math.abs(c.angVel));
+      maxSlip = Math.max(maxSlip, Math.PI - Math.abs(d.slip)); // slip relative to backward motion
+    }
+    expect(Math.max(...angVels)).toBeLessThan(1.5);
+    const last = angVels.slice(-Math.round(1 / DT));
+    expect(Math.max(...last) - Math.min(...last)).toBeLessThan(0.02);
+    expect(last.at(-1)!).toBeLessThanOrEqual(last[0]! + 1e-3);
+    expect(maxSlip).toBeLessThan((20 * Math.PI) / 180);
+  });
+
+  it('swings the rear to the right when reversing with steer right', () => {
+    // forward with steer right yaws clockwise (+); backing up the same lock yaws the other way
+    const fwd = movingCar(15);
+    run(fwd, input({ steer: 1 }), 0.5);
+    expect(fwd.angVel).toBeGreaterThan(0.3);
+    const c = movingCar(-15);
+    run(c, input({ brake: 1, steer: 1 }), 1);
+    expect(c.angVel).toBeLessThan(-0.3);
+    expect(c.pos.y).toBeGreaterThan(0.5); // backing toward the car's right side (+y at angle 0)
+  });
+
+  it('brakes to a stop with throttle while rolling backward before driving forward', () => {
+    const c = movingCar(-20);
+    const vfs = Array.from({ length: Math.round(2 / DT) }, () => {
+      stepCar(c, input({ throttle: 1 }), DT);
+      return c.vel.x;
+    });
+    const firstForward = vfs.findIndex((v) => v > 0);
+    expect(firstForward).toBeGreaterThan(0);
+    expect(firstForward * DT).toBeLessThan(0.6); // brake-strength decel, not engine
+    expect(Math.abs(vfs[firstForward - 1]!)).toBeLessThan(0.5);
+    expect(vfs.at(-1)!).toBeGreaterThan(3);
+  });
+
+  it('J-turns: reversing fast with full steer rotates ~180 deg and stops rotating', () => {
+    const c = createCar({ pos: { x: 0, y: 0 }, angle: 0 });
+    run(c, input({ brake: 1 }), 4);
+    const start = c.angle;
+    run(c, input({ steer: 1 }), 6);
+    expect(Math.abs(c.angle - start)).toBeGreaterThan((135 * Math.PI) / 180);
+    expect(Math.abs(c.angle - start)).toBeLessThan((225 * Math.PI) / 180);
+    expect(Math.abs(c.angVel)).toBeLessThan(0.1);
+  });
+
   it('kicks into a drift with handbrake and full steer', () => {
     const c = movingCar(60);
     const infos = run(c, input({ steer: 1, handbrake: true }), 1);

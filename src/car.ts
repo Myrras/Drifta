@@ -15,8 +15,9 @@ export const TUNING = {
   rollLinear: 0.06, // 1/s, speed-proportional rolling resistance
   brakeAccel: 14, // m/s² at full brake
   reverseAccel: 5, // m/s² at full brake while reversing
-  reverseTopSpeed: 6, // m/s (~22 km/h)
-  reverseEngageSpeed: 0.5, // m/s, brake below this forward speed = reverse
+  reverseTopSpeed: 7, // m/s (~25 km/h)
+  reverseEngageSpeed: 0.5, // m/s, brake below this forward speed = reverse; throttle while rolling back faster = brake
+  reverseYawDamp: 2, // 1/s, pull of yaw rate toward the path's turn rate while backing up
 
   // steering
   maxSteer: 0.6, // rad at standstill
@@ -78,6 +79,10 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   // longitudinal
   let drive = throttle * T.engineAccel;
   let stop = 0; // decel opposing vf, cannot reverse direction
+  if (vf < -T.reverseEngageSpeed) {
+    drive = 0;
+    stop += throttle * T.brakeAccel;
+  }
   if (brake > 0) {
     if (vf > T.reverseEngageSpeed) stop += brake * T.brakeAccel;
     else drive -= brake * T.reverseAccel * Math.max(0, 1 + vf / T.reverseTopSpeed);
@@ -87,8 +92,10 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   const ax = drive - T.dragCoef * vf * Math.abs(vf);
 
   // smooth 0..1 ramps avoid grip steps that make the yaw oscillate
-  const loose = clamp((slip - T.powerOversteerSlip) / T.slipRamp, 0, 1);
-  const assist = slip < DRIFT_MAX_SLIP ? clamp((slip - T.assistSlip) / T.slipRamp, 0, 1) : 0;
+  // backing up, slip is ~180 deg: it must not count as a drift (that loosened the rear and spun the car)
+  const forward = vf > 0;
+  const loose = forward ? clamp((slip - T.powerOversteerSlip) / T.slipRamp, 0, 1) : 0;
+  const assist = forward ? clamp((slip - T.assistSlip) / T.slipRamp, 0, 1) : 0;
   let rearGrip = 1 + (T.powerOversteerGrip - 1) * throttle * loose;
   const bite = clamp((slip - T.rearBiteSlip) / T.rearBiteRamp, 0, 1);
   rearGrip += (1 - rearGrip) * T.rearBite * bite;
@@ -127,7 +134,8 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   const pathRate =
     Math.atan2(oldX * car.vel.y - oldY * car.vel.x, oldX * car.vel.x + oldY * car.vel.y) / dt;
   let angVel = car.angVel + (torque / T.yawInertia) * dt;
-  angVel -= (angVel - pathRate) * Math.min(1, T.assistYawDamp * assist * dt);
+  const yawDamp = forward ? T.assistYawDamp * assist : T.reverseYawDamp;
+  angVel -= (angVel - pathRate) * Math.min(1, yawDamp * dt);
   if (speed < 1) angVel *= speed; // no yaw when parked
   car.angVel = clamp(angVel, -T.maxAngVel, T.maxAngVel);
   car.angle += car.angVel * dt;
