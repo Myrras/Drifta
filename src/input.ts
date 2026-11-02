@@ -71,6 +71,34 @@ export function keyboardInput(k: Set<string>): RawInput {
   };
 }
 
+/** Move `current` toward `target`; `upRate` when growing in magnitude, else `downRate` (units/s). */
+export function rampToward(
+  current: number,
+  target: number,
+  upRate: number,
+  downRate: number,
+  dt: number,
+): number {
+  const rate = Math.abs(target) > Math.abs(current) ? upRate : downRate;
+  const step = rate * dt;
+  return Math.abs(target - current) <= step ? target : current + Math.sign(target - current) * step;
+}
+
+const MAX_DT = 0.1;
+
+/** Smooths keyboard steer/throttle; brake and buttons pass through. */
+export function keyboardSmoother(): (raw: RawInput, dt: number) => RawInput {
+  let steer = 0;
+  let throttle = 0;
+  return (raw, dt) => {
+    const d = clamp(dt, 0, MAX_DT);
+    if (raw.steer * steer < 0) steer = 0; // reversing: snap through 0 for quick countersteer
+    steer = rampToward(steer, raw.steer, 5, 8, d);
+    throttle = rampToward(throttle, raw.throttle, 4, 8, d);
+    return { ...raw, steer, throttle };
+  };
+}
+
 export function gamepadInput(p: Gamepad | null): RawInput {
   const b = (i: number) => p?.buttons[i];
   return {
@@ -100,7 +128,12 @@ const MAPPED = new Set([
   'NumpadEnter',
 ]);
 
-export function createInput(win: Window): { poll(): InputState } {
+export function createInput(
+  win: Window,
+  now: () => number = () => performance.now(),
+): { poll(): InputState } {
+  const smooth = keyboardSmoother();
+  let last = now();
   const held = new Set<string>();
   const kbEdge = { pause: latchedEdge(), restart: latchedEdge(), confirm: latchedEdge() };
   const latchFor: Record<string, { latch(): void }> = {
@@ -124,14 +157,18 @@ export function createInput(win: Window): { poll(): InputState } {
     poll() {
       const pads = win.navigator?.getGamepads?.() ?? [];
       const pad = Array.from(pads).find((p) => p && p.connected) ?? null;
-      const kb = keyboardInput(held);
+      const t = now();
+      const dt = (t - last) / 1000;
+      last = t;
+      const kbRaw = keyboardInput(held);
+      const kb = smooth(kbRaw, dt);
       const gp = gamepadInput(pad);
       const m = mergeInput(kb, gp);
       return {
         ...m,
-        pause: kbEdge.pause.poll(kb.pause) || padEdge.pause(gp.pause),
-        restart: kbEdge.restart.poll(kb.restart) || padEdge.restart(gp.restart),
-        confirm: kbEdge.confirm.poll(kb.confirm) || padEdge.confirm(gp.confirm),
+        pause: kbEdge.pause.poll(kbRaw.pause) || padEdge.pause(gp.pause),
+        restart: kbEdge.restart.poll(kbRaw.restart) || padEdge.restart(gp.restart),
+        confirm: kbEdge.confirm.poll(kbRaw.confirm) || padEdge.confirm(gp.confirm),
       };
     },
   };
