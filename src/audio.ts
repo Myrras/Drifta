@@ -3,6 +3,38 @@ import type { CarState, DriftInfo } from './types';
 const FILES = { engine: 'engine.ogg', squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
+/** Loop window [startSec, endSec] of `seconds` with high, steady RMS (50 ms blocks). */
+export function pickLoopWindow(
+  samples: Float32Array,
+  sampleRate: number,
+  seconds: number,
+): [number, number] {
+  const blk = Math.max(1, Math.floor(sampleRate * 0.05));
+  const rms: number[] = [];
+  for (let i = 0; i + blk <= samples.length; i += blk) {
+    let s = 0;
+    for (let j = i; j < i + blk; j++) s += samples[j] * samples[j];
+    rms.push(Math.sqrt(s / blk));
+  }
+  const w = Math.max(1, Math.round(seconds / 0.05));
+  if (rms.length <= w) return [0, samples.length / sampleRate];
+  let best = 0;
+  let bestScore = -Infinity;
+  for (let a = 0; a + w <= rms.length; a++) {
+    let m = 0;
+    for (let k = a; k < a + w; k++) m += rms[k];
+    m /= w;
+    let v = 0;
+    for (let k = a; k < a + w; k++) v += (rms[k] - m) ** 2;
+    const score = m - Math.sqrt(v / w);
+    if (score > bestScore) {
+      bestScore = score;
+      best = a;
+    }
+  }
+  return [(best * blk) / sampleRate, ((best + w) * blk) / sampleRate];
+}
+
 export function createAudio() {
   let ctx: AudioContext | null = null;
   let master: GainNode;
@@ -13,12 +45,17 @@ export function createAudio() {
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
 
-  function loop(buf: AudioBuffer, gain: GainNode): AudioBufferSourceNode {
+  function loop(buf: AudioBuffer, gain: GainNode, win?: [number, number]): AudioBufferSourceNode {
     const s = ctx!.createBufferSource();
     s.buffer = buf;
     s.loop = true;
+    let from = 0;
+    if (win) {
+      [s.loopStart, s.loopEnd] = win;
+      from = win[0];
+    }
     s.connect(gain);
-    s.start();
+    s.start(0, from);
     return s;
   }
 
@@ -29,7 +66,8 @@ export function createAudio() {
       const buf = await ctx!.decodeAudioData(await res.arrayBuffer());
       bufs[name] = buf;
       if (name === 'engine') engSrc = loop(buf, engGain);
-      if (name === 'squeal') sqSrc = loop(buf, sqGain);
+      if (name === 'squeal')
+        sqSrc = loop(buf, sqGain, pickLoopWindow(buf.getChannelData(0), buf.sampleRate, 2));
     } catch {
       /* sample stays missing; its method is a no-op */
     }
