@@ -1,4 +1,4 @@
-import type { CarState, Hit, Rect, Solid, Vec } from './types';
+import type { CarState, Circle, Hit, Rect, Solid, Vec } from './types';
 
 export const CAR_LENGTH = 4.0; // along heading
 export const CAR_WIDTH = 1.75;
@@ -56,13 +56,6 @@ function hitOne(car: CarState, corners: Vec[], r: Rect): Hit | null {
     }
   }
   return best;
-}
-
-// Structural stand-in: types.ts has no Circle yet. Swap for the shared type once it lands.
-export interface Circle {
-  x: number;
-  y: number;
-  r: number;
 }
 
 function hitCircle(car: CarState, k: Circle): Hit | null {
