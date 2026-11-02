@@ -17,6 +17,7 @@ const POPUP_LIFE = 1.5; // s
 const SHAKE_DECAY = 3; // per s
 const HALF_FADE = FLOOR_FADE_SECONDS / 2;
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
+const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
@@ -34,10 +35,15 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     ramp: null as Ramp | null,
     rampT: 0,
     results: null as Results | null,
+    resultsAge: 0,
   });
+  let bestScore = best.get();
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, ...fresh() };
 
-  const newRun = () => Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+  const newRun = () => {
+    audio.stop();
+    Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+  };
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
     s.popups.push({ kind, text, amount, age: 0 });
 
@@ -69,9 +75,9 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     const comboPoints = s.scoring.banked;
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
-    const newBest = total > best.get();
-    if (newBest) best.set(total);
-    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: best.get(), newBest };
+    const newBest = total > bestScore;
+    if (newBest) best.set((bestScore = total));
+    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bestScore, newBest };
     s.phase = 'results';
     audio.stop();
   }
@@ -110,7 +116,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           s.shake = Math.min(1, impact / 10);
         }
       }
-      nearDist = nearestDistance(car, floor.solids);
+      nearDist = s.drift.drifting ? nearestDistance(car, floor.solids) : Infinity;
       yawDelta = car.angVel * dt;
       if (!s.ramp) {
         const ramp = floor.ramps.find((r) => inRect(car.pos, r.zone));
@@ -129,6 +135,8 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
         dt,
       ),
     );
+
+    if (s.ramp && s.rampT < HALF_FADE - EPS) s.drift = IDLE;
 
     if (!fadingOut && s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) {
       finish();
@@ -167,19 +175,24 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           if (input.pause || input.confirm) s.phase = 'run';
           break;
         case 'results':
-          if (input.confirm) newRun();
+          s.resultsAge += dt;
+          if (input.confirm && s.resultsAge >= RESULTS_LOCKOUT) newRun();
           break;
       }
     },
 
     view(): FrameView {
       const { car, scoring } = s;
+      const speed = Math.hypot(car.vel.x, car.vel.y);
+      const fading = s.ramp !== null && s.rampT < HALF_FADE - EPS;
+      const drift =
+        s.phase !== 'run' || fading ? { drifting: false, slip: 0, speedKmh: speed * 3.6 } : s.drift;
       return {
         render: {
           map,
           floorIndex: s.floorIndex,
           car,
-          drift: s.drift,
+          drift,
           handbrake: s.handbrake,
           fade: s.fade,
           shake: s.shake,
@@ -194,9 +207,9 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           combo: scoring.combo,
           comboValue: scoring.combo ? comboValue(scoring.combo) : 0,
           popups: s.popups,
-          speedKmh: Math.hypot(car.vel.x, car.vel.y) * 3.6,
+          speedKmh: speed * 3.6,
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
-          best: best.get(),
+          best: bestScore,
           results: s.phase === 'results' ? s.results : null,
         },
       };

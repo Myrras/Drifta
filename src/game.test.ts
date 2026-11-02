@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createGame, type AudioLike, type BestStore } from './game';
 import { garage } from './maps/garage';
 import { COUNTDOWN_SECONDS, DT, FLOOR_FADE_SECONDS } from './config';
@@ -154,5 +154,47 @@ describe('game', () => {
     expect(v.render.floorIndex).toBe(0);
     expect(v.hud.score).toBe(0);
     expect(v.render.runId).toBe(runId + 1);
+  });
+
+  it('stops audio on restart', () => {
+    const stop = vi.fn();
+    const game = createGame(garage, { ...audio, stop }, memBest());
+    const press = (i: Partial<InputState>) => game.update({ ...IDLE, ...i }, DT);
+    press({ confirm: true });
+    stop.mockClear();
+    press({ restart: true });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports idle drift while paused', () => {
+    const { game, step, toRun } = setup();
+    toRun();
+    game.debug.drift = { drifting: true, slip: 0.8, speedKmh: 50 };
+    step({ pause: true });
+    const d = game.view().render.drift;
+    expect(d.drifting).toBe(false);
+    expect(d.slip).toBe(0);
+  });
+
+  it('locks confirm for 0.5 s on results', () => {
+    const { game, step, toRun } = setup();
+    toRun();
+    game.debug.floorIndex = 2;
+    game.debug.car.pos = { x: 7, y: 57.5 };
+    step();
+    step({ confirm: true }, 10);
+    expect(game.view().hud.phase).toBe('results');
+    step({}, Math.ceil(0.5 / DT));
+    step({ confirm: true });
+    expect(game.view().hud.phase).toBe('countdown');
+  });
+
+  it('reads best once', () => {
+    const get = vi.fn(() => 0);
+    const game = createGame(garage, audio, { get, set: noop });
+    game.update({ ...IDLE, confirm: true }, DT);
+    game.view();
+    game.view();
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });
