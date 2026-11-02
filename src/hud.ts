@@ -87,9 +87,15 @@ export function drawHud(
       align: 'center',
       italic: true,
     });
+    // Translucent band behind the prompt so it reads over the car; pulse floored at 70%.
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, height * 0.5 - 4 * u, width, 8 * u);
+    ctx.restore();
     text(ctx, 'Press ENTER / A to start', cx, height * 0.5, 4.5 * u, '#ffd23f', {
       align: 'center',
-      alpha: 0.6 + 0.4 * Math.sin(now * 5),
+      stroke: '#000',
+      alpha: 0.85 + 0.15 * Math.sin(now * 5),
     });
     [
       'WASD/Arrows drive · SPACE handbrake · R restart · ESC pause',
