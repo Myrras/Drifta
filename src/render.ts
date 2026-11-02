@@ -1,5 +1,6 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
 import type { CarState, Floor, GameMap, Helix, Rect, Vec } from './types';
+import { garageRoute } from './maps/garage';
 import type { RenderView } from './view';
 
 // --- visual tuning ---
@@ -27,8 +28,7 @@ const WALL_TOP = '#45464c';
 const PILLAR = '#a19e95';
 const PILLAR_TOP = '#b3b0a7';
 const STATIC_SHADOW = 'rgba(0,0,0,0.55)';
-const RAMP_IN = '#34353a'; // helix ring: smooth ramp concrete, darker toward the core
-const RAMP_OUT = '#3b3c41';
+const RAMP = '#37383d'; // helix ring: smooth ramp concrete
 const LABEL = 'rgba(240,240,230,0.8)';
 const DIP = 0.1; // camera zoom-out at mid helix crossfade
 const PARKED_COLORS = [
@@ -53,7 +53,7 @@ const LIGHT_RGB = '190,255,225'; // cool fluorescent
 const POST_RGB = '200,215,255'; // roof lamp posts
 const LIGHT_R = 7.5;
 const POST_R = 10;
-const TUBE = '#effff6';
+const TUBE = 'rgba(225,245,235,0.4)';
 
 const SKID_STYLE = 'rgba(12,12,14,0.35)';
 const SKID_W = 0.25;
@@ -117,11 +117,12 @@ function hazard(g: Ctx, r: Rect, band: number) {
   g.restore();
 }
 
-/** Arrow pointing +x (dir 1) or -x (dir -1), ~3.2 m long at size 1. */
-function arrow(g: Ctx, x: number, y: number, dir: number, size: number) {
+/** Arrow pointing along `angle`, ~3.2 m long at size 1. */
+function arrow(g: Ctx, x: number, y: number, angle: number, size: number) {
   g.save();
   g.translate(x, y);
-  g.scale(dir * size, size);
+  g.rotate(angle);
+  g.scale(size, size);
   g.beginPath();
   g.moveTo(-1.6, -0.18);
   g.lineTo(0.3, -0.18);
@@ -144,10 +145,13 @@ function label(
   heading: number,
   size: number,
   maxW: number,
+  upright = false,
 ) {
+  let rot = heading + Math.PI / 2;
+  if (upright && Math.cos(rot) < -0.01) rot += Math.PI; // keep text readable on screen
   g.save();
   g.translate(x, y);
-  g.rotate(heading + Math.PI / 2);
+  g.rotate(rot);
   g.scale(1 / STATIC_PX, 1 / STATIC_PX); // font in px: avoids tiny-font rendering quirks
   g.fillStyle = LABEL;
   g.font = `bold ${Math.round(size * STATIC_PX)}px sans-serif`;
@@ -174,15 +178,21 @@ function helixSurface(g: Ctx, h: Helix, upper: boolean, text: string) {
   const a1 = h.enterAngle + h.sweep;
   const ccw = h.sweep < 0;
   const w = h.rOuter - h.rCore;
-  const grad = g.createRadialGradient(cx, cy, h.rCore, cx, cy, h.rOuter);
-  grad.addColorStop(0, RAMP_IN);
-  grad.addColorStop(1, RAMP_OUT);
-  g.fillStyle = grad;
+  // draw the ring shape 1 km off-canvas and keep only its blurred shadow: soft ~0.5 m (sigma)
+  // edges, no hard half-disc against the floor. Inset 0.25 m so the fade sits inside the rim.
+  const ro = h.rOuter - 0.25;
+  const da = (0.25 / ro) * Math.sign(h.sweep);
+  g.save();
+  g.translate(-1000, 0);
+  g.shadowColor = RAMP;
+  g.shadowOffsetX = 1000 * STATIC_PX;
+  g.shadowBlur = STATIC_PX;
   g.beginPath();
-  g.arc(cx, cy, h.rOuter, a0, a1, ccw);
-  g.arc(cx, cy, h.rCore, a1, a0, !ccw);
+  g.arc(cx, cy, ro, a0 + da, a1 - da, ccw);
+  g.arc(cx, cy, h.rCore - 0.5, a1 - da, a0 + da, !ccw);
   g.closePath();
   g.fill();
+  g.restore();
 
   g.strokeStyle = PAINT_WHITE;
   g.lineWidth = 0.15;
@@ -205,7 +215,7 @@ function helixSurface(g: Ctx, h: Helix, upper: boolean, text: string) {
   for (let i = 0; i < n; i++) {
     const { pos, angle } = helixAt(h, (i + 0.5) / n);
     if (i === slot) {
-      label(g, text, pos.x, pos.y, angle, Math.min(1.6, w * 0.22), w * 0.8);
+      label(g, text, pos.x, pos.y, angle, Math.min(1.6, w * 0.22), w * 0.8, true);
       continue;
     }
     g.save();
@@ -299,21 +309,41 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   for (let y = 10; y < f.h; y += 10) (g.moveTo(0, y), g.lineTo(f.w, y));
   g.stroke();
 
-  // lane arrows: lanes = distinct light rows; entry lane direction alternates lane by lane
-  const lanes = [...new Set(f.lights.map((l) => l.y))].sort((a, b) => a - b);
-  const down = map.helixes.find((h) => h.from + 1 === idx);
-  const entry = idx === map.start.floor ? map.start : down && helixAt(down, 1);
-  if (entry && lanes.length) {
-    let k0 = 0;
-    lanes.forEach((y, k) => {
-      if (Math.abs(y - entry.pos.y) < Math.abs(lanes[k0] - entry.pos.y)) k0 = k;
+  // lane arrows: every ~14 m along this floor's route, in travel direction, clear of obstacles
+  const route = garageRoute.find((r) => r.floor === idx)?.points ?? [];
+  const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
+  const blocked = (p: Vec) =>
+    p.x < 1 ||
+    p.y < 1 ||
+    p.x > f.w - 1 ||
+    p.y > f.h - 1 ||
+    f.bays.some((r) => inRect(p, r)) ||
+    f.solids.some((r) => inRect(p, r)) ||
+    f.circles.some((k) => Math.hypot(p.x - k.x, p.y - k.y) < k.r + 0.3) ||
+    rings.some((h) => {
+      const d = Math.hypot(p.x - h.center.x, p.y - h.center.y);
+      return d > h.rCore - 0.3 && d < h.rOuter + 0.3;
     });
-    const dir0 = Math.cos(entry.angle) >= 0 ? 1 : -1;
-    g.fillStyle = PAINT_ARROW;
-    lanes.forEach((y, k) => {
-      const dir = (k - k0) % 2 === 0 ? dir0 : -dir0;
-      for (let x = 20; x <= f.w - 20; x += 16) arrow(g, x, y, dir, 0.9);
-    });
+  const placed: Vec[] = [];
+  g.fillStyle = PAINT_ARROW;
+  let next = 7;
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1];
+    const b = route[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const [c, s] = [Math.cos(ang), Math.sin(ang)];
+    for (; next <= len; next += 14) {
+      const p = { x: a.x + c * next, y: a.y + s * next };
+      const clear = [-1.7, -0.8, 0, 0.8, 1.7].every((u) =>
+        [-0.8, 0, 0.8].every((w) => !blocked({ x: p.x + c * u - s * w, y: p.y + s * u + c * w })),
+      );
+      if (clear && placed.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= 9)) {
+        placed.push(p);
+        arrow(g, p.x, p.y, ang, 0.9);
+      }
+    }
+    next -= len;
   }
 
   // painted bays: sides + back line, yellow wheel stop near the back
@@ -742,6 +772,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       ctx.drawImage(layer, 0, 0, fl.w, fl.h);
       const skid = skids.get(fl);
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
+      if (idx > 0) {
+        // fixture tubes sit under the car; same floor weighting as the pools below
+        ctx.globalAlpha = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
+        ctx.fillStyle = TUBE;
+        for (const l of fl.lights) {
+          if (visible(l.x, l.y, 1)) ctx.fillRect(l.x - 0.8, l.y - 0.09, 1.6, 0.18);
+        }
+      }
     }
     ctx.globalAlpha = 1;
 
@@ -784,11 +822,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
             ctx.drawImage(postSprite, x - POST_R, y - POST_R, 2 * POST_R, 2 * POST_R);
         }
       } else {
-        ctx.fillStyle = TUBE;
         for (const l of fl.lights) {
           if (!visible(l.x, l.y, LIGHT_R)) continue;
           ctx.drawImage(lightSprite, l.x - LIGHT_R, l.y - LIGHT_R, 2 * LIGHT_R, 2 * LIGHT_R);
-          ctx.fillRect(l.x - 0.8, l.y - 0.09, 1.6, 0.18);
         }
       }
     }
