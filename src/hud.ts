@@ -92,6 +92,18 @@ export function drawHud(
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, height * 0.5 - 4 * u, width, 8 * u);
     ctx.restore();
+    if (v.menu) {
+      const { items, selected } = v.menu;
+      text(ctx, `◀ ${items[selected]} ▶`, cx, height * 0.5 - 8 * u, 4.5 * u, '#fff', {
+        align: 'center',
+        weight: 900,
+        stroke: '#000',
+      });
+      text(ctx, '←/→ choose map', cx, height * 0.5 + 7 * u, 2.2 * u, '#ddd', {
+        align: 'center',
+        weight: 700,
+      });
+    }
     text(ctx, 'Press ENTER / A to start', cx, height * 0.5, 4.5 * u, '#ffd23f', {
       align: 'center',
       stroke: '#000',
@@ -106,21 +118,31 @@ export function drawHud(
         weight: 700,
       }),
     );
-    text(ctx, `BEST ${formatScore(v.best)}`, cx, height * 0.62 + 12 * u, 3.4 * u, '#fff', {
-      align: 'center',
-    });
+    if (v.par > 0)
+      text(ctx, `BEST ${formatScore(v.best)}`, cx, height * 0.62 + 12 * u, 3.4 * u, '#fff', {
+        align: 'center',
+      });
     return;
   }
 
   if (v.phase === 'run' || v.phase === 'paused') {
-    text(ctx, formatTime(v.time), pad, pad + 3 * u, 5 * u, v.time > v.par ? '#ff4444' : '#fff');
-    text(ctx, `PAR ${formatTime(v.par)}`, pad, pad + 8 * u, 2.6 * u, '#ddd', { weight: 700 });
+    text(
+      ctx,
+      formatTime(v.time),
+      pad,
+      pad + 3 * u,
+      5 * u,
+      v.par > 0 && v.time > v.par ? '#ff4444' : '#fff',
+    );
+    if (v.par > 0)
+      text(ctx, `PAR ${formatTime(v.par)}`, pad, pad + 8 * u, 2.6 * u, '#ddd', { weight: 700 });
     text(ctx, v.floorName, cx, pad + 3 * u, 3.4 * u, '#fff', { align: 'center' });
     text(ctx, formatScore(v.score), width - pad, pad + 3 * u, 5 * u, '#fff', { align: 'right' });
-    text(ctx, `BEST ${formatScore(v.best)}`, width - pad, pad + 8 * u, 2.6 * u, '#ddd', {
-      align: 'right',
-      weight: 700,
-    });
+    if (v.par > 0)
+      text(ctx, `BEST ${formatScore(v.best)}`, width - pad, pad + 8 * u, 2.6 * u, '#ddd', {
+        align: 'right',
+        weight: 700,
+      });
 
     const baseY = height - 16 * u;
     const c = v.combo;
@@ -209,7 +231,7 @@ export function drawHud(
     if (v.phase === 'paused') {
       overlay(ctx, width, height, 0.55);
       text(ctx, 'PAUSED', cx, height * 0.45, 12 * u, '#fff', { align: 'center', weight: 900 });
-      text(ctx, 'ESC / START resume · R restart', cx, height * 0.55, 3 * u, '#ddd', {
+      text(ctx, 'ENTER resume · R restart · ESC menu', cx, height * 0.55, 3 * u, '#ddd', {
         align: 'center',
         weight: 700,
       });

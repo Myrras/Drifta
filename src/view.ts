@@ -51,6 +51,8 @@ export interface HudView {
   countdown: number;
   best: number;
   results: Results | null;
+  /** map choice; non-null only on the title */
+  menu: { items: string[]; selected: number } | null;
 }
 
 export interface FrameView {

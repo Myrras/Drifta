@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createGame, type AudioLike, type BestStore } from './game';
 import { garage } from './maps/garage';
+import { testpad } from './maps/testpad';
 import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
 
@@ -28,7 +29,7 @@ function memBest(v = 0): BestStore {
 }
 
 function setup(best = memBest()) {
-  const game = createGame(garage, audio, best);
+  const game = createGame([garage], audio, () => best);
   const step = (input: Partial<InputState> = {}, frames = 1) => {
     for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
   };
@@ -123,7 +124,7 @@ describe('game', () => {
     const t = game.view().hud.time;
     step({}, 30);
     expect(game.view().hud.time).toBe(t);
-    step({ pause: true });
+    step({ confirm: true });
     expect(game.view().hud.phase).toBe('run');
     game.pause();
     expect(game.view().hud.phase).toBe('paused');
@@ -151,7 +152,7 @@ describe('game', () => {
 
   it('stops audio on restart', () => {
     const stop = vi.fn();
-    const game = createGame(garage, { ...audio, stop }, memBest());
+    const game = createGame([garage], { ...audio, stop }, () => memBest());
     const press = (i: Partial<InputState>) => game.update({ ...IDLE, ...i }, DT);
     press({ confirm: true });
     stop.mockClear();
@@ -184,7 +185,7 @@ describe('game', () => {
 
   it('reads best once', () => {
     const get = vi.fn(() => 0);
-    const game = createGame(garage, audio, { get, set: noop });
+    const game = createGame([garage], audio, () => ({ get, set: noop }));
     game.update({ ...IDLE, confirm: true }, DT);
     game.view();
     game.view();
@@ -213,7 +214,7 @@ describe('helix', () => {
   };
 
   function rig(floorIndex = 0) {
-    const game = createGame(map, audio, memBest());
+    const game = createGame([map], audio, () => memBest());
     const step = (input: Partial<InputState> = {}, n = 1) => {
       for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
     };
@@ -324,4 +325,66 @@ describe('helix wall bounce (garage)', () => {
       });
     }
   }
+});
+
+describe('menu', () => {
+  const rig = (stores: Record<string, BestStore> = {}) => {
+    const game = createGame([garage, testpad], audio, (n) => (stores[n] ??= memBest()));
+    const step = (input: Partial<InputState> = {}, n = 1) => {
+      for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    const tap = (steer: number) => {
+      step({ steer });
+      step({ steer: 0 });
+    };
+    return { game, step, tap };
+  };
+
+  it('cycles with wrap and starts the selected map', () => {
+    const { game, tap, step } = rig();
+    expect(game.view().hud.menu).toEqual({ items: [garage.name, testpad.name], selected: 0 });
+    tap(1);
+    expect(game.view().hud.menu?.selected).toBe(1);
+    tap(1);
+    expect(game.view().hud.menu?.selected).toBe(0);
+    tap(-1);
+    expect(game.view().hud.menu?.selected).toBe(1);
+    step({ confirm: true });
+    const v = game.view();
+    expect(v.hud.menu).toBeNull();
+    expect(v.render.map).toBe(testpad);
+    expect(game.debug.car.pos).toEqual(testpad.start.pos);
+  });
+
+  it('free roam never finishes', () => {
+    const { game, tap, step } = rig();
+    tap(1);
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    step({ throttle: 1, steer: 0.3 }, Math.round(30 / DT));
+    expect(game.view().hud.phase).toBe('run');
+    step({ restart: true });
+    expect(game.view().render.map).toBe(testpad);
+  });
+
+  it('paused: enter resumes, esc goes to the title', () => {
+    const { game, step } = rig();
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    step({ pause: true });
+    step({ confirm: true });
+    expect(game.view().hud.phase).toBe('run');
+    step({ pause: true });
+    step({ pause: true });
+    expect(game.view().hud.phase).toBe('title');
+    expect(game.view().hud.menu).not.toBeNull();
+  });
+
+  it('keeps a best per map', () => {
+    const stores = { [garage.name]: memBest(5), [testpad.name]: memBest(9) };
+    const { game, tap } = rig(stores);
+    expect(game.view().hud.best).toBe(5);
+    tap(1);
+    expect(game.view().hud.best).toBe(9);
+  });
 });

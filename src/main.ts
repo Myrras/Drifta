@@ -4,6 +4,7 @@ import { createGame } from './game';
 import { createInput } from './input';
 import { createAudio } from './audio';
 import { garage } from './maps/garage';
+import { testpad } from './maps/testpad';
 import { BEST_SCORE_KEY, DT } from './config';
 
 const renderer = createRenderer(document.getElementById('game') as HTMLCanvasElement);
@@ -11,26 +12,31 @@ window.addEventListener('resize', () => renderer.resize());
 
 const input = createInput(window);
 const audio = createAudio();
-let mem = 0;
-const best = {
-  get() {
-    try {
-      const n = Number(localStorage.getItem(BEST_SCORE_KEY));
-      return Math.max(mem, Number.isNaN(n) ? 0 : n);
-    } catch {
-      return mem;
-    }
-  },
-  set(v: number) {
-    mem = v;
-    try {
-      localStorage.setItem(BEST_SCORE_KEY, String(v));
-    } catch {
-      /* in-memory fallback */
-    }
-  },
+const legacy = ['JAPAN GARAGE', 'Parking Garage'];
+const bestFor = (name: string) => {
+  let mem = 0;
+  const key = `drifta.best.${name}`;
+  return {
+    get() {
+      try {
+        const read = (k: string) => Number(localStorage.getItem(k)) || 0;
+        const n = Math.max(read(key), legacy.includes(name) ? read(BEST_SCORE_KEY) : 0);
+        return Math.max(mem, n);
+      } catch {
+        return mem;
+      }
+    },
+    set(v: number) {
+      mem = v;
+      try {
+        localStorage.setItem(key, String(v));
+      } catch {
+        /* in-memory fallback */
+      }
+    },
+  };
 };
-const game = createGame(garage, audio, best);
+const game = createGame([garage, testpad], audio, bestFor);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
