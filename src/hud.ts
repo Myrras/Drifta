@@ -146,9 +146,12 @@ export function drawHud(
       ctx.fillRect(cx - bw / 2, baseY + 11 * u, bw * g, u);
     }
 
-    for (const p of v.popups) {
+    // popups are appended oldest-first; keep the 5 newest, newest in slot 0 (bottom).
+    const live = v.popups.slice(-5);
+    const slotH = 1.2 * 5 * u; // one line at the largest popup font
+    live.forEach((p, i) => {
       const t = p.age / 1.5;
-      const y = baseY - 6 * u - t * 12 * u;
+      const y = baseY - 6 * u - (live.length - 1 - i) * slotH - t * 12 * u;
       const alpha = Math.max(0, 1 - t * t);
       if (p.kind === 'trick') {
         text(ctx, p.text, cx, y, 3.4 * u, '#ffd23f', { align: 'center', italic: true, alpha });
@@ -159,13 +162,18 @@ export function drawHud(
           alpha,
         });
       } else {
-        text(ctx, 'BAILED', cx, y, 5 * u, '#ff4444', { align: 'center', italic: true, alpha });
-        text(ctx, `-${formatScore(p.amount)}`, cx, y + 4.5 * u, 3.4 * u, '#ff8888', {
+        // BAILED and its amount both sit inside this slot (about ±3u around y).
+        text(ctx, 'BAILED', cx, y - 1.6 * u, 5 * u, '#ff4444', {
+          align: 'center',
+          italic: true,
+          alpha,
+        });
+        text(ctx, `-${formatScore(p.amount)}`, cx, y + 1.9 * u, 3.4 * u, '#ff8888', {
           align: 'center',
           alpha,
         });
       }
-    }
+    });
 
     const r = 9 * u;
     const sx = width - pad - r - u;
