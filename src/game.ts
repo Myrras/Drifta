@@ -15,7 +15,6 @@ export interface BestStore {
 const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
 const POPUP_LIFE = 1.5; // s
 const SHAKE_DECAY = 3; // per s
-const RING_MARGIN = 0.5; // m beyond the ring still counted as inside
 const RAMP_DRIFT_MIN = 0.6; // fraction of the helix that must be drifted
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
@@ -64,11 +63,11 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
   const smooth = (x: number) => x * x * (3 - 2 * x);
 
   /** progress along a helix; null if the car is outside the ring (with margin) */
-  function progress(h: Helix, margin: number): number | null {
+  function progress(h: Helix, margin: number, outer = margin): number | null {
     const dx = s.car.pos.x - h.center.x;
     const dy = s.car.pos.y - h.center.y;
     const r = Math.hypot(dx, dy);
-    if (r < h.rCore - margin || r > h.rOuter + margin) return null;
+    if (r < h.rCore - margin || r > h.rOuter + outer) return null;
     let d = Math.atan2(dy, dx) - h.enterAngle;
     d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
     return d / h.sweep;
@@ -90,7 +89,8 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
       return false;
     }
     const h = s.helix;
-    const raw = progress(h, RING_MARGIN);
+    // wide band: a wall bounce must not end the transition
+    const raw = progress(h, 2, 4);
     const period = (2 * Math.PI) / Math.abs(h.sweep); // p wraps every period
     let p = s.p;
     if (raw !== null) p = raw + Math.round((s.p - raw) / period) * period;

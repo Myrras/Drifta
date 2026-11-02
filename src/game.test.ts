@@ -282,3 +282,46 @@ describe('helix', () => {
     expect(complete(0.3)).toBe(false);
   });
 });
+
+describe('helix wall bounce (garage)', () => {
+  const h = garage.helixes[0];
+  const mid = (h.rCore + h.rOuter) / 2;
+  for (const bounceP of [0.3, 0.7]) {
+    for (const wall of [h.rOuter - 0.8, h.rCore + 0.8]) {
+      it(`stays in the helix after a bounce at p=${bounceP}, r=${wall}`, () => {
+        const { game, step, toRun } = setup();
+        toRun();
+        const car = game.debug.car;
+        const at = (p: number, r: number, speed = 0) => {
+          const a = h.enterAngle + h.sweep * p;
+          Object.assign(car, {
+            pos: { x: h.center.x + r * Math.cos(a), y: h.center.y + r * Math.sin(a) },
+            angle: a + (Math.sign(h.sweep) * Math.PI) / 2,
+            vel: { x: Math.cos(a) * speed, y: Math.sin(a) * speed },
+            angVel: 0,
+          });
+        };
+        game.debug.floorIndex = 0;
+        at(0.05, mid);
+        step({}, 2);
+        at(bounceP, mid);
+        step({}, 2);
+        at(bounceP, wall, wall > mid ? 10 : -10);
+        for (let i = 0; i < 30; i++) {
+          step({});
+          expect(game.view().render.blend).not.toBeNull();
+        }
+        for (const p of [0.45, 0.55, 0.8, 1]) {
+          at(p, mid);
+          step({}, 2);
+          expect(game.view().render.blend).not.toBeNull();
+          expect(game.debug.floorIndex).toBe(p >= 0.5 ? 1 : 0);
+        }
+        at(1.2, mid);
+        step({}, 2);
+        expect(game.view().render.blend).toBeNull();
+        expect(game.debug.floorIndex).toBe(1);
+      });
+    }
+  }
+});
