@@ -123,7 +123,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle);
-    const hit = collide(car, floor.solids);
+    const hit = collide(car, floor.solids, floor.circles);
     if (hit) {
       const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
       bounce(car, hit);
@@ -133,7 +133,7 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
         s.shake = Math.min(1, impact / 10);
       }
     }
-    const nearDist = s.drift.drifting ? nearestDistance(car, floor.solids) : Infinity;
+    const nearDist = s.drift.drifting ? nearestDistance(car, floor.solids, floor.circles) : Infinity;
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
 

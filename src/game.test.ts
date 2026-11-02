@@ -74,7 +74,7 @@ describe('game', () => {
     const { game, step, toRun, best } = setup();
     toRun();
     game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 7, y: 57.5 };
+    game.debug.car.pos = { x: 134, y: 12 };
     step();
     const r = game.view().hud.results!;
     expect(game.view().hud.phase).toBe('results');
@@ -87,7 +87,7 @@ describe('game', () => {
     const { game, step, toRun, best } = setup(memBest(1e9));
     toRun();
     game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 7, y: 57.5 };
+    game.debug.car.pos = { x: 134, y: 12 };
     step();
     expect(game.view().hud.results!.newBest).toBe(false);
     expect(best.get()).toBe(1e9);
@@ -97,7 +97,7 @@ describe('game', () => {
     const { game, step, toRun } = setup();
     toRun();
     startCombo(game);
-    Object.assign(game.debug.car, { pos: { x: 116, y: 12.5 }, angle: 0, vel: { x: 20, y: 0 } });
+    Object.assign(game.debug.car, { pos: { x: 136, y: 12.5 }, angle: 0, vel: { x: 20, y: 0 } });
     step({}, 10);
     expect(game.debug.scoring.combo).toBeNull();
     expect(game.view().hud.popups.some((p) => p.kind === 'fail')).toBe(true);
@@ -108,7 +108,7 @@ describe('game', () => {
     const { game, step, toRun } = setup();
     toRun();
     startCombo(game);
-    Object.assign(game.debug.car, { pos: { x: 116.9, y: 12.5 }, angle: 0, vel: { x: 1, y: 0 } });
+    Object.assign(game.debug.car, { pos: { x: 136.9, y: 12.5 }, angle: 0, vel: { x: 1, y: 0 } });
     step({}, 30);
     expect(game.debug.car.vel.x).toBeLessThanOrEqual(0); // bounced off the wall
     expect(game.debug.scoring.combo).not.toBeNull();
@@ -173,7 +173,7 @@ describe('game', () => {
     const { game, step, toRun } = setup();
     toRun();
     game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 7, y: 57.5 };
+    game.debug.car.pos = { x: 134, y: 12 };
     step();
     step({ confirm: true }, 10);
     expect(game.view().hud.phase).toBe('results');
