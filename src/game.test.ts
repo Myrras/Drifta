@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createGame, type AudioLike, type BestStore } from './game';
 import { garage } from './maps/garage';
-import { COUNTDOWN_SECONDS, DT, FLOOR_FADE_SECONDS } from './config';
-import type { InputState } from './types';
+import { COUNTDOWN_SECONDS, DT } from './config';
+import type { GameMap, InputState } from './types';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -62,19 +62,12 @@ describe('game', () => {
     expect(game.debug.car.pos).toEqual(garage.start.pos);
   });
 
-  it('moves to the next floor through a ramp', () => {
+  it('has no fade and no blend outside helixes', () => {
     const { game, step, toRun } = setup();
     toRun();
-    game.debug.car.pos = { x: 7, y: 57.5 };
-    step({}, 2);
-    expect(game.view().render.fade).toBeGreaterThan(0);
-    step({}, Math.ceil(FLOOR_FADE_SECONDS / DT));
-    const spawn = garage.floors[0].ramps[0].spawn;
-    expect(game.debug.floorIndex).toBe(1);
-    expect(game.debug.car.pos.x).toBeCloseTo(spawn.pos.x);
-    expect(game.debug.car.pos.y).toBeCloseTo(spawn.pos.y);
+    step({}, 5);
     expect(game.view().render.fade).toBe(0);
-    expect(game.view().hud.floorName).toBe('LEVEL 2');
+    expect(game.view().render.blend).toBeNull();
   });
 
   it('finishes on the ground floor and stores a new best', () => {
@@ -196,5 +189,97 @@ describe('game', () => {
     game.view();
     game.view();
     expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('helix', () => {
+  const C = { x: 50, y: 50 };
+  const floor = (name: string) => ({
+    name,
+    w: 100,
+    h: 100,
+    solids: [],
+    bays: [],
+    lights: [],
+    ramps: [],
+    circles: [],
+  });
+  const map: GameMap = {
+    name: 'test',
+    parTime: 60,
+    floors: [floor('F0'), floor('F1')],
+    helixes: [{ from: 0, center: C, rCore: 3, rOuter: 8, enterAngle: 0, sweep: Math.PI }],
+    start: { floor: 0, pos: { x: 10, y: 10 }, angle: 0 },
+    finish: { floor: 1, zone: { x: 90, y: 90, w: 5, h: 5 } },
+  };
+
+  function rig(floorIndex = 0) {
+    const game = createGame(map, audio, memBest());
+    const step = (input: Partial<InputState> = {}, n = 1) => {
+      for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    game.debug.floorIndex = floorIndex;
+    // teleport onto the ring at progress p, heading along (dir 1) or against (-1) travel
+    const at = (p: number, dir = 1, r = 5.5) => {
+      const a = p * Math.PI;
+      Object.assign(game.debug.car, {
+        pos: { x: C.x + r * Math.cos(a), y: C.y + r * Math.sin(a) },
+        angle: a + (dir * Math.PI) / 2,
+        vel: { x: 0, y: 0 },
+        angVel: 0,
+      });
+      step({}, 2);
+    };
+    return { game, at, step };
+  }
+
+  it('switches floors going down at p = 0.5 and blends', () => {
+    const { game, at } = rig();
+    at(0.05);
+    expect(game.debug.floorIndex).toBe(0);
+    expect(game.view().render.blend!.toFloor).toBe(1);
+    for (const p of [0.1, 0.2, 0.3, 0.4, 0.45]) at(p);
+    expect(game.debug.floorIndex).toBe(0);
+    at(0.5);
+    expect(game.debug.floorIndex).toBe(1);
+    expect(game.view().render.blend).toEqual({ toFloor: 0, t: expect.closeTo(0.5, 5) });
+    for (const p of [0.7, 0.9, 1]) at(p);
+    expect(game.debug.floorIndex).toBe(1);
+    at(1, 1, 20);
+    expect(game.debug.floorIndex).toBe(1);
+    expect(game.view().render.blend).toBeNull();
+    expect(game.view().render.fade).toBe(0);
+  });
+
+  it('switches back going up', () => {
+    const { game, at } = rig(1);
+    for (const p of [0.95, 0.8, 0.6]) at(p, -1);
+    expect(game.debug.floorIndex).toBe(1);
+    for (const p of [0.45, 0.2, 0]) at(p, -1);
+    expect(game.debug.floorIndex).toBe(0);
+  });
+
+  it('does not enter the helix mid-way', () => {
+    const { game, at } = rig();
+    at(0.6);
+    expect(game.debug.helix).toBeNull();
+    expect(game.debug.floorIndex).toBe(0);
+    expect(game.view().render.blend).toBeNull();
+  });
+
+  const complete = (drifted: number) => {
+    const r = rig();
+    r.at(0.05);
+    startCombo(r.game);
+    r.game.debug.drifted = drifted;
+    for (const p of [0.3, 0.6, 0.9, 1.1]) r.at(p);
+    return r.game.view().hud.popups.some((p) => p.text === 'RAMP DRIFT');
+  };
+
+  it('awards RAMP DRIFT only when drifted >= 60%', () => {
+    expect(complete(0.7)).toBe(true);
+    expect(complete(0.3)).toBe(false);
   });
 });
