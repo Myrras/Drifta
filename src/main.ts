@@ -1,0 +1,11 @@
+const canvas = document.getElementById('game') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d')!;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+ctx.fillStyle = '#111';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = '#fff';
+ctx.font = 'bold 48px sans-serif';
+ctx.textAlign = 'center';
+ctx.textBaseline = 'middle';
+ctx.fillText('DRIFTA', canvas.width / 2, canvas.height / 2);
