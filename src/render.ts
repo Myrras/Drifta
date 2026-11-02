@@ -1,6 +1,8 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
-import type { CarState, Floor, GameMap, Helix, Rect, Vec } from './types';
+import type { CarState, Floor, GameMap, Helix, Rect, Solid, Vec } from './types';
 import { garage, garageRoute } from './maps/garage';
+import { CAR_MODELS } from './models';
+import { drawParkedCar } from './sprites';
 import type { RenderView } from './view';
 
 // --- visual tuning ---
@@ -19,7 +21,7 @@ const BG = '#0a0b0d';
 const CONCRETE = '#2b2c30';
 const CONCRETE_ROOF = '#22262e';
 const PAINT_WHITE = '#b9b9b0';
-const PAINT_ARROW = 'rgba(220,220,210,0.55)';
+const ARROW_ALPHA = 0.35; // painted floor arrows, applied after the wear mask
 const PAINT_YELLOW = '#cfa82a';
 const HAZARD_YELLOW = '#dcae1e';
 const HAZARD_BLACK = '#17171a';
@@ -48,12 +50,17 @@ const PLAYER_HOOD = '#a81a28';
 const PLAYER_DECK = '#b81c2b';
 const CAR_SHADOW_OFFSET: Vec = { x: 0.25, y: 0.35 };
 const CAR_SHADOW_ALPHA = 0.55;
+const POD_Y = 0.48; // pop-up headlight pods, m off the center line
 
-const LIGHT_RGB = '190,255,225'; // cool fluorescent
-const POST_RGB = '200,215,255'; // roof lamp posts
-const LIGHT_R = 7.5;
-const POST_R = 10;
-const TUBE = 'rgba(225,245,235,0.4)';
+// lighting: dark ambient layer with light cut out (half res) drawn over the world, then additive glows
+const LIGHT_PX = 4; // px per meter, static per-floor light layers
+const AMBIENT = 0.82; // darkness inside the garage
+const AMBIENT_ROOF = 0.74;
+const LIGHT_R = 7; // ceiling pool radius
+const POST_R = 9; // roof lamp posts
+const HEAD_LEN = 25; // player headlight cones
+const PARKED_HEAD_LEN = 18;
+const HAZARD_HZ = 1.5;
 
 const SKID_STYLE = 'rgba(12,12,14,0.35)';
 const SKID_W = 0.25;
@@ -97,6 +104,130 @@ function glowSprite(rgb: string, stops: [number, number][]) {
   return c;
 }
 
+/** Light cone, apex at the left middle, 1 unit long along +x (draw into a len x len square); ~35° spread, soft edges. */
+function coneSprite(rgb: string) {
+  const N = 256;
+  const { c, g } = makeCanvas(N, N);
+  const img = g.createImageData(N, N);
+  const [r, gr, b] = rgb.split(',').map(Number);
+  const half = (17.5 * Math.PI) / 180;
+  const soft = (8 * Math.PI) / 180;
+  const smooth = (e0: number, e1: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const u = (x + 0.5) / N;
+      const v = (y + 0.5 - N / 2) / N;
+      const d = Math.hypot(u, v);
+      const a =
+        (1 - smooth(half - soft, half + soft, Math.abs(Math.atan2(v, u)))) *
+        Math.max(0, 1 - d) ** 1.6 *
+        smooth(0, 0.03, d);
+      const i = (y * N + x) * 4;
+      img.data[i] = r;
+      img.data[i + 1] = gr;
+      img.data[i + 2] = b;
+      img.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/** A light source: cone (ang = direction, size = length) or round glow (size = radius). */
+interface Lamp {
+  cone: boolean;
+  x: number;
+  y: number;
+  ang: number;
+  size: number;
+  /** how much darkness it removes, 0..1 */
+  cut: number;
+  /** colored additive glow: tint key + alpha */
+  tint: Tint;
+  glow: number;
+}
+type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white';
+const TINTS: Record<Tint, string> = {
+  cool: '205,230,255',
+  warm: '255,232,190',
+  red: '255,30,40',
+  amber: '255,150,20',
+  white: '255,255,255',
+};
+
+let lightSprites: {
+  cone: HTMLCanvasElement;
+  dot: HTMLCanvasElement;
+  cones: Record<Tint, HTMLCanvasElement>;
+  dots: Record<Tint, HTMLCanvasElement>;
+} | null = null;
+function lightKit() {
+  if (!lightSprites) {
+    const dot = (rgb: string) =>
+      glowSprite(rgb, [
+        [0, 1],
+        [0.35, 0.5],
+        [1, 0],
+      ]);
+    const per = (f: (rgb: string) => HTMLCanvasElement) =>
+      Object.fromEntries(Object.entries(TINTS).map(([k, rgb]) => [k, f(rgb)])) as Record<
+        Tint,
+        HTMLCanvasElement
+      >;
+    lightSprites = {
+      cone: coneSprite(TINTS.white),
+      dot: dot(TINTS.white),
+      cones: per(coneSprite),
+      dots: per(dot),
+    };
+  }
+  return lightSprites;
+}
+
+/** Draws a lamp's darkness cut (mask = true, white) or its colored glow, scaled by weight a. */
+function drawLamp(g: Ctx, l: Lamp, mask: boolean, a: number) {
+  const s = lightKit();
+  const k = (mask ? l.cut : l.glow) * a;
+  if (k <= 0) return;
+  g.globalAlpha = Math.min(1, k);
+  if (l.cone) {
+    g.save();
+    g.translate(l.x, l.y);
+    g.rotate(l.ang);
+    g.drawImage(mask ? s.cone : s.cones[l.tint], 0, -l.size / 2, l.size, l.size);
+    g.restore();
+  } else {
+    const img = mask ? s.dot : s.dots[l.tint];
+    g.drawImage(img, l.x - l.size, l.y - l.size, 2 * l.size, 2 * l.size);
+  }
+}
+
+/** Patchy alpha used to make painted arrows look worn; tiles seamlessly enough at 19 m. */
+let wear: HTMLCanvasElement | null = null;
+function wearMask() {
+  if (wear) return wear;
+  const rand = rng(4242);
+  const n = 24;
+  const small = makeCanvas(n, n);
+  const img = small.g.createImageData(n, n);
+  for (let i = 0; i < img.data.length; i += 4) {
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+    img.data[i + 3] = 130 + rand() * 125;
+  }
+  small.g.putImageData(img, 0, 0);
+  const { c, g } = makeCanvas(192, 192);
+  g.drawImage(small.c, 0, 0, 192, 192);
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 900; i++) {
+    g.fillStyle = `rgba(0,0,0,${0.3 + rand() * 0.7})`;
+    g.fillRect(rand() * 192, rand() * 192, 1 + rand() * 2, 1 + rand() * 2);
+  }
+  return (wear = c);
+}
+
 function hazard(g: Ctx, r: Rect, band: number) {
   g.save();
   g.beginPath();
@@ -117,23 +248,53 @@ function hazard(g: Ctx, r: Rect, band: number) {
   g.restore();
 }
 
-/** Arrow pointing along `angle`, ~3.2 m long at size 1. */
-function arrow(g: Ctx, x: number, y: number, angle: number, size: number) {
+const STEM = 6; // turn arrow stem length (m) behind the bend
+const OUT = 2.4; // leg after the bend, before the head
+const HEAD = 2;
+
+/** Arrowhead at (x, y) pointing along ang. */
+function arrowHead(g: Ctx, x: number, y: number, ang: number) {
   g.save();
   g.translate(x, y);
-  g.rotate(angle);
-  g.scale(size, size);
+  g.rotate(ang);
   g.beginPath();
-  g.moveTo(-1.6, -0.18);
-  g.lineTo(0.3, -0.18);
-  g.lineTo(0.3, -0.75);
-  g.lineTo(1.6, 0);
-  g.lineTo(0.3, 0.75);
-  g.lineTo(0.3, 0.18);
-  g.lineTo(-1.6, 0.18);
+  g.moveTo(HEAD, 0);
+  g.lineTo(0, -1.4);
+  g.lineTo(0, 1.4);
   g.closePath();
   g.fill();
   g.restore();
+}
+
+/** Painted turn arrow, bend at (x, y): stem along dirIn, bending by `turn` (|turn| <= 90°) into a head. */
+function turnArrow(g: Ctx, x: number, y: number, dirIn: number, turn: number) {
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  g.save();
+  g.translate(x, y);
+  g.rotate(dirIn);
+  g.beginPath();
+  g.moveTo(-STEM, 0);
+  g.arcTo(0, 0, c, s, 1.1);
+  g.lineTo(OUT * c, OUT * s);
+  g.stroke();
+  arrowHead(g, OUT * c, OUT * s, turn);
+  g.restore();
+}
+
+/** World sample points covering a turn arrow's footprint (stem, leg, head, ±0.9 m wide). */
+function turnFootprint(x: number, y: number, dirIn: number, turn: number): Vec[] {
+  const pts: Vec[] = [];
+  const add = (u: number, w: number) =>
+    pts.push({
+      x: x + u * Math.cos(dirIn) - w * Math.sin(dirIn),
+      y: y + u * Math.sin(dirIn) + w * Math.cos(dirIn),
+    });
+  for (let u = -STEM; u <= 0; u += 1) for (const w of [-1.4, 0, 1.4]) add(u, w);
+  for (let d = 0.5; d <= OUT + HEAD; d += 0.8)
+    for (const w of [-1.4, 0, 1.4])
+      add(d * Math.cos(turn) - w * Math.sin(turn), d * Math.sin(turn) + w * Math.cos(turn));
+  return pts;
 }
 
 /** Road-marking text centered at (x, y); `heading` = direction the reader drives (text top points there). */
@@ -204,37 +365,142 @@ function helixSurface(g: Ctx, h: Helix, upper: boolean, text: string) {
   }
   g.setLineDash([]);
 
-  // chevrons along the lane center; the slot at this floor's end of the ramp holds the label
-  const n = Math.max(2, Math.round((Math.abs(h.sweep) * (h.rCore + w / 2)) / 5));
-  const slot = upper ? 0 : n - 1;
-  const half = Math.min(0.9, w * 0.18);
-  g.strokeStyle = PAINT_ARROW;
-  g.lineWidth = 0.35;
-  g.lineJoin = 'miter';
-  g.lineCap = 'butt';
-  for (let i = 0; i < n; i++) {
-    const { pos, angle } = helixAt(h, (i + 0.5) / n);
-    if (i === slot) {
-      label(g, text, pos.x, pos.y, angle, Math.min(1.6, w * 0.22), w * 0.8, true);
-      continue;
-    }
-    g.save();
-    g.translate(pos.x, pos.y);
-    g.rotate(angle);
-    g.beginPath();
-    g.moveTo(-half * 0.7, -half);
-    g.lineTo(half * 0.4, 0);
-    g.lineTo(-half * 0.7, half);
-    g.stroke();
-    g.restore();
-  }
+  // label at this floor's end of the ramp
+  const { pos, angle } = helixAt(h, upper ? 0.07 : 0.93);
+  label(g, text, pos.x, pos.y, angle, Math.min(1.6, w * 0.22), w * 0.8, true);
 }
 
-// shortcut: assumes vertical (tall) bays and parked cars like the garage map; add a horizontal branch if a map needs it.
-/** True if the rect's back (wall / opposite bay) is its top edge, false if bottom. */
-function backIsTop(r: Rect, blockers: Rect[]) {
-  const p = { x: r.x + r.w / 2, y: r.y - 0.8 };
-  return blockers.some((b) => inRect(p, b));
+/** Curved painted arrow along the helix lane just after its entry. */
+function helixArrow(g: Ctx, h: Helix) {
+  const r = (h.rCore + h.rOuter) / 2;
+  const a0 = h.enterAngle + h.sweep * 0.15;
+  const a1 = h.enterAngle + h.sweep * 0.36;
+  g.beginPath();
+  g.arc(h.center.x, h.center.y, r, a0, a1, h.sweep < 0);
+  g.stroke();
+  const { pos, angle } = helixAt(h, 0.36);
+  arrowHead(g, pos.x, pos.y, angle);
+}
+
+/** Direction from the rect center toward its back (wall or opposite bay) along its long axis. */
+function backAngle(r: Rect, blockers: Rect[]) {
+  const tall = r.h >= r.w;
+  const p = tall ? { x: r.x + r.w / 2, y: r.y - 0.8 } : { x: r.x - 0.8, y: r.y + r.h / 2 };
+  const first = blockers.some((b) => inRect(p, b));
+  return tall ? (first ? -Math.PI / 2 : Math.PI / 2) : first ? Math.PI : 0;
+}
+
+interface ParkedPose {
+  s: Solid;
+  x: number;
+  y: number;
+  /** nose heading */
+  facing: number;
+  len: number;
+  wid: number;
+}
+
+/** Parked cars with their center, nose heading (data or nose-in) and footprint. */
+function parkedPoses(f: Floor): ParkedPose[] {
+  const blockers: Rect[] = [...f.solids.filter((s) => s.kind === 'wall'), ...f.bays];
+  return f.solids
+    .filter((s) => s.kind === 'car')
+    .map((s) => {
+      const m = s.model && CAR_MODELS[s.model];
+      return {
+        s,
+        x: s.x + s.w / 2,
+        y: s.y + s.h / 2,
+        facing: s.facing ?? backAngle(s, blockers),
+        len: m ? m.length : Math.max(s.w, s.h),
+        wid: m ? m.width : Math.min(s.w, s.h),
+      };
+    });
+}
+
+/** Lamps of a parked car with headlights on: cones from the front corners, lamp and tail glows. */
+function parkedLamps(p: ParkedPose): Lamp[] {
+  const c = Math.cos(p.facing);
+  const s = Math.sin(p.facing);
+  const at = (u: number, w: number) => ({ x: p.x + u * c - w * s, y: p.y + u * s + w * c });
+  const out: Lamp[] = [];
+  for (const side of [-1, 1]) {
+    const w = side * (p.wid / 2 - 0.35);
+    const f = at(p.len / 2 - 0.1, w);
+    const r = at(-p.len / 2, w);
+    out.push(
+      {
+        cone: true,
+        ...f,
+        ang: p.facing,
+        size: PARKED_HEAD_LEN,
+        cut: 0.8,
+        tint: 'warm',
+        glow: 0.14,
+      },
+      { cone: false, ...f, ang: 0, size: 0.7, cut: 0.4, tint: 'warm', glow: 0.4 },
+      { cone: false, ...r, ang: 0, size: 0.6, cut: 0.15, tint: 'red', glow: 0.3 },
+    );
+  }
+  return out;
+}
+
+/** The four corner lamps of a parked car with hazards on. */
+function hazardLamps(p: ParkedPose): Lamp[] {
+  const c = Math.cos(p.facing);
+  const s = Math.sin(p.facing);
+  const out: Lamp[] = [];
+  for (const u of [-1, 1])
+    for (const w of [-1, 1]) {
+      const lu = u * (p.len / 2 - 0.15);
+      const lw = w * (p.wid / 2 - 0.15);
+      out.push({
+        cone: false,
+        x: p.x + lu * c - lw * s,
+        y: p.y + lu * s + lw * c,
+        ang: 0,
+        size: 1.6,
+        cut: 0.4,
+        tint: 'amber',
+        glow: 0.85,
+      });
+    }
+  return out;
+}
+
+/** Static per-floor light layers: darkness cut mask (white alpha), colored glow, blinking hazard lamps. */
+function buildLights(map: GameMap, idx: number) {
+  const f = map.floors[idx];
+  const mk = () => {
+    const l = makeCanvas(f.w * LIGHT_PX, f.h * LIGHT_PX);
+    l.g.scale(LIGHT_PX, LIGHT_PX);
+    return l;
+  };
+  const mask = mk();
+  const glow = mk();
+  const lamps: Lamp[] = [];
+  if (idx === 0) {
+    // roof: lamp posts (its pillars) instead of ceiling lights
+    for (const s of f.solids) {
+      if (s.kind !== 'pillar') continue;
+      const [x, y] = [s.x + s.w / 2, s.y + s.h / 2];
+      lamps.push({ cone: false, x, y, ang: 0, size: POST_R, cut: 0.5, tint: 'cool', glow: 0.1 });
+    }
+  } else {
+    for (const l of f.lights)
+      lamps.push({ cone: false, ...l, ang: 0, size: LIGHT_R, cut: 0.5, tint: 'cool', glow: 0.07 });
+  }
+  const poses = parkedPoses(f);
+  for (const p of poses) if (p.s.lights === 'on') lamps.push(...parkedLamps(p));
+  for (const l of lamps) {
+    drawLamp(mask.g, l, true, 1);
+    drawLamp(glow.g, l, false, 1);
+  }
+  return {
+    mask: mask.c,
+    glow: glow.c,
+    hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
+  };
 }
 
 /** Parked car in local frame, +x = nose. */
@@ -277,6 +543,59 @@ function parkedCar(g: Ctx, len: number, wid: number, color: string) {
   g.fillRect(hl - 0.12, hw - 0.5, 0.08, 0.35);
 }
 
+/** Worn white arrow layer (full opacity, caller fades it): turn arrows before route turns > 30°, curved arrows at helix entries. */
+function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
+  const f = map.floors[idx];
+  const { c, g } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
+  g.scale(STATIC_PX, STATIC_PX);
+  g.strokeStyle = g.fillStyle = '#fff';
+  g.lineWidth = 0.9;
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+
+  const route = map === garage ? (garageRoute.find((r) => r.floor === idx)?.points ?? []) : [];
+  const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
+  const blocked = (p: Vec) =>
+    p.x < 1 ||
+    p.y < 1 ||
+    p.x > f.w - 1 ||
+    p.y > f.h - 1 ||
+    f.bays.some((r) => inRect(p, r)) ||
+    f.solids.some((r) => inRect(p, r)) ||
+    f.circles.some((k) => Math.hypot(p.x - k.x, p.y - k.y) < k.r + 0.3) ||
+    rings.some((h) => {
+      const d = Math.hypot(p.x - h.center.x, p.y - h.center.y);
+      return d > h.rCore - 0.3 && d < h.rOuter + 0.3;
+    });
+  const placed: Vec[] = [];
+  for (let i = 1; i + 1 < route.length; i++) {
+    const [a, b, n] = [route[i - 1], route[i], route[i + 1]];
+    const dirIn = Math.atan2(b.y - a.y, b.x - a.x);
+    let turn = Math.atan2(n.y - b.y, n.x - b.x) - dirIn;
+    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    if (Math.abs(turn) <= Math.PI / 6) continue;
+    turn = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, turn));
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    for (const back of [10, 8, 12, 6]) {
+      if (back > segLen) continue;
+      const x = b.x - back * Math.cos(dirIn);
+      const y = b.y - back * Math.sin(dirIn);
+      if (placed.some((q) => Math.hypot(q.x - x, q.y - y) < 10)) continue;
+      if (turnFootprint(x, y, dirIn, turn).some(blocked)) continue;
+      placed.push({ x, y });
+      turnArrow(g, x, y, dirIn, turn);
+      break;
+    }
+  }
+  for (const h of map.helixes) if (h.from === idx) helixArrow(g, h);
+
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'destination-in';
+  g.fillStyle = g.createPattern(wearMask(), 'repeat')!;
+  g.fillRect(0, 0, c.width, c.height);
+  return c;
+}
+
 function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   const f = map.floors[idx];
   const roof = idx === 0;
@@ -309,61 +628,27 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   for (let y = 10; y < f.h; y += 10) (g.moveTo(0, y), g.lineTo(f.w, y));
   g.stroke();
 
-  // lane arrows: every ~14 m along this floor's route, in travel direction, clear of obstacles
-  const route = map === garage ? (garageRoute.find((r) => r.floor === idx)?.points ?? []) : [];
-  const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
-  const blocked = (p: Vec) =>
-    p.x < 1 ||
-    p.y < 1 ||
-    p.x > f.w - 1 ||
-    p.y > f.h - 1 ||
-    f.bays.some((r) => inRect(p, r)) ||
-    f.solids.some((r) => inRect(p, r)) ||
-    f.circles.some((k) => Math.hypot(p.x - k.x, p.y - k.y) < k.r + 0.3) ||
-    rings.some((h) => {
-      const d = Math.hypot(p.x - h.center.x, p.y - h.center.y);
-      return d > h.rCore - 0.3 && d < h.rOuter + 0.3;
-    });
-  const placed: Vec[] = [];
-  g.fillStyle = PAINT_ARROW;
-  let next = 7;
-  for (let i = 1; i < route.length; i++) {
-    const a = route[i - 1];
-    const b = route[i];
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    const ang = Math.atan2(b.y - a.y, b.x - a.x);
-    const [c, s] = [Math.cos(ang), Math.sin(ang)];
-    for (; next <= len; next += 14) {
-      const p = { x: a.x + c * next, y: a.y + s * next };
-      const clear = [-1.7, -0.8, 0, 0.8, 1.7].every((u) =>
-        [-0.8, 0, 0.8].every((w) => !blocked({ x: p.x + c * u - s * w, y: p.y + s * u + c * w })),
-      );
-      if (clear && placed.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= 9)) {
-        placed.push(p);
-        arrow(g, p.x, p.y, ang, 0.9);
-      }
-    }
-    next -= len;
-  }
-
-  // painted bays: sides + back line, yellow wheel stop near the back
+  // painted bays (tall or wide): long sides + back line, yellow wheel stop near the back
   const walls = f.solids.filter((s) => s.kind === 'wall');
   const blockers: Rect[] = [...walls, ...f.bays];
   g.strokeStyle = PAINT_WHITE;
   g.lineWidth = 0.12;
   g.lineCap = 'square';
   for (const b of f.bays) {
-    const top = backIsTop(b, blockers);
-    const back = top ? b.y : b.y + b.h;
-    const front = top ? b.y + b.h : b.y;
+    const d = Math.max(b.w, b.h) / 2;
+    const w = Math.min(b.w, b.h) / 2;
+    g.save();
+    g.translate(b.x + b.w / 2, b.y + b.h / 2);
+    g.rotate(backAngle(b, blockers)); // local +x = toward the back
     g.beginPath();
-    g.moveTo(b.x, front);
-    g.lineTo(b.x, back);
-    g.lineTo(b.x + b.w, back);
-    g.lineTo(b.x + b.w, front);
+    g.moveTo(-d, -w);
+    g.lineTo(d, -w);
+    g.lineTo(d, w);
+    g.lineTo(-d, w);
     g.stroke();
     g.fillStyle = PAINT_YELLOW;
-    g.fillRect(b.x + b.w / 2 - 0.75, top ? back + 0.6 : back - 0.82, 1.5, 0.22);
+    g.fillRect(d - 0.82, -0.75, 0.22, 1.5);
+    g.restore();
   }
 
   // finish: checkered strip on the edge facing the floor boundary + EXIT
@@ -411,6 +696,9 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     if (h.from === idx) helixSurface(g, h, true, 'DOWN');
     else if (h.from + 1 === idx) helixSurface(g, h, false, f.name);
   }
+  g.globalAlpha = ARROW_ALPHA;
+  g.drawImage(paintArrows(map, idx), 0, 0, f.w, f.h);
+  g.globalAlpha = 1;
 
   // walls with an inner hazard edge, pillars, parked cars (all with soft drop shadows)
   const shadow = () => {
@@ -434,24 +722,32 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       : { x: w.x + w.w / 2 < f.w / 2 ? w.x + w.w - t : w.x, y: w.y, w: t, h: w.h };
     hazard(g, strip, 0.4);
   }
-  let carIdx = 0;
   for (const s of f.solids) {
-    if (s.kind === 'pillar') {
-      shadow();
-      g.fillStyle = PILLAR;
-      g.fillRect(s.x, s.y, s.w, s.h);
-      noShadow();
-      const e = s.w * 0.12;
-      g.fillStyle = PILLAR_TOP;
-      g.fillRect(s.x + e, s.y + e, s.w - 2 * e, s.h - 2 * e);
-    } else if (s.kind === 'car') {
-      g.save();
-      g.translate(s.x + s.w / 2, s.y + s.h / 2);
-      g.rotate(backIsTop(s, blockers) ? -Math.PI / 2 : Math.PI / 2); // nose-in
-      parkedCar(g, s.h, s.w, PARKED_COLORS[(carIdx++ * 7 + idx * 3) % PARKED_COLORS.length]);
-      g.restore();
-    }
+    if (s.kind !== 'pillar') continue;
+    shadow();
+    g.fillStyle = PILLAR;
+    g.fillRect(s.x, s.y, s.w, s.h);
+    noShadow();
+    const e = s.w * 0.12;
+    g.fillStyle = PILLAR_TOP;
+    g.fillRect(s.x + e, s.y + e, s.w - 2 * e, s.h - 2 * e);
   }
+  parkedPoses(f).forEach((p, i) => {
+    const pick = (colors: string[]) => colors[(i * 7 + idx * 3) % colors.length];
+    g.save();
+    g.translate(p.x, p.y);
+    g.rotate(p.facing);
+    if (p.s.model) {
+      shadow(); // shadow from an inset silhouette, the model sprite covers it
+      g.fillStyle = '#000';
+      g.beginPath();
+      g.roundRect(-p.len / 2 + 0.15, -p.wid / 2 + 0.15, p.len - 0.3, p.wid - 0.3, 0.5);
+      g.fill();
+      noShadow();
+      drawParkedCar(g, p.s.model, p.s.color ?? pick(CAR_MODELS[p.s.model].colors));
+    } else parkedCar(g, p.len, p.wid, p.s.color ?? pick(PARKED_COLORS));
+    g.restore();
+  });
   // round concrete cores: hazard band at the edge, soft top highlight
   for (const k of f.circles) {
     shadow();
@@ -532,12 +828,17 @@ function playerSprites() {
   g.beginPath();
   g.roundRect(-hl + 0.18, -bh + 0.2, 0.85, 2 * bh - 0.4, 0.25);
   g.fill();
-  g.fillStyle = '#b01c2a'; // pop-up headlight lids
+  // raised pop-up headlight pods: dark recess behind, body-color top, lens face forward
   g.strokeStyle = 'rgba(0,0,0,0.55)';
   g.lineWidth = 0.03;
   for (const y of [-1, 1]) {
-    g.fillRect(hl - 0.62, y * 0.48 - 0.12, 0.34, 0.24);
-    g.strokeRect(hl - 0.62, y * 0.48 - 0.12, 0.34, 0.24);
+    g.fillStyle = '#1a0306';
+    g.fillRect(hl - 0.68, y * POD_Y - 0.15, 0.4, 0.3);
+    g.fillStyle = '#e0303e';
+    g.fillRect(hl - 0.6, y * POD_Y - 0.13, 0.28, 0.26);
+    g.strokeRect(hl - 0.6, y * POD_Y - 0.13, 0.28, 0.26);
+    g.fillStyle = '#fff2cc';
+    g.fillRect(hl - 0.32, y * POD_Y - 0.12, 0.06, 0.24);
   }
   g.fillStyle = '#4a070d'; // tail lights
   g.fillRect(-hl + 0.02, -bh + 0.2, 0.08, 0.32);
@@ -579,6 +880,98 @@ function playerSprites() {
   return { car: c, shadow: sh.c };
 }
 
+const BODY_HALF = CAR_WIDTH / 2 - 0.1;
+const TAIL_Y = BODY_HALF - 0.36;
+const REVERSE_Y = 0.22;
+const reversing = (car: CarState) =>
+  car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle) < -0.5;
+
+/** Player light sources: headlight cones, pod/tail/brake/reverse glows, a faint body glow. */
+function playerLamps(car: CarState, brake: number): Lamp[] {
+  const c = Math.cos(car.angle);
+  const s = Math.sin(car.angle);
+  const at = (u: number, w: number) => ({
+    x: car.pos.x + u * c - w * s,
+    y: car.pos.y + u * s + w * c,
+  });
+  const hl = CAR_LENGTH / 2;
+  const braking = brake > 0.1;
+  const rev = reversing(car);
+  const ang = car.angle;
+  const out: Lamp[] = [
+    { cone: false, ...at(0, 0), ang, size: 5, cut: 0.3, tint: 'white', glow: 0 },
+  ];
+  for (const side of [-1, 1]) {
+    out.push(
+      {
+        cone: true,
+        ...at(hl - 0.2, side * 0.6),
+        ang,
+        size: HEAD_LEN,
+        cut: 1,
+        tint: 'warm',
+        glow: 0.22,
+      },
+      {
+        cone: false,
+        ...at(hl - 0.3, side * POD_Y),
+        ang,
+        size: 1,
+        cut: 0.5,
+        tint: 'warm',
+        glow: 0.6,
+      },
+      {
+        cone: false,
+        ...at(-hl, side * TAIL_Y),
+        ang,
+        size: braking ? 2 : 1,
+        cut: braking ? 0.4 : 0.15,
+        tint: 'red',
+        glow: braking ? 0.75 : 0.3,
+      },
+    );
+    if (rev)
+      out.push({
+        cone: false,
+        ...at(-hl, side * REVERSE_Y),
+        ang,
+        size: 1,
+        cut: 0.4,
+        tint: 'white',
+        glow: 0.5,
+      });
+  }
+  if (rev)
+    out.push({
+      cone: true,
+      ...at(-hl, 0),
+      ang: ang + Math.PI,
+      size: 9,
+      cut: 0.85,
+      tint: 'white',
+      glow: 0.15,
+    });
+  return out;
+}
+
+/** Lit lamp lenses on top of the darkness: pod lenses, tail/brake lights, reverse lights. */
+function playerLenses(g: Ctx, car: CarState, brake: number) {
+  const hl = CAR_LENGTH / 2;
+  g.save();
+  g.translate(car.pos.x, car.pos.y);
+  g.rotate(car.angle);
+  g.fillStyle = '#fff6dc';
+  for (const y of [-1, 1]) g.fillRect(hl - 0.32, y * POD_Y - 0.12, 0.06, 0.24);
+  g.fillStyle = brake > 0.1 ? '#ff3a48' : '#a8101c';
+  for (const y of [-1, 1]) g.fillRect(-hl + 0.02, y * TAIL_Y - 0.16, 0.08, 0.32);
+  if (reversing(car)) {
+    g.fillStyle = '#f4f4f0';
+    for (const y of [-1, 1]) g.fillRect(-hl + 0.02, y * REVERSE_Y - 0.07, 0.07, 0.14);
+  }
+  g.restore();
+}
+
 function rearWheels(car: CarState): [Vec, Vec] {
   const c = Math.cos(car.angle);
   const s = Math.sin(car.angle);
@@ -607,17 +1000,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
 
   const statics = new Map<Floor, HTMLCanvasElement>();
   const skids = new Map<Floor, ReturnType<typeof makeCanvas>>();
+  const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
+  let shade = makeCanvas(1, 1); // half-res darkness mask
+  let clock = 0;
   const sprites = playerSprites();
-  const lightSprite = glowSprite(LIGHT_RGB, [
-    [0, 0.3],
-    [0.35, 0.12],
-    [1, 0],
-  ]);
-  const postSprite = glowSprite(POST_RGB, [
-    [0, 0.2],
-    [0.4, 0.08],
-    [1, 0],
-  ]);
   const puff = glowSprite(SMOKE_RGB, [
     [0, 1],
     [0.5, 0.55],
@@ -659,6 +1045,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     canvas.height = Math.round(cssH * dpr);
     canvas.style.width = `${cssW}px`;
     canvas.style.height = `${cssH}px`;
+    shade = makeCanvas(canvas.width / 2, canvas.height / 2);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
@@ -667,6 +1054,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const car = v.car;
     const kmh = Math.hypot(car.vel.x, car.vel.y) * 3.6;
     const step = Math.min(dt, 0.1);
+    clock += step;
 
     if (v.runId !== lastRun)
       for (const s of skids.values()) s.g.clearRect(0, 0, s.c.width, s.c.height);
@@ -752,14 +1140,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const ws = dpr * scale;
-    ctx.setTransform(
-      ws,
-      0,
-      0,
-      ws,
-      dpr * (cssW / 2 + sx - cam.x * scale),
-      dpr * (cssH / 2 + sy - cam.y * scale),
-    );
+    const ox = dpr * (cssW / 2 + sx - cam.x * scale);
+    const oy = dpr * (cssH / 2 + sy - cam.y * scale);
+    ctx.setTransform(ws, 0, 0, ws, ox, oy);
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
     const floors: [number, number][] = [[v.floorIndex, 1]];
@@ -772,14 +1155,6 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       ctx.drawImage(layer, 0, 0, fl.w, fl.h);
       const skid = skids.get(fl);
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
-      if (idx > 0) {
-        // fixture tubes sit under the car; same floor weighting as the pools below
-        ctx.globalAlpha = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
-        ctx.fillStyle = TUBE;
-        for (const l of fl.lights) {
-          if (visible(l.x, l.y, 1)) ctx.fillRect(l.x - 0.8, l.y - 0.09, 1.6, 0.18);
-        }
-      }
     }
     ctx.globalAlpha = 1;
 
@@ -807,27 +1182,50 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     ctx.globalAlpha = 1;
 
-    // lights: fluorescent ceiling pools + tubes; roof has lamp posts (its pillars) instead
-    // additive, so each floor's lights are weighted by its own share: (1-t) and t
-    ctx.globalCompositeOperation = 'lighter';
-    for (const [idx, a] of floors) {
+    // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t
+    const layers = floors.map(([idx, a]) => {
       const fl = v.map.floors[idx];
-      ctx.globalAlpha = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
-      if (idx === 0) {
-        for (const s of fl.solids) {
-          if (s.kind !== 'pillar') continue;
-          const x = s.x + s.w / 2;
-          const y = s.y + s.h / 2;
-          if (visible(x, y, POST_R))
-            ctx.drawImage(postSprite, x - POST_R, y - POST_R, 2 * POST_R, 2 * POST_R);
-        }
-      } else {
-        for (const l of fl.lights) {
-          if (!visible(l.x, l.y, LIGHT_R)) continue;
-          ctx.drawImage(lightSprite, l.x - LIGHT_R, l.y - LIGHT_R, 2 * LIGHT_R, 2 * LIGHT_R);
-        }
-      }
+      let l = lightLayers.get(fl);
+      if (!l) lightLayers.set(fl, (l = buildLights(v.map, idx)));
+      const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
+      return { fl, l, w, amb: idx === 0 ? AMBIENT_ROOF : AMBIENT };
+    });
+    const dyn: [Lamp, number][] = playerLamps(car, v.brake).map((l) => [l, 1]);
+    if ((clock * HAZARD_HZ) % 1 < 0.5)
+      for (const { l, w } of layers)
+        for (const set of l.hazards)
+          if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
+
+    const m = shade.g;
+    const k = shade.c.width / canvas.width;
+    m.setTransform(1, 0, 0, 1, 0, 0);
+    m.globalCompositeOperation = 'source-over';
+    m.globalAlpha = 1;
+    m.clearRect(0, 0, shade.c.width, shade.c.height);
+    m.fillStyle = `rgba(0,0,0,${layers.reduce((s, x) => s + x.w * x.amb, 0)})`;
+    m.fillRect(0, 0, shade.c.width, shade.c.height);
+    m.setTransform(ws * k, 0, 0, ws * k, ox * k, oy * k);
+    m.globalCompositeOperation = 'destination-out';
+    for (const { fl, l, w } of layers) {
+      m.globalAlpha = w;
+      m.drawImage(l.mask, 0, 0, fl.w, fl.h);
     }
+    for (const [l, a] of dyn) drawLamp(m, l, true, a);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
+    ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    playerLenses(ctx, car, v.brake);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, f.w, f.h); // keep glows off the void outside the floor
+    ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const { fl, l, w } of layers) {
+      ctx.globalAlpha = w;
+      ctx.drawImage(l.glow, 0, 0, fl.w, fl.h);
+    }
+    for (const [l, a] of dyn) drawLamp(ctx, l, false, a);
+    ctx.restore();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
