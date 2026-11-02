@@ -14,5 +14,4 @@ export const SPIN_BONUS = 1000; // per full 360 within a combo
 export const RAMP_DRIFT_BONUS = 750;
 export const TIME_BONUS_PER_SEC = 100;
 export const COUNTDOWN_SECONDS = 3;
-export const FLOOR_FADE_SECONDS = 0.6;
 export const BEST_SCORE_KEY = 'drifta.best';

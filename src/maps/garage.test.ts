@@ -98,7 +98,6 @@ describe('garage', () => {
         expect(f.circles).toContainEqual({ x: h.center.x, y: h.center.y, r: h.rCore });
       }
     }
-    for (const f of floors) expect(f.ramps).toEqual([]);
     expect(garage.start.floor).toBe(0);
     expect(garage.finish.floor).toBe(2);
   });

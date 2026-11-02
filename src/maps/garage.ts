@@ -270,7 +270,6 @@ function floor(
     ],
     bays: parked.flatMap((p) => p.bays),
     lights: lightsAlong(garageRoute[idx].points),
-    ramps: [],
     circles: joined.map((h) => ({ ...h.center, r: h.rCore })),
   };
 }

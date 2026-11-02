@@ -201,7 +201,6 @@ describe('helix', () => {
     solids: [],
     bays: [],
     lights: [],
-    ramps: [],
     circles: [],
   });
   const map: GameMap = {

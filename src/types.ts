@@ -15,11 +15,6 @@ export interface Spawn {
   pos: Vec;
   angle: number;
 }
-export interface Ramp {
-  zone: Rect;
-  toFloor: number;
-  spawn: Spawn;
-}
 export interface Floor {
   name: string;
   w: number;
@@ -27,7 +22,6 @@ export interface Floor {
   solids: Solid[];
   bays: Rect[];
   lights: Vec[];
-  ramps: Ramp[];
   /** round solids, e.g. helix cores */
   circles: Circle[];
 }
