@@ -83,15 +83,73 @@ describe('car', () => {
     expect(speed(c)).toBeLessThanOrEqual(0.6 * 20);
   });
 
-  it('holds a drift for over 1.5 s with throttle and countersteer', () => {
+  it('holds a drift on throttle after the handbrake is released', () => {
     const c = movingCar(60);
-    const infos = [
-      ...run(c, input({ steer: 1, throttle: 0.5, handbrake: true }), 0.4),
-      ...run(c, input({ steer: -0.3, throttle: 0.5 }), 4),
-    ];
-    const drifting = infos.filter((d) => d.drifting).length * DT;
-    expect(drifting).toBeGreaterThanOrEqual(1.5);
+    const infos = [...run(c, kick, 0.4), ...run(c, drift(), 4)];
+    expect(infos.filter((d) => d.drifting).length * DT).toBeGreaterThanOrEqual(1.5);
     // still under control: never spun past 90 deg
     expect(Math.max(...infos.map((d) => Math.abs(d.slip)))).toBeLessThan(Math.PI / 2);
   });
+
+  it('arcs through a tight 90 deg corner instead of sliding wide', () => {
+    const c = movingCar(70);
+    const track = trackRun(c, [
+      [kick, 0.3],
+      [drift(), 2.7],
+    ]);
+    expect(track.rotation).toBeGreaterThanOrEqual((80 * Math.PI) / 180);
+    expect(track.drifting).toBeGreaterThanOrEqual(1);
+    expect(track.maxX - track.minX).toBeLessThan(25);
+    expect(track.maxY - track.minY).toBeLessThan(25);
+    expect(track.minKmh).toBeGreaterThan(30);
+  });
+
+  it('turns the path faster with more steer into the drift', () => {
+    const rotation = (steer: number) =>
+      trackRun(movingCar(70), [
+        [kick, 0.3],
+        [drift(steer), 1.2],
+      ]).rotation;
+    expect(rotation(0.6)).toBeGreaterThan(rotation(0.3) + 0.1);
+  });
+
+  it('straightens out when lifting off and centring the wheel', () => {
+    const c = movingCar(70);
+    const infos = [...run(c, kick, 0.3), ...run(c, drift(), 1.2)];
+    expect(infos.at(-1)!.drifting).toBe(true);
+    const after = run(c, input(), 1.2);
+    expect(Math.abs(after.at(-1)!.slip)).toBeLessThan((8 * Math.PI) / 180);
+  });
 });
+
+const kick = input({ steer: 1, handbrake: true });
+const drift = (steer = 0.5) => input({ steer, throttle: 0.7 });
+
+/** Runs input segments; tracks unwrapped velocity rotation (clockwise +), bounding box, drift time, min speed. */
+function trackRun(c: CarState, segments: [InputState, number][]) {
+  const t = {
+    rotation: 0,
+    drifting: 0,
+    minX: c.pos.x,
+    maxX: c.pos.x,
+    minY: c.pos.y,
+    maxY: c.pos.y,
+    minKmh: Infinity,
+  };
+  let heading = Math.atan2(c.vel.y, c.vel.x);
+  for (const [inp, seconds] of segments) {
+    for (let i = 0; i < Math.round(seconds / DT); i++) {
+      const d = stepCar(c, inp, DT);
+      const h = Math.atan2(c.vel.y, c.vel.x);
+      t.rotation += Math.atan2(Math.sin(h - heading), Math.cos(h - heading));
+      heading = h;
+      if (d.drifting) t.drifting += DT;
+      t.minX = Math.min(t.minX, c.pos.x);
+      t.maxX = Math.max(t.maxX, c.pos.x);
+      t.minY = Math.min(t.minY, c.pos.y);
+      t.maxY = Math.max(t.maxY, c.pos.y);
+      t.minKmh = Math.min(t.minKmh, d.speedKmh);
+    }
+  }
+  return t;
+}

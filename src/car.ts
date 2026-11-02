@@ -21,7 +21,6 @@ export const TUNING = {
   // steering
   maxSteer: 0.6, // rad at standstill
   steerSpeedFalloff: 0.06, // lock = maxSteer / (1 + falloff * speed)
-  driftSteerBoost: 1, // extra lock per rad of slip while drifting, so countersteer can catch it
 
   // tires
   frontStiffness: 55, // m/s² per rad of front slip angle
@@ -30,16 +29,21 @@ export const TUNING = {
   rearMaxGrip: 9.5, // m/s², rear lateral force cap
   minSlipSpeed: 3, // m/s, floor on forward speed in slip-angle math (low-speed stability)
 
-  // drift
-  handbrakeGrip: 0.3, // rear grip multiplier with handbrake
+  // drift. Both axles keep most of their grip, so the path arcs toward the nose instead of sliding on.
+  // The angle settles where front force (set by steer) balances rear force (set by throttle and slip).
+  handbrakeGrip: 0.3, // rear grip multiplier only while the handbrake is held: it kicks the drift off
   handbrakeAccel: 4, // m/s², rear braking from handbrake
-  powerOversteerGrip: 0.55, // rear grip multiplier at full throttle while slipping
+  powerOversteerGrip: 0.45, // rear grip at full throttle while slipping (0.6 at 0.7): throttle adds angle, lifting restores grip
   powerOversteerSlip: 0.15, // rad, slip above which throttle loosens the rear
   assistSlip: 0.2, // rad, slip above which drift assist kicks in
   slipRamp: 0.15, // rad, power oversteer and assist fade in over this much extra slip
-  assistYawDamp: 3.5, // 1/s, yaw damping while drifting (holds the angle)
-  assistLateralKeep: 0.55, // multiplier on rear lateral grip while drifting (slow bleed)
-  assistFrontKeep: 0.45, // multiplier on front grip cap while drifting; near the rear cap so the angle holds
+  selfAlign: 1, // 0..1, front wheels follow the front axle's travel while drifting (lock grows with slip),
+  // so steer works relative to the path: into the turn = more angle and a tighter arc, centred = straighten
+  driftFrontGrip: 0.8, // front grip cap multiplier while drifting; the rear must match it, so lower = smaller angle, wider arc
+  rearBite: 0.5, // share of the throttle-lost rear grip that returns at big slip: soft wall against spinning
+  rearBiteSlip: 0.3, // rad, slip where the rear starts biting back
+  rearBiteRamp: 0.3, // rad, bite is full this much past rearBiteSlip
+  assistYawDamp: 1, // 1/s, light pull of yaw rate toward the path's turn rate; higher = safer but slidier
   maxAngVel: 4.5, // rad/s cap
 
   // rpm: upper speed of each gear, m/s
@@ -86,19 +90,21 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   const loose = clamp((slip - T.powerOversteerSlip) / T.slipRamp, 0, 1);
   const assist = slip < DRIFT_MAX_SLIP ? clamp((slip - T.assistSlip) / T.slipRamp, 0, 1) : 0;
   let rearGrip = 1 + (T.powerOversteerGrip - 1) * throttle * loose;
+  const bite = clamp((slip - T.rearBiteSlip) / T.rearBiteRamp, 0, 1);
+  rearGrip += (1 - rearGrip) * T.rearBite * bite;
   if (input.handbrake) rearGrip = T.handbrakeGrip;
-  const keep = 1 + (T.assistLateralKeep - 1) * assist;
 
   // lateral (bicycle model)
-  const lock = T.maxSteer / (1 + T.steerSpeedFalloff * speed) + T.driftSteerBoost * assist * slip;
+  const lock = T.maxSteer / (1 + T.steerSpeedFalloff * speed);
   const steer = clamp(input.steer, -1, 1) * lock;
   const steerDir = clamp(vf / 2, -1, 1); // fades steering force to 0 at standstill, flips in reverse
   const denom = Math.max(Math.abs(vf), T.minSlipSpeed);
-  const alphaF = Math.atan2(vl + car.angVel * T.cgToFront, denom) - steer * steerDir;
+  const slipF = Math.atan2(vl + car.angVel * T.cgToFront, denom);
+  const alphaF = slipF * (1 - T.selfAlign * assist) - steer * steerDir;
   const alphaR = Math.atan2(vl - car.angVel * T.cgToRear, denom);
 
-  const capF = T.frontMaxGrip * (1 + (T.assistFrontKeep - 1) * assist);
-  const capR = T.rearMaxGrip * rearGrip * keep;
+  const capR = T.rearMaxGrip * rearGrip;
+  const capF = T.frontMaxGrip * (1 + (T.driftFrontGrip - 1) * assist);
   const fyF = clamp(-T.frontStiffness * alphaF, -capF, capF);
   const fyR = clamp(-T.rearStiffness * alphaR * rearGrip, -capR, capR);
   const ay = fyR + fyF * Math.cos(steer);
