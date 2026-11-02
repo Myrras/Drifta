@@ -1,7 +1,7 @@
-import type { DriftInfo, GameMap, InputState, Phase, Ramp, ScoreEvent } from './types';
+import type { DriftInfo, GameMap, Helix, InputState, Phase, ScoreEvent } from './types';
 import type { FrameView, Popup, Results } from './view';
 import type { createAudio } from './audio';
-import { COUNTDOWN_SECONDS, FLOOR_FADE_SECONDS } from './config';
+import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar } from './car';
 import { collide, inRect, nearestDistance } from './collision';
 import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
@@ -15,7 +15,8 @@ export interface BestStore {
 const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
 const POPUP_LIFE = 1.5; // s
 const SHAKE_DECAY = 3; // per s
-const HALF_FADE = FLOOR_FADE_SECONDS / 2;
+const RING_MARGIN = 0.5; // m beyond the ring still counted as inside
+const RAMP_DRIFT_MIN = 0.6; // fraction of the helix that must be drifted
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
@@ -30,10 +31,10 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     countdown: COUNTDOWN_SECONDS,
     popups: [] as Popup[],
     shake: 0,
-    fade: 0,
-    /** active floor transition */
-    ramp: null as Ramp | null,
-    rampT: 0,
+    /** active helix, unwrapped progress, drifted progress */
+    helix: null as Helix | null,
+    p: 0,
+    drifted: 0,
     results: null as Results | null,
     resultsAge: 0,
   });
@@ -60,14 +61,47 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     }
   }
 
-  function enterFloor(r: Ramp): void {
-    const c = s.car;
-    const speed = Math.hypot(c.vel.x, c.vel.y);
-    s.floorIndex = r.toFloor;
-    c.pos = { ...r.spawn.pos };
-    c.angle = r.spawn.angle;
-    c.vel = { x: speed * Math.cos(c.angle), y: speed * Math.sin(c.angle) };
-    c.angVel = 0;
+  const smooth = (x: number) => x * x * (3 - 2 * x);
+
+  /** progress along a helix; null if the car is outside the ring (with margin) */
+  function progress(h: Helix, margin: number): number | null {
+    const dx = s.car.pos.x - h.center.x;
+    const dy = s.car.pos.y - h.center.y;
+    const r = Math.hypot(dx, dy);
+    if (r < h.rCore - margin || r > h.rOuter + margin) return null;
+    let d = Math.atan2(dy, dx) - h.enterAngle;
+    d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
+    return d / h.sweep;
+  }
+
+  /** returns true when a completed downward helix was drifted enough */
+  function stepHelix(): boolean {
+    if (!s.helix) {
+      for (const h of map.helixes) {
+        const p = progress(h, 0);
+        if (p === null) continue;
+        const down = h.from === s.floorIndex && p >= 0 && p <= 0.25;
+        const up = h.from + 1 === s.floorIndex && p >= 0.75 && p <= 1;
+        if (down || up) {
+          Object.assign(s, { helix: h, p, drifted: 0 });
+          break;
+        }
+      }
+      return false;
+    }
+    const h = s.helix;
+    const raw = progress(h, RING_MARGIN);
+    const period = (2 * Math.PI) / Math.abs(h.sweep); // p wraps every period
+    let p = s.p;
+    if (raw !== null) p = raw + Math.round((s.p - raw) / period) * period;
+    if (s.drift.drifting) s.drifted += Math.abs(p - s.p);
+    s.p = p;
+    s.floorIndex = p >= 0.5 ? h.from + 1 : h.from;
+    if (raw === null || p < -0.05 || p > 1.05) {
+      s.helix = null;
+      return p > 1 && s.drifted >= RAMP_DRIFT_MIN;
+    }
+    return false;
   }
 
   function finish(): void {
@@ -84,63 +118,34 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
 
   function run(input: InputState, dt: number): void {
     s.time += dt;
-    const fadingOut = s.ramp !== null && s.rampT < HALF_FADE - EPS;
-    const frozen = s.ramp !== null;
-    if (s.ramp) {
-      s.rampT += dt;
-      if (fadingOut) {
-        s.fade = Math.min(1, s.rampT / HALF_FADE);
-        if (s.rampT >= HALF_FADE - EPS) enterFloor(s.ramp);
-      } else if (s.rampT >= FLOOR_FADE_SECONDS - EPS) {
-        s.ramp = null;
-        s.fade = 0;
-      } else s.fade = Math.max(0, 2 - s.rampT / HALF_FADE);
-    }
-
     let hard = false;
-    let rampDrift = false;
-    let nearDist = Infinity;
-    let yawDelta = 0;
-    if (!fadingOut) {
-      const car = s.car;
-      const floor = map.floors[s.floorIndex];
-      s.drift = stepCar(car, input, dt);
-      audio.update(car, s.drift, input.throttle);
-      const hit = collide(car, floor.solids);
-      if (hit) {
-        const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
-        bounce(car, hit);
-        if (impact > HARD_HIT_SPEED) {
-          hard = true;
-          audio.hit();
-          s.shake = Math.min(1, impact / 10);
-        }
-      }
-      nearDist = s.drift.drifting ? nearestDistance(car, floor.solids) : Infinity;
-      yawDelta = car.angVel * dt;
-      if (!s.ramp) {
-        const ramp = floor.ramps.find((r) => inRect(car.pos, r.zone));
-        if (ramp) {
-          s.ramp = ramp;
-          s.rampT = 0;
-          rampDrift = s.drift.drifting;
-        }
+    const car = s.car;
+    const floor = map.floors[s.floorIndex];
+    s.drift = stepCar(car, input, dt);
+    audio.update(car, s.drift, input.throttle);
+    const hit = collide(car, floor.solids);
+    if (hit) {
+      const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
+      bounce(car, hit);
+      if (impact > HARD_HIT_SPEED) {
+        hard = true;
+        audio.hit();
+        s.shake = Math.min(1, impact / 10);
       }
     }
+    const nearDist = s.drift.drifting ? nearestDistance(car, floor.solids) : Infinity;
+    const yawDelta = car.angVel * dt;
+    const rampDrift = stepHelix();
 
     handle(
       stepScoring(
         s.scoring,
-        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen },
+        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false },
         dt,
       ),
     );
 
-    if (s.ramp && s.rampT < HALF_FADE - EPS) s.drift = IDLE;
-
-    if (!fadingOut && s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) {
-      finish();
-    }
+    if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
   }
 
   return {
@@ -184,9 +189,15 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
     view(): FrameView {
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
-      const fading = s.ramp !== null && s.rampT < HALF_FADE - EPS;
       const drift =
-        s.phase !== 'run' || fading ? { drifting: false, slip: 0, speedKmh: speed * 3.6 } : s.drift;
+        s.phase !== 'run' ? { drifting: false, slip: 0, speedKmh: speed * 3.6 } : s.drift;
+      const h = s.helix;
+      const t = smooth(Math.min(1, Math.max(0, (s.p - 0.15) / 0.7)));
+      const blend = h
+        ? s.floorIndex === h.from
+          ? { toFloor: h.from + 1, t }
+          : { toFloor: h.from, t: 1 - t }
+        : null;
       return {
         render: {
           map,
@@ -194,8 +205,8 @@ export function createGame(map: GameMap, audio: AudioLike, best: BestStore) {
           car,
           drift,
           handbrake: s.handbrake,
-          fade: s.fade,
-          blend: null,
+          fade: 0,
+          blend,
           shake: s.shake,
           runId: s.runId,
         },
