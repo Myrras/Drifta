@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { garage, garageRoute } from './garage';
-import type { Floor, Helix, Rect, Vec } from '../types';
+import { CAR_MODELS } from '../models';
+import type { CarModel, Floor, Helix, Rect, Solid, Vec } from '../types';
 
 const S = 0.5;
 const CLEAR = 1.4;
@@ -191,6 +192,75 @@ describe('garage', () => {
       expect(cars.length).toBeGreaterThan(0);
       for (const c of f.solids.filter((s) => s.kind !== 'wall')) {
         for (const s of f.solids) if (s !== c) expect(overlap(c, s)).toBe(false);
+      }
+    }
+  });
+
+  it('is called JAPAN GARAGE', () => {
+    expect(garage.name).toBe('JAPAN GARAGE');
+  });
+
+  /** Unit nose direction of a parked car. */
+  const nose = (c: Solid) => ({
+    x: Math.round(Math.cos(c.facing!)),
+    y: Math.round(Math.sin(c.facing!)),
+  });
+  /** The `depth` m strip directly ahead (side 1) or behind (side -1) the car. */
+  const strip = (c: Solid, side: number, depth: number): Rect => {
+    const d = nose(c);
+    const sx = d.x * side;
+    const sy = d.y * side;
+    return {
+      x: sx > 0 ? c.x + c.w : sx < 0 ? c.x - depth : c.x,
+      y: sy > 0 ? c.y + c.h : sy < 0 ? c.y - depth : c.y,
+      w: sx ? depth : c.w,
+      h: sy ? depth : c.h,
+    };
+  };
+  const contains = (o: Rect, r: Rect) =>
+    r.x >= o.x - 1e-9 &&
+    r.y >= o.y - 1e-9 &&
+    r.x + r.w <= o.x + o.w + 1e-9 &&
+    r.y + r.h <= o.y + o.h + 1e-9;
+
+  it('parks every car as a JDM model in a bay that opens onto an aisle', () => {
+    const used = new Set<CarModel>();
+    for (const f of floors) {
+      for (const c of f.solids.filter((s) => s.kind === 'car')) {
+        expect(c.model && c.color && c.facing !== undefined).toBeTruthy();
+        const m = CAR_MODELS[c.model!];
+        used.add(c.model!);
+        expect(m.colors).toContain(c.color);
+        const q = c.facing! / (Math.PI / 2);
+        expect(Math.abs(q - Math.round(q))).toBeLessThan(1e-9);
+        const along = nose(c).x !== 0;
+        expect(Math.abs(c.w - (along ? m.length : m.width))).toBeLessThan(0.01);
+        expect(Math.abs(c.h - (along ? m.width : m.length))).toBeLessThan(0.01);
+        expect(f.bays.some((b) => contains(b, c))).toBe(true);
+        const open = [1, -1].some((side) =>
+          f.solids.every((s) => s === c || !overlap(strip(c, side, 1.5), s)),
+        );
+        expect(open).toBe(true);
+      }
+    }
+    expect(used.size).toBe(10);
+  });
+
+  it('points lit cars at open floor and lights about 1 in 5 cars', () => {
+    const cars = floors.flatMap((f) => f.solids.filter((s) => s.kind === 'car'));
+    const lit = cars.filter((c) => c.lights === 'on');
+    expect(lit.length / cars.length).toBeGreaterThan(0.12);
+    expect(lit.length / cars.length).toBeLessThan(0.3);
+    expect(cars.some((c) => c.lights === 'hazard')).toBe(true);
+    for (const f of floors) {
+      for (const c of f.solids.filter((s) => s.lights === 'on')) {
+        const d = nose(c);
+        const len = CAR_MODELS[c.model!].length;
+        const p = {
+          x: c.x + c.w / 2 + d.x * (len / 2 + 6),
+          y: c.y + c.h / 2 + d.y * (len / 2 + 6),
+        };
+        expect(f.solids.find((s) => strictlyIn(p, s))).toBeUndefined();
       }
     }
   });
