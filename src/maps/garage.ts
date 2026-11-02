@@ -98,6 +98,7 @@ function buildFloor(
     bays: [...wallN.bays, ...wallS.bays, ...isl1.bays, ...isl2.bays],
     lights: lights(),
     ramps: opts.ramps,
+    circles: [],
   };
 }
 
@@ -127,6 +128,7 @@ export const garage: GameMap = {
     }),
     buildFloor('GROUND', 2, [7.5, 1], { exitGap: true, ramps: [] }),
   ],
+  helixes: [],
   start: { floor: 0, pos: { x: 112, y: LANE_A }, angle: Math.PI },
   finish: { floor: 2, zone: { x: 2, y: 54.5, w: 10, h: 6 } },
 };

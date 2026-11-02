@@ -6,8 +6,9 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 
 - Camera: north-up, follows car, look-ahead in velocity direction, zooms out with speed.
 - Car: red roadster (no brand names/logos). Arcade bicycle model, RWD, drift assist, slightly overpowered.
-- Map 1: original 3-floor parking garage. Start on roof, finish at ground-floor exit gate. Pillar grid, painted bays, parked cars, ramps on alternating sides. Par 60 s.
-- Floors: only current floor drawn. Ramp zone = fade to next floor.
+- Drift arcs: the path curves toward the nose; steering keeps authority in a drift; throttle adds angle, lift straightens; handbrake only initiates.
+- Map 1: original 3-floor parking garage, a different layout per floor. ROOF: open, scattered parked cars and light posts, wide S-curves. LEVEL 2: slalom through staggered parked-car rows, pillar chicane. GROUND: pillar forest, tight lines, straight sprint to the exit gate. No 180° turns on floors; the only half turn is the helix. Par 60 s.
+- Floors are joined by helixes: a half circle around a round core in alternating corners. Car position is continuous (shared footprint), floors crossfade while in the helix with a slight zoom dip; floor switches halfway. Scoring keeps running; Ramp Drift (+750) when drifting through ≥ 60% of the half circle.
 - Drift: slip angle > 15° and speed > 30 km/h.
 - Combo: drift points slipDeg × speedKmh × dt × scale. Grace 1.5 s between drifts (paused during floor fade). +1 multiplier per trick, no cap. Banks (points × multiplier) when grace runs out. Lost on wall hit.
 - Tricks: Close Call +250, Switchback +500, Long Drift +300 per 2 s, 360 +1000, Ramp Drift +750.
@@ -16,7 +17,7 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 - Flow: title → 3-2-1 → run → results (breakdown, NEW BEST). Esc/Start = pause, auto-pause on blur, R = restart.
 - HUD: timer + par, floor, combo string + multiplier + combo points, total score, speedometer. No minimap.
 - Look: flat vector, dark concrete, painted bays, fluorescent light patches, persistent tire marks per floor, smoke.
-- Audio: Web Audio synth only: engine (pitch = rpm), tire squeal, hit, bank ding. No music.
+- Audio: CC0 samples (engine loop pitched by rpm, tire squeal loop, hit, bank ding) in public/sounds, sources in CREDITS.md.
 - Input: keyboard (WASD/arrows, Space handbrake, R restart, Esc pause, Enter confirm) + gamepad standard mapping (left stick steer, RT throttle, LT brake/reverse, A handbrake, Start pause/confirm).
 
 ## Tech

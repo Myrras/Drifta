@@ -8,6 +8,8 @@ export interface RenderView {
   handbrake: boolean;
   /** 0 = clear, 1 = fully black (floor transition) */
   fade: number;
+  /** helix crossfade: draw floorIndex blended toward toFloor by t (0..1); null when not in a helix */
+  blend: { toFloor: number; t: number } | null;
   /** 0..1 camera shake intensity, decays after a wall hit */
   shake: number;
   /** increments on every (re)start; renderer clears skid marks + smoke when it changes */
