@@ -1,5 +1,5 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
-import type { CarState, Floor, GameMap, Rect, Vec } from './types';
+import type { CarState, Floor, GameMap, Helix, Rect, Vec } from './types';
 import type { RenderView } from './view';
 
 // --- visual tuning ---
@@ -27,6 +27,10 @@ const WALL_TOP = '#45464c';
 const PILLAR = '#a19e95';
 const PILLAR_TOP = '#b3b0a7';
 const STATIC_SHADOW = 'rgba(0,0,0,0.55)';
+const RAMP_IN = '#34353a'; // helix ring: smooth ramp concrete, darker toward the core
+const RAMP_OUT = '#3b3c41';
+const LABEL = 'rgba(240,240,230,0.8)';
+const DIP = 0.1; // camera zoom-out at mid helix crossfade
 const PARKED_COLORS = [
   '#5a6470',
   '#6b5a4e',
@@ -131,6 +135,91 @@ function arrow(g: Ctx, x: number, y: number, dir: number, size: number) {
   g.restore();
 }
 
+/** Road-marking text centered at (x, y); `heading` = direction the reader drives (text top points there). */
+function label(
+  g: Ctx,
+  text: string,
+  x: number,
+  y: number,
+  heading: number,
+  size: number,
+  maxW: number,
+) {
+  g.save();
+  g.translate(x, y);
+  g.rotate(heading + Math.PI / 2);
+  g.scale(1 / STATIC_PX, 1 / STATIC_PX); // font in px: avoids tiny-font rendering quirks
+  g.fillStyle = LABEL;
+  g.font = `bold ${Math.round(size * STATIC_PX)}px sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 0, 0, maxW * STATIC_PX);
+  g.restore();
+}
+
+/** Lane-center point and travel heading at fraction p of the helix sweep. */
+function helixAt(h: Helix, p: number) {
+  const a = h.enterAngle + h.sweep * p;
+  const r = (h.rCore + h.rOuter) / 2;
+  return {
+    pos: { x: h.center.x + r * Math.cos(a), y: h.center.y + r * Math.sin(a) },
+    angle: a + (Math.sign(h.sweep) * Math.PI) / 2,
+  };
+}
+
+/** Helix ring surface on one of its two floors: ramp concrete, dashed edges, chevrons, label. */
+function helixSurface(g: Ctx, h: Helix, upper: boolean, text: string) {
+  const { x: cx, y: cy } = h.center;
+  const a0 = h.enterAngle;
+  const a1 = h.enterAngle + h.sweep;
+  const ccw = h.sweep < 0;
+  const w = h.rOuter - h.rCore;
+  const grad = g.createRadialGradient(cx, cy, h.rCore, cx, cy, h.rOuter);
+  grad.addColorStop(0, RAMP_IN);
+  grad.addColorStop(1, RAMP_OUT);
+  g.fillStyle = grad;
+  g.beginPath();
+  g.arc(cx, cy, h.rOuter, a0, a1, ccw);
+  g.arc(cx, cy, h.rCore, a1, a0, !ccw);
+  g.closePath();
+  g.fill();
+
+  g.strokeStyle = PAINT_WHITE;
+  g.lineWidth = 0.15;
+  g.setLineDash([1.2, 0.9]);
+  for (const r of [h.rCore + 0.3, h.rOuter - 0.3]) {
+    g.beginPath();
+    g.arc(cx, cy, r, a0, a1, ccw);
+    g.stroke();
+  }
+  g.setLineDash([]);
+
+  // chevrons along the lane center; the slot at this floor's end of the ramp holds the label
+  const n = Math.max(2, Math.round((Math.abs(h.sweep) * (h.rCore + w / 2)) / 5));
+  const slot = upper ? 0 : n - 1;
+  const half = Math.min(0.9, w * 0.18);
+  g.strokeStyle = PAINT_ARROW;
+  g.lineWidth = 0.35;
+  g.lineJoin = 'miter';
+  g.lineCap = 'butt';
+  for (let i = 0; i < n; i++) {
+    const { pos, angle } = helixAt(h, (i + 0.5) / n);
+    if (i === slot) {
+      label(g, text, pos.x, pos.y, angle, Math.min(1.6, w * 0.22), w * 0.8);
+      continue;
+    }
+    g.save();
+    g.translate(pos.x, pos.y);
+    g.rotate(angle);
+    g.beginPath();
+    g.moveTo(-half * 0.7, -half);
+    g.lineTo(half * 0.4, 0);
+    g.lineTo(-half * 0.7, half);
+    g.stroke();
+    g.restore();
+  }
+}
+
 // shortcut: assumes vertical (tall) bays and parked cars like the garage map; add a horizontal branch if a map needs it.
 /** True if the rect's back (wall / opposite bay) is its top edge, false if bottom. */
 function backIsTop(r: Rect, blockers: Rect[]) {
@@ -212,10 +301,8 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
 
   // lane arrows: lanes = distinct light rows; entry lane direction alternates lane by lane
   const lanes = [...new Set(f.lights.map((l) => l.y))].sort((a, b) => a - b);
-  const entry =
-    idx === map.start.floor
-      ? map.start
-      : map.floors.flatMap((fl) => fl.ramps).find((r) => r.toFloor === idx)?.spawn;
+  const down = map.helixes.find((h) => h.from + 1 === idx);
+  const entry = idx === map.start.floor ? map.start : down && helixAt(down, 1);
   if (entry && lanes.length) {
     let k0 = 0;
     lanes.forEach((y, k) => {
@@ -249,21 +336,6 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.fillRect(b.x + b.w / 2 - 0.75, top ? back + 0.6 : back - 0.82, 1.5, 0.22);
   }
 
-  // ramps: hazard-striped zone with a border and a big arrow toward the nearer side wall
-  for (const r of f.ramps) {
-    const z = r.zone;
-    g.globalAlpha = 0.22;
-    hazard(g, z, 0.7);
-    g.globalAlpha = 1;
-    const b = 0.45;
-    hazard(g, { x: z.x, y: z.y, w: z.w, h: b }, 0.35);
-    hazard(g, { x: z.x, y: z.y + z.h - b, w: z.w, h: b }, 0.35);
-    hazard(g, { x: z.x, y: z.y, w: b, h: z.h }, 0.35);
-    hazard(g, { x: z.x + z.w - b, y: z.y, w: b, h: z.h }, 0.35);
-    g.fillStyle = 'rgba(235,235,225,0.85)';
-    arrow(g, z.x + z.w / 2, z.y + z.h / 2, z.x + z.w / 2 < f.w / 2 ? -1 : 1, 2.2);
-  }
-
   // finish: checkered strip on the edge facing the floor boundary + EXIT
   if (idx === map.finish.floor) {
     const z = map.finish.zone;
@@ -294,19 +366,20 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     }
     // road-marking style next to the strip, reading toward the approaching driver
     const off = d + 1.3;
-    g.save();
-    g.translate(
+    label(
+      g,
+      'EXIT',
       side === 0 ? z.x + off : side === 1 ? z.x + z.w - off : z.x + z.w / 2,
       side === 2 ? z.y + off : side === 3 ? z.y + z.h - off : z.y + z.h / 2,
+      [Math.PI, 0, -Math.PI / 2, Math.PI / 2][side],
+      1.8,
+      Infinity,
     );
-    g.rotate([-Math.PI / 2, Math.PI / 2, 0, Math.PI][side]);
-    g.scale(1 / STATIC_PX, 1 / STATIC_PX); // font in px: avoids tiny-font rendering quirks
-    g.fillStyle = 'rgba(240,240,230,0.8)';
-    g.font = `bold ${Math.round(1.8 * STATIC_PX)}px sans-serif`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('EXIT', 0, 0);
-    g.restore();
+  }
+
+  for (const h of map.helixes) {
+    if (h.from === idx) helixSurface(g, h, true, 'DOWN');
+    else if (h.from + 1 === idx) helixSurface(g, h, false, f.name);
   }
 
   // walls with an inner hazard edge, pillars, parked cars (all with soft drop shadows)
@@ -348,6 +421,36 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       parkedCar(g, s.h, s.w, PARKED_COLORS[(carIdx++ * 7 + idx * 3) % PARKED_COLORS.length]);
       g.restore();
     }
+  }
+  // round concrete cores: hazard band at the edge, soft top highlight
+  for (const k of f.circles) {
+    shadow();
+    g.fillStyle = PILLAR;
+    g.beginPath();
+    g.arc(k.x, k.y, k.r, 0, Math.PI * 2);
+    g.fill();
+    noShadow();
+    const band = Math.min(0.45, k.r * 0.2);
+    const n = 2 * Math.max(4, Math.round((Math.PI * k.r) / 0.9)); // even: stripes alternate cleanly
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const b = ((i + 1) / n) * Math.PI * 2;
+      g.fillStyle = i % 2 ? HAZARD_BLACK : HAZARD_YELLOW;
+      g.beginPath();
+      g.arc(k.x, k.y, k.r, a, b);
+      g.arc(k.x, k.y, k.r - band, b, a, true);
+      g.fill();
+    }
+    const ri = k.r - band;
+    const hl = g.createRadialGradient(k.x - ri * 0.35, k.y - ri * 0.35, 0, k.x, k.y, ri);
+    hl.addColorStop(0, 'rgba(255,255,255,0.16)');
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = PILLAR_TOP;
+    g.beginPath();
+    g.arc(k.x, k.y, ri, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = hl;
+    g.fill();
   }
   return c;
 }
@@ -531,14 +634,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
 
   function draw(v: RenderView, dt: number) {
     const f = v.map.floors[v.floorIndex];
-    const roof = v.floorIndex === 0;
     const car = v.car;
     const kmh = Math.hypot(car.vel.x, car.vel.y) * 3.6;
     const step = Math.min(dt, 0.1);
 
     if (v.runId !== lastRun)
       for (const s of skids.values()) s.g.clearRect(0, 0, s.c.width, s.c.height);
-    const snap = v.runId !== lastRun || v.floorIndex !== lastFloor;
+    // helix floor switches keep the camera, skids and smoke continuous
+    const snap = v.runId !== lastRun || (v.floorIndex !== lastFloor && !v.blend);
     if (snap) {
       prevWheels = null;
       for (const p of smoke) p.age = SMOKE_LIFE;
@@ -562,9 +665,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       cam.y += (ty - cam.y) * kp;
       cam.viewH += (tvh - cam.viewH) * kz;
     }
-    const scale = cssH / cam.viewH; // CSS px per meter
+    const dip = v.blend ? 1 - DIP * Math.sin(Math.PI * v.blend.t) : 1;
+    const scale = (cssH / cam.viewH) * dip; // CSS px per meter
     const halfW = cssW / 2 / scale;
-    const halfH = cam.viewH / 2;
+    const halfH = cssH / 2 / scale;
     const visible = (x: number, y: number, r: number) =>
       Math.abs(x - cam.x) < halfW + r && Math.abs(y - cam.y) < halfH + r;
 
@@ -627,11 +731,19 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       dpr * (cssH / 2 + sy - cam.y * scale),
     );
 
-    let layer = statics.get(f);
-    if (!layer) statics.set(f, (layer = buildStatic(v.map, v.floorIndex)));
-    ctx.drawImage(layer, 0, 0, f.w, f.h);
-    const skid = skids.get(f);
-    if (skid) ctx.drawImage(skid.c, 0, 0, f.w, f.h);
+    // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
+    const floors: [number, number][] = [[v.floorIndex, 1]];
+    if (v.blend) floors.push([v.blend.toFloor, v.blend.t]);
+    for (const [idx, a] of floors) {
+      const fl = v.map.floors[idx];
+      let layer = statics.get(fl);
+      if (!layer) statics.set(fl, (layer = buildStatic(v.map, idx)));
+      ctx.globalAlpha = a;
+      ctx.drawImage(layer, 0, 0, fl.w, fl.h);
+      const skid = skids.get(fl);
+      if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
+    }
+    ctx.globalAlpha = 1;
 
     const sw = CAR_LENGTH + 2 * SPRITE_M;
     const sh = CAR_WIDTH + 2 * SPRITE_M;
@@ -658,23 +770,29 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.globalAlpha = 1;
 
     // lights: fluorescent ceiling pools + tubes; roof has lamp posts (its pillars) instead
+    // additive, so each floor's lights are weighted by its own share: (1-t) and t
     ctx.globalCompositeOperation = 'lighter';
-    if (roof) {
-      for (const s of f.solids) {
-        if (s.kind !== 'pillar') continue;
-        const x = s.x + s.w / 2;
-        const y = s.y + s.h / 2;
-        if (visible(x, y, POST_R))
-          ctx.drawImage(postSprite, x - POST_R, y - POST_R, 2 * POST_R, 2 * POST_R);
-      }
-    } else {
-      ctx.fillStyle = TUBE;
-      for (const l of f.lights) {
-        if (!visible(l.x, l.y, LIGHT_R)) continue;
-        ctx.drawImage(lightSprite, l.x - LIGHT_R, l.y - LIGHT_R, 2 * LIGHT_R, 2 * LIGHT_R);
-        ctx.fillRect(l.x - 0.8, l.y - 0.09, 1.6, 0.18);
+    for (const [idx, a] of floors) {
+      const fl = v.map.floors[idx];
+      ctx.globalAlpha = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
+      if (idx === 0) {
+        for (const s of fl.solids) {
+          if (s.kind !== 'pillar') continue;
+          const x = s.x + s.w / 2;
+          const y = s.y + s.h / 2;
+          if (visible(x, y, POST_R))
+            ctx.drawImage(postSprite, x - POST_R, y - POST_R, 2 * POST_R, 2 * POST_R);
+        }
+      } else {
+        ctx.fillStyle = TUBE;
+        for (const l of fl.lights) {
+          if (!visible(l.x, l.y, LIGHT_R)) continue;
+          ctx.drawImage(lightSprite, l.x - LIGHT_R, l.y - LIGHT_R, 2 * LIGHT_R, 2 * LIGHT_R);
+          ctx.fillRect(l.x - 0.8, l.y - 0.09, 1.6, 0.18);
+        }
       }
     }
+    ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
