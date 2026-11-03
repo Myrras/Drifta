@@ -121,6 +121,8 @@ interface Drift {
   amount: number;
   tricks: Trick[];
   saved: boolean;
+  /** banked after the time limit: does not count */
+  late: boolean;
 }
 
 const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
@@ -353,6 +355,8 @@ export function createGame(
     live: null as { id: number; combo: Combo } | null,
     drifts: [] as Drift[],
     driftRow: 0,
+    /** banked score at the time limit, null while time is left; later banks do not count */
+    locked: null as number | null,
   });
   const s = {
     phase: (prog.starterChosen ? 'title' : 'starter') as Phase,
@@ -409,7 +413,7 @@ export function createGame(
     newRun();
   }
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
-    s.popups.push({ kind, text, amount, age: 0 });
+    s.popups.push({ kind, text, amount, age: 0, late: s.locked !== null });
 
   /** give a newly started combo an id and start its clip */
   function track(): void {
@@ -423,7 +427,10 @@ export function createGame(
     const live = s.live;
     s.live = null;
     if (!live) return;
-    const list = [...s.drifts, { id: live.id, amount, tricks: live.combo.tricks, saved: false }];
+    const list = [
+      ...s.drifts,
+      { id: live.id, amount, tricks: live.combo.tricks, saved: false, late: s.locked !== null },
+    ];
     list.sort((a, b) => b.amount - a.amount);
     for (const d of list.splice(TOP_DRIFTS)) clips?.drop(d.id);
     s.drifts = list;
@@ -498,17 +505,30 @@ export function createGame(
     return false;
   }
 
-  /** par x1.3 (the 3rd-place time) on maps with positions; not in MP */
-  const limitOf = () => (map.medals && !mp ? map.parTime * 1.3 : 0);
+  /** par x1.3 (the 3rd-place time) on maps with positions, in MP too */
+  const limitOf = () => (map.medals ? map.parTime * 1.3 : 0);
 
-  /** timeUp: the score is shown but nothing counts or is saved */
-  function finish(timeUp = false): void {
+  /** advance the run clock, beep the last 5 s, lock the score at the limit */
+  function clock(dt: number): void {
+    const was = s.time;
+    s.time += dt;
+    const limit = limitOf();
+    if (!limit) return;
+    const n = Math.ceil(limit - s.time - 1e-6); // whole seconds left, as in hud
+    if (n > 0 && n <= 5 && n < Math.ceil(limit - was - 1e-6)) audio.ui('count');
+    if (n <= 0 && s.locked === null) s.locked = s.scoring.banked;
+  }
+
+  /** the run goes on past the limit, but only what was banked before it counts */
+  function finish(): void {
     handle(forceBank(s.scoring));
     clips?.stop();
-    const comboPoints = s.scoring.banked;
+    const timeUp = s.locked !== null;
+    const comboPoints = s.locked ?? s.scoring.banked;
+    const late = s.scoring.banked - comboPoints;
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
-    const newBest = !timeUp && total > bests[sel];
+    const newBest = total > bests[sel];
     if (newBest) {
       stores[sel].set((bests[sel] = total));
       saveGhost(map.name, {
@@ -518,11 +538,8 @@ export function createGame(
       });
     }
     s.prog = prog;
-    const award = timeUp
-      ? { position: null, newPaints: [] as string[], carPick: false }
-      : awardFinish(prog, map, total, s.time);
-    const dr =
-      daily && !timeUp ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
+    const award = awardFinish(prog, map, total, s.time); // no place past par x1.3
+    const dr = daily ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
     persist();
     s.carPick = award.carPick || !!dr?.carPick;
     s.results = {
@@ -533,6 +550,7 @@ export function createGame(
       best: bests[sel],
       newBest,
       timeUp,
+      late,
       medals: map.medals,
       position: award.position,
       newPaints: award.newPaints,
@@ -551,11 +569,12 @@ export function createGame(
   function mpSend(): void {
     const { car, scoring } = s;
     mp?.sendPose(s.time, car.pos.x, car.pos.y, car.angle, s.floorIndex);
-    mp?.sendScore(scoring.banked, scoring.combo ? comboValue(scoring.combo) : 0);
+    const open = s.locked === null ? scoring.combo : null;
+    mp?.sendScore(s.locked ?? scoring.banked, open ? comboValue(open) : 0);
   }
   /** MP pause: the clock runs on with the car frozen */
   function mpHold(dt: number): void {
-    s.time += dt;
+    clock(dt);
     rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     mpSend();
   }
@@ -622,17 +641,7 @@ export function createGame(
 
   function run(input: InputState, dt: number): void {
     track();
-    const was = s.time;
-    s.time += dt;
-    const limit = limitOf();
-    if (limit) {
-      const n = Math.ceil(limit - s.time - 1e-6); // whole seconds left, as in hud
-      if (n <= 0) {
-        s.time = limit;
-        return finish(true);
-      }
-      if (n <= 5 && n < Math.ceil(limit - was - 1e-6)) audio.ui('count');
-    }
+    clock(dt);
     rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
@@ -1428,7 +1437,9 @@ export function createGame(
           par: map.parTime,
           limit: limitOf(),
           floorName: map.floors[s.floorIndex].name,
-          score: scoring.banked,
+          score: s.locked ?? scoring.banked,
+          late: s.locked === null ? 0 : scoring.banked - s.locked,
+          timeUp: s.locked !== null,
           combo: scoring.combo,
           comboValue: scoring.combo ? comboValue(scoring.combo) : 0,
           popups: s.popups,
@@ -1451,6 +1462,7 @@ export function createGame(
                     tricks: d.tricks,
                     clip: clips?.has(d.id) ?? false,
                     saved: d.saved,
+                    late: d.late,
                     still: clips?.still?.(d.id),
                   })),
                   driftRow: s.driftRow,

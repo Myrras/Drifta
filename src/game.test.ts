@@ -1770,6 +1770,19 @@ describe('daily and legend runs', () => {
     expect(prog.daily.clears).toBe(0);
   });
 
+  it('points banked after the time limit do not clear the daily', () => {
+    const { game, start, finish, prog } = rig(plain);
+    const d = dailyFor(plain, maps);
+    start();
+    game.debug.scoring.banked = 1;
+    game.debug.time = d.map.parTime * 1.3 - DT / 2;
+    game.update(IDLE, DT); // limit passes: score locks at 1
+    const r = finish(d.target * 10);
+    expect(r).toMatchObject({ timeUp: true, comboPoints: 1, late: d.target * 10 - 1 });
+    expect(r.daily).toMatchObject({ cleared: false });
+    expect(prog.daily.clears).toBe(0);
+  });
+
   it('a legend forces its car and skin, counts wall hits, and restores the car after', () => {
     const { game, tap, start, finish, prog } = rig(legend);
     prog.pickedMaps.push('TOKYO NIGHTS'); // no car pick to interrupt the restart
@@ -2225,6 +2238,30 @@ describe('multiplayer entry and lobby', () => {
       expect(guest.bests[garage.name].get()).toBe(g.results!.total);
     });
 
+    it('over the limit both runs go on and the results compare locked scores', () => {
+      const { host, guest, lockstep, toRun, atFinish } = race();
+      toRun();
+      const limit = garage.parTime * 1.3;
+      host.game.debug.scoring.banked = 5000;
+      guest.game.debug.scoring.banked = 6000;
+      host.game.debug.time = guest.game.debug.time = limit - DT;
+      lockstep(3);
+      expect(host.game.debug.phase).toBe('run');
+      expect(host.game.view().hud.timeUp).toBe(true);
+      host.game.debug.scoring.banked = 9000; // banked after the limit
+      lockstep(3);
+      expect(guest.game.view().hud.mp!.rivalScore).toBe(5000); // the rival sees the locked score
+      atFinish(host);
+      atFinish(guest);
+      lockstep(1);
+      const h = host.game.view().hud.results!;
+      const g = guest.game.view().hud.results!;
+      expect(h).toMatchObject({ total: 5000, late: 4000, timeUp: true, position: null });
+      expect(g).toMatchObject({ total: 6000, late: 0, timeUp: true });
+      expect(h.rival).toMatchObject({ total: 6000 });
+      expect(g.rival).toMatchObject({ total: 5000 });
+    });
+
     it('a disconnect mid-run toasts, drops the ghost and lets you finish solo', () => {
       const { b, host, lockstep, toRun, atFinish } = race();
       toRun();
@@ -2309,51 +2346,116 @@ describe('time limit', () => {
     step({ confirm: true });
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     const finishNow = () => {
-      game.debug.scoring.banked = 1e6;
       game.debug.floorIndex = map.finish.floor;
       game.debug.car.pos = { x: map.finish.zone.x + 1, y: map.finish.zone.y + 1 };
       step();
     };
-    return { game, step, ui, set, ghosts, mem, finishNow, prog: () => loadProgress(storage) };
+    /** bank a combo worth `points` */
+    const bank = (points: number) => {
+      game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
+      step({}, 10);
+    };
+    /** let the limit pass with `banked` points in the bank */
+    const lock = (banked: number) => {
+      game.debug.scoring.banked = banked;
+      game.debug.time = LIMIT - DT / 2;
+      step();
+    };
+    return {
+      game,
+      step,
+      ui,
+      set,
+      ghosts,
+      finishNow,
+      bank,
+      lock,
+      prog: () => loadProgress(storage),
+    };
   }
   afterEach(() => vi.unstubAllGlobals());
 
   it('the HUD carries par x1.3 on maps with positions, nothing on TEST PAD', () => {
-    expect(rig().game.view().hud.limit).toBeCloseTo(LIMIT);
+    const { game } = rig();
+    expect(game.view().hud.limit).toBeCloseTo(LIMIT);
+    expect(game.view().hud.timeUp).toBe(false);
     expect(rig(testpad).game.view().hud.limit).toBe(0);
   });
 
-  it('time up: TIME UP results, nothing awarded or saved', () => {
-    const { game, step, set, ghosts, prog } = rig();
-    game.debug.scoring.banked = 5000;
-    game.debug.time = LIMIT - DT / 2;
-    step();
-    const r = game.view().hud.results!;
-    expect(game.view().hud.phase).toBe('results');
-    expect(r.timeUp).toBe(true);
-    expect(r.total).toBeGreaterThanOrEqual(5000);
-    expect(r.position).toBeNull();
-    expect(r.newBest).toBe(false);
-    expect(r.newPaints).toEqual([]);
-    expect(r.carPick).toBe(false);
-    expect(set).not.toHaveBeenCalled();
-    expect(ghosts).not.toHaveBeenCalled();
-    expect(prog().results).toEqual({});
-    expect(prog().carPicks).toBe(0);
-    step({ confirm: true }, 3); // locked out at first, then retry works
-    step({ confirm: true }, Math.ceil(1 / DT));
-    expect(game.view().hud.phase).toBe('countdown');
+  it('the run goes on past the limit with the score locked', () => {
+    const { game, step, lock } = rig();
+    lock(5000);
+    step({}, 30);
+    const h = game.view().hud;
+    expect(h.phase).toBe('run');
+    expect(h).toMatchObject({ timeUp: true, score: 5000, late: 0 });
+    expect(h.time).toBeGreaterThan(LIMIT);
   });
 
-  it('finishing just under the limit still counts', () => {
+  it('points banked after the limit show as late and stay out of the total, best and saves', () => {
+    const { game, lock, bank, finishNow, set, ghosts, prog } = rig();
+    lock(5000);
+    bank(3000);
+    const h = game.view().hud;
+    expect(h).toMatchObject({ score: 5000, late: 3000 });
+    expect(h.popups.find((p) => p.kind === 'bank')!.late).toBe(true);
+    finishNow();
+    const r = game.view().hud.results!;
+    expect(r).toMatchObject({ timeUp: true, comboPoints: 5000, late: 3000, total: 5000 });
+    expect(r.timeBonus).toBe(0);
+    expect(r.position).toBeNull();
+    expect(r.newBest).toBe(true); // the locked score is still a best
+    expect(set).toHaveBeenCalledWith(5000);
+    expect(ghosts).toHaveBeenCalled();
+    expect(r.drifts).toMatchObject([{ amount: 3000, late: true }]);
+    expect(prog().results).toEqual({});
+    expect(prog().carPicks).toBe(0);
+  });
+
+  it('a combo running at the limit does not count, even if it banks at the finish', () => {
+    const { game, step, lock, finishNow } = rig();
+    game.debug.scoring.combo = { points: 4000, multiplier: 2, tricks: ['DRIFT'], grace: 5 };
+    step();
+    lock(1000);
+    step({}, 10);
+    expect(game.debug.scoring.combo).not.toBeNull();
+    finishNow(); // forceBank at the finish
+    const r = game.view().hud.results!;
+    expect(r).toMatchObject({ total: 1000, late: 8000, timeUp: true });
+    expect(r.drifts).toMatchObject([{ amount: 8000, late: true }]);
+  });
+
+  it('a combo banked just before the limit counts', () => {
+    const { game, step, bank, lock, finishNow } = rig();
+    game.debug.time = LIMIT - 2;
+    bank(3000);
+    expect(game.view().hud.timeUp).toBe(false);
+    lock(game.debug.scoring.banked);
+    step();
+    finishNow();
+    expect(game.view().hud.results).toMatchObject({ total: 3000, late: 0, timeUp: true });
+  });
+
+  it('finishing just under the limit still counts and places', () => {
     const { game, finishNow, set, prog } = rig();
+    game.debug.scoring.banked = 1e6;
     game.debug.time = LIMIT - 1;
     finishNow();
     const r = game.view().hud.results!;
-    expect(r.timeUp).toBeFalsy();
+    expect(r.timeUp).toBe(false);
+    expect(r.late).toBe(0);
     expect(r.position).toBe(3); // par x1.3 is the 3rd-place time
     expect(set).toHaveBeenCalled();
     expect(prog().results[garage.name].position).toBe(3);
+  });
+
+  it('a huge score banked after the limit gets no place', () => {
+    const { game, lock, bank, finishNow, prog } = rig();
+    lock(10);
+    bank(1e6);
+    finishNow();
+    expect(game.view().hud.results).toMatchObject({ total: 10, late: 1e6, position: null });
+    expect(prog().results).toEqual({});
   });
 
   it('TEST PAD has no limit', () => {
@@ -2361,6 +2463,7 @@ describe('time limit', () => {
     game.debug.time = 1e5;
     step({}, 5);
     expect(game.view().hud.phase).toBe('run');
+    expect(game.view().hud.timeUp).toBe(false);
   });
 
   it('pause and photo mode freeze the timer', () => {
@@ -2375,14 +2478,16 @@ describe('time limit', () => {
     step({ confirm: true }); // resume
     expect(game.view().hud.phase).toBe('run');
     expect(game.debug.time).toBeCloseTo(LIMIT - 1, 1);
+    expect(game.view().hud.timeUp).toBe(false);
   });
 
-  it('beeps once per second for the last 5 seconds', () => {
+  it('beeps once per second for the last 5 seconds, then the run goes on', () => {
     const { game, step, ui } = rig();
     game.debug.time = LIMIT - 8;
     ui.mockClear();
     step({}, Math.ceil(9 / DT)); // past the limit
     expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'count', 'count']);
-    expect(game.view().hud.phase).toBe('results');
+    expect(game.view().hud.phase).toBe('run');
+    expect(game.view().hud.timeUp).toBe(true);
   });
 });

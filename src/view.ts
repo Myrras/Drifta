@@ -62,6 +62,8 @@ export interface Popup {
   kind: 'trick' | 'bank' | 'fail';
   text: string;
   amount: number;
+  /** created after the time limit: a bank does not count */
+  late?: boolean;
   /** seconds since the event; game drops popups older than 1.5 s */
   age: number;
 }
@@ -73,6 +75,8 @@ export interface TopDrift {
   /** a video clip exists and can be saved */
   clip: boolean;
   saved: boolean;
+  /** banked after the time limit: does not count */
+  late?: boolean;
   /** still frame from the middle of the drift, if captured */
   still?: HTMLCanvasElement;
 }
@@ -84,8 +88,10 @@ export interface Results {
   time: number;
   best: number;
   newBest: boolean;
-  /** the run hit the time limit: the score is shown but does not count */
+  /** the run passed the time limit: total is the score locked at the limit */
   timeUp?: boolean;
+  /** points banked after the limit, not counted */
+  late?: number;
   /** score thresholds [3rd, 2nd, 1st] of the map, if any */
   medals?: [number, number, number];
   /** finishing position on maps with positions, null = none reached */
@@ -182,8 +188,12 @@ export interface HudView {
   /** run time limit in seconds, 0 = none */
   limit: number;
   floorName: string;
-  /** banked points so far */
+  /** banked points so far (locked at the limit) */
   score: number;
+  /** points banked after the limit, not counted */
+  late: number;
+  /** the limit has passed: score is locked */
+  timeUp: boolean;
   combo: Combo | null;
   /** round(points * multiplier) of the live combo, 0 if none */
   comboValue: number;

@@ -510,13 +510,29 @@ function drawPopup(
   if (p.kind === 'bank') {
     const y0 = baseY + 5 * u;
     // label + burst left behind at the combo spot
-    ring(ctx, cx, y0, lerp(4, 22, easeOutCubic(a / 0.5)) * u, AMBER, 1 - a / 0.5, 0.8 * u);
-    text(ctx, 'BANKED', cx, baseY - 5 * u - easeOutCubic(a) * 4 * u, 3.4 * u, AMBER, {
-      align: 'center',
-      font: 'label',
-      alpha: 1 - clamp01((a - 0.5) / 0.5),
-    });
-    if (a > BANK_FLY) return;
+    ring(
+      ctx,
+      cx,
+      y0,
+      lerp(4, 22, easeOutCubic(a / 0.5)) * u,
+      p.late ? STEEL : AMBER,
+      1 - a / 0.5,
+      0.8 * u,
+    );
+    text(
+      ctx,
+      p.late ? 'NOT COUNTED' : 'BANKED',
+      cx,
+      baseY - 5 * u - easeOutCubic(a) * 4 * u,
+      3.4 * u,
+      p.late ? STEEL : AMBER,
+      {
+        align: 'center',
+        font: 'label',
+        alpha: 1 - clamp01((a - 0.5) / 0.5),
+      },
+    );
+    if (a > BANK_FLY || p.late) return; // late points never fly to the score
     const t = easeInCubic((a - 0.12) / (BANK_FLY - 0.12));
     const pop = a < 0.12 ? lerp(0.6, 1.5, easeOutBack(a / 0.12)) : lerp(1.5, 0.55, t);
     const s = `+${formatScore(p.amount)}`;
@@ -647,12 +663,16 @@ export function drawHud(
       const ls = limitState(v.time, v.par, v.limit);
       const ly = pad + 12.5 * u;
       plate(ctx, pad, ly, 27 * u, 6.5 * u, INK, ls.color);
-      text(ctx, formatTime(ls.left), pad + 6 * u, ly + 3.3 * u, 4.2 * u, ls.color, {
-        alpha: ls.pulse ? 0.65 + 0.35 * Math.sin(nowS * 12) : 1,
-      });
+      const alpha = ls.pulse ? 0.65 + 0.35 * Math.sin(nowS * 12) : 1;
+      if (v.timeUp) {
+        const msg = 'TIME UP · score locked';
+        const px = 2.6 * u * Math.min(1, (23 * u) / measure(ctx, msg, 2.6 * u, 'label'));
+        text(ctx, msg, pad + 3 * u, ly + 3.3 * u, px, RED, { font: 'label', stroke: null, alpha });
+      } else
+        text(ctx, formatTime(ls.left), pad + 6 * u, ly + 3.3 * u, 4.2 * u, ls.color, { alpha });
       const mw = measure(ctx, ls.missed, 2.2 * u, 'label');
       const lw = measure(ctx, formatTime(ls.left), 4.2 * u);
-      if (ls.missed && 6 * u + lw + 2 * u + mw < 26 * u)
+      if (!v.timeUp && ls.missed && 6 * u + lw + 2 * u + mw < 26 * u)
         text(ctx, ls.missed, pad + 25 * u, ly + 3.3 * u, 2.2 * u, STEEL, {
           align: 'right',
           font: 'label',
@@ -676,7 +696,7 @@ export function drawHud(
     let pending = 0;
     let flash = 0;
     for (const p of v.popups)
-      if (p.kind === 'bank') {
+      if (p.kind === 'bank' && !p.late) {
         if (p.age < BANK_FLY) pending += p.amount;
         else flash = Math.max(flash, 1 - (p.age - BANK_FLY) / 0.35);
       }
@@ -704,6 +724,14 @@ export function drawHud(
         font: 'label',
         stroke: null,
       });
+    if (v.late > 0) {
+      const lt = `+${formatScore(v.late)}`;
+      const lx = width - pad - sw - 2.6 * u + 4 * u;
+      const lw = measure(ctx, lt, 2.2 * u, 'label');
+      text(ctx, lt, lx, pad + 9 * u, 2.2 * u, STEEL, { font: 'label', stroke: null });
+      ctx.fillStyle = STEEL;
+      ctx.fillRect(lx - 0.3 * u, pad + 8.9 * u, lw + 0.6 * u, 0.3 * u);
+    }
     // continues the score plate's slant 1u below it
     if (mp) drawRivalPanel(ctx, mp, width - pad - 2.6 * u + SKEW * 9 * u, pad + 12.5 * u, u);
 
@@ -728,13 +756,13 @@ export function drawHud(
         const tk = nowS - anim.trickAt;
         const mk = nowS - anim.multAt;
         const m = c.multiplier;
-        const col = multColor(m);
+        const col = v.timeUp ? STEEL : multColor(m);
         // shrink long chains to stay clear of the speedometer
         const maxW = Math.max(40 * u, Math.min(90 * u, width - 64 * u));
         const strSize = 3.6 * u * Math.min(1, maxW / measure(ctx, str, 3.6 * u, 'label'));
         const pw = Math.max(measure(ctx, str, strSize, 'label'), 30 * u) + 12 * u;
         plate(ctx, cx - pw / 2 - 2 * u, baseY - 4.5 * u, pw, 17.5 * u, INK, col);
-        text(ctx, str, cx, baseY, strSize, AMBER, {
+        text(ctx, str, cx, baseY, strSize, v.timeUp ? STEEL : AMBER, {
           align: 'center',
           font: 'label',
           scale: 1 + 0.3 * (1 - easeOutElastic(tk / 0.7)),
@@ -756,7 +784,20 @@ export function drawHud(
             glow: m >= 3 ? col : undefined,
           },
         );
-        text(ctx, formatScore(anim.combo), cx + 2 * u, baseY + 6.5 * u, 5.4 * u, WHITE, {});
+        text(
+          ctx,
+          formatScore(anim.combo),
+          cx + 2 * u,
+          baseY + 6.5 * u,
+          5.4 * u,
+          v.timeUp ? STEEL : WHITE,
+          {},
+        );
+        if (v.timeUp) {
+          const cw = measure(ctx, formatScore(anim.combo), 5.4 * u);
+          ctx.fillStyle = STEEL;
+          ctx.fillRect(cx + 1.5 * u, baseY + 4.6 * u, cw + u, 0.4 * u);
+        }
 
         const bw = 28 * u;
         const bh = 1.1 * u;
@@ -999,11 +1040,10 @@ function drawResults(
 
   // ---- headline: FINISHED (or TIME UP), big total
   const dl = r.daily;
-  const head = r.timeUp
-    ? 'TIME UP'
-    : dl
-      ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
-      : 'FINISHED';
+  const verdictHead = dl
+    ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
+    : 'FINISHED';
+  const head = r.timeUp ? (dl ? `TIME UP · ${verdictHead}` : 'TIME UP') : verdictHead;
   const headPx = fitPx(ctx, head, (p) => th.font(700, p, true), 3.2 * u, cw);
   text(ctx, head, cx, 6 * u, headPx, r.timeUp ? RED : dl ? (dl.cleared ? GREEN : RED) : th.dim, {
     align: 'center',
@@ -1081,7 +1121,7 @@ function drawResults(
   const bh = 6 * u;
   const flash = r.newBest && Math.floor(now * 3) % 2 === 0;
   const nbFont = th.font(800, 3.4 * u, true);
-  if (r.medals && !r.timeUp) {
+  if (r.medals) {
     const label = positionLabel(r.position);
     const col = r.position ? POS_COL[r.position] : th.dim;
     const font = th.font(800, 4.2 * u, true);
@@ -1099,7 +1139,14 @@ function drawResults(
     });
     if (flash)
       text(ctx, 'NEW BEST!', bx + bw + 3 * u, by, 3.4 * u, GREEN, { css: nbFont, glow: GREEN });
-    const next = nextTarget(r.position, r.medals, v.par);
+    const next = r.timeUp ? '' : nextTarget(r.position, r.medals, v.par);
+    if (r.timeUp) {
+      const msg = r.late
+        ? `+${formatScore(r.late)} after time not counted`
+        : 'score locked at the time limit';
+      const px = fitPx(ctx, msg, (p) => th.font(600, p), 2.6 * u, cw);
+      text(ctx, msg, cx, 33 * u, px, RED, { align: 'center', css: th.font(600, px), stroke: null });
+    }
     if (next) {
       const px = fitPx(ctx, next, (p) => th.font(600, p), 2.4 * u, cw);
       text(ctx, next, cx, 33 * u, px, th.dim, {
@@ -1265,11 +1312,21 @@ function drawResults(
         stroke: null,
       });
     }
+    if (d.late) {
+      const tf = th.font(700, 1.8 * u);
+      const nw = cssWidth(ctx, 'NOT COUNTED', tf) + 2.4 * u;
+      box(ctx, ix + 0.8 * u, iy + ih - 4 * u, nw, 3.2 * u, 1.6 * u, 'rgba(4,5,12,0.8)', RED, hair);
+      text(ctx, 'NOT COUNTED', ix + 0.8 * u + nw / 2, iy + ih - 2.4 * u, 1.8 * u, RED, {
+        align: 'center',
+        css: tf,
+        stroke: null,
+      });
+    }
     // score + combo name
     const ty = y + imgH;
     const score = formatScore(d.amount);
     const sPx = fitPx(ctx, score, (p) => th.font(800, p, true), 3.8 * u, cardW - 3 * u);
-    text(ctx, score, x + 1.5 * u, ty + 3.2 * u, sPx, sel ? th.accent : th.text, {
+    text(ctx, score, x + 1.5 * u, ty + 3.2 * u, sPx, d.late ? th.dim : sel ? th.accent : th.text, {
       css: th.font(800, sPx, true),
       stroke: null,
       glow: sel && th.glow ? th.accent : undefined,
