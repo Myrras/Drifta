@@ -1,3 +1,4 @@
+import type { Look } from './cosmetics';
 import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
@@ -16,7 +17,7 @@ export interface RenderView {
   /** 0..1 camera shake intensity, decays after a wall hit */
   shake: number;
   /** player's car model + paint */
-  player: { model: PlayerModel; color: string };
+  player: { model: PlayerModel; color: string; look?: Look };
   /** 0..1 wall-scrape intensity this frame (for sparks) */
   scrape: number;
   /** 0..1 hard-impact pulse, decays (for hit flash / hit-stop feel) */
@@ -27,6 +28,15 @@ export interface RenderView {
   clip: Rect | null;
   /** live traffic and its city graph (signal heads), null on maps without traffic */
   traffic: { sim: Traffic; city: CityGraph } | null;
+  /** best-run ghost pose, only set when on the shown floor */
+  ghost?: {
+    x: number;
+    y: number;
+    angle: number;
+    model: PlayerModel;
+    color: string;
+    look?: Look;
+  } | null;
 }
 
 export interface Popup {
@@ -104,6 +114,12 @@ export interface MenuView {
     color: string;
     colors: string[];
     tune: 'performance' | 'street';
+    /** equipped cosmetics, drawn on the preview */
+    look: Look;
+    /** customise slots; `row` 0 is the car, row n is slots[n - 1] */
+    slots: { label: string; name: string; color?: string; locked: boolean }[];
+    /** how to earn the highlighted option, '' when it is owned */
+    lock: string;
     index: number;
     count: number;
     stats: { power: number; grip: number; weight: number };

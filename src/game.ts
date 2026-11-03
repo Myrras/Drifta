@@ -17,6 +17,18 @@ import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContex
 import type { createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
+import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
+import { getLook, setLook } from './progress';
+import type { Look } from './cosmetics';
+import {
+  currentIndex,
+  equip,
+  ownedLook,
+  SLOT_LABELS,
+  SLOTS,
+  slotOptions,
+  type Slot,
+} from './ui/garage';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
 import { createAttractDriver } from './attract';
@@ -49,7 +61,6 @@ import {
   awardFinish,
   isCarUnlocked,
   loadProgress,
-  positionFor,
   saveProgress,
   spendCarPick,
   type Progress,
@@ -124,7 +135,7 @@ const TITLE_ROWS = 3;
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
-  { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
+  { name: 'VIDEO', ids: ['shake', 'clips', 'theme', 'ghost'] },
   { name: 'GAME', ids: ['reset'] },
 ] as const;
 const REDLINE_BELOW_LIMIT = 200; // rpm; profiles only store the limiter (Celica 7200 -> 7000)
@@ -189,12 +200,35 @@ export function createGame(
   let gColor = cfg.color;
   let gTune = cfg.tune;
   const gCarState = createCar(maps[0].start); // garage engine preview; only rpm is used
+  // customise: look per car lives in progress; the garage edits a draft until ENTER
+  const pStore = storage ?? {
+    getItem: (k: string) => localStorage.getItem(k),
+    setItem: (k: string, v: string) => localStorage.setItem(k, v),
+  };
+  let prog = loadProgress(pStore);
+  let cheat = false; // session-only unlock-all, set by the cheat code (never saved)
+  let gLook: Look = {};
+  let gCur: number[] = []; // option cursor per slot (may rest on a locked option)
+  const gOpts = (s: Slot) => slotOptions(s, gCar, PLAYER_MODELS[gCar].colors, prog, cheat);
+  const lookOf = (car: PlayerModel): Look =>
+    ownedLook(getLook(prog, car) as Look, car, PLAYER_MODELS[car].colors, prog, cheat);
+  let raceLook = lookOf(cfg.car);
+  function gLoad(car: PlayerModel, color?: string): void {
+    gCar = car;
+    gLook = lookOf(car);
+    const cs = PLAYER_MODELS[car].colors;
+    gColor = color ?? cs.find((c) => c === (gLook as { color?: string }).color) ?? cs[0];
+    gCur = SLOTS.map((s) => currentIndex(s, gOpts(s), gLook, gColor));
+  }
+  const gDraft = () => setLook(prog, gCar, { ...gLook, color: gColor });
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   let comboIds = 0;
+  let rec = createRecorder();
+  let ghost: Ghost | null = null;
   const ui: Pick<UiContext, 'device' | 'padStyle'> = { device: 'kb', padStyle: 'xbox' };
 
   /** menu background: an AI car drifting the docks. Silent, own state, never touches the run. */
@@ -265,6 +299,8 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+    rec = createRecorder();
+    ghost = loadGhost(map.name);
     clips?.begin(cfg.clips);
   };
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
@@ -364,16 +400,17 @@ export function createGame(
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
-    if (newBest) stores[sel].set((bests[sel] = total));
-    try {
-      s.prog = loadProgress(storage);
-    } catch {
-      s.prog = null; // no localStorage (node tests without storage): no progression
+    if (newBest) {
+      stores[sel].set((bests[sel] = total));
+      saveGhost(map.name, {
+        car: cfg.car,
+        look: { ...raceLook, color: cfg.color },
+        frames: rec.frames,
+      });
     }
-    const award = s.prog
-      ? awardFinish(s.prog, map, total, s.time)
-      : { position: positionFor(map, total, s.time), newPaints: [], carPick: false };
-    if (s.prog) saveProgress(s.prog, storage);
+    s.prog = prog;
+    const award = awardFinish(prog, map, total, s.time);
+    saveProgress(prog, pStore);
     s.carPick = award.carPick;
     s.results = {
       comboPoints,
@@ -448,6 +485,7 @@ export function createGame(
   function run(input: InputState, dt: number): void {
     track();
     s.time += dt;
+    rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
     const floor = map.floors[s.floorIndex];
@@ -557,24 +595,31 @@ export function createGame(
     gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
     audio.update(gCarState, IDLE, input.rev ? 1 : 0, gCar, gTune);
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-    if (dir || dv || input.tune) audio.ui('adjust');
-    if (dir) {
-      gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
-      gColor = PLAYER_MODELS[gCar].colors[0];
-    }
-    if (dv) {
-      const cs = PLAYER_MODELS[gCar].colors;
-      gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
+    if (dv) row = cycle(row, dv, SLOTS.length + 1); // 0 = car, n = SLOTS[n - 1]
+    if (dir || dv || input.tune) audio.ui(dv ? 'move' : 'adjust');
+    if (dir && row === 0) {
+      gDraft();
+      gLoad(MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)]);
+    } else if (dir) {
+      const slot = SLOTS[row - 1];
+      const opts = gOpts(slot);
+      gCur[row - 1] = cycle(gCur[row - 1], dir, opts.length);
+      ({ look: gLook, color: gColor } = equip(slot, opts[gCur[row - 1]], gLook, gColor));
     }
     if (input.confirm) {
       Object.assign(cfg, { car: gCar, color: gColor, tune: gTune });
       save();
+      gDraft();
+      saveProgress(prog, pStore);
+      raceLook = lookOf(cfg.car);
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
       go('title', 1);
     } else if (input.pause) {
-      [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+      prog = loadProgress(pStore); // drop the draft
+      gTune = cfg.tune;
+      gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
       go('title', 1);
@@ -627,6 +672,9 @@ export function createGame(
     } else if (id === 'shake' && act) {
       cfg.shake = !cfg.shake;
       save();
+    } else if (id === 'ghost' && act) {
+      cfg.ghost = !cfg.ghost;
+      save();
     } else if (id === 'clips' && act) {
       const n = CLIP_QUALITIES.length;
       cfg.clips = CLIP_QUALITIES[cycle(CLIP_QUALITIES.indexOf(cfg.clips), dir || 1, n)];
@@ -669,6 +717,8 @@ export function createGame(
         switch (id) {
           case 'shake':
             return { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' };
+          case 'ghost':
+            return { label: 'GHOST', value: cfg.ghost ? 'ON' : 'OFF' };
           case 'track':
             return {
               label: 'MUSIC',
@@ -719,6 +769,12 @@ export function createGame(
           name: m.name,
           color: gColor,
           tune: gTune,
+          look: gLook,
+          slots: SLOTS.map((s, i) => {
+            const o = gOpts(s)[gCur[i]];
+            return { label: SLOT_LABELS[s], name: o.name, color: o.color, locked: !!o.lock };
+          }),
+          lock: (row > 0 && gOpts(SLOTS[row - 1])[gCur[row - 1]].lock) || '',
           colors: m.colors,
           index: MODEL_IDS.indexOf(gCar),
           count: MODEL_IDS.length,
@@ -764,7 +820,8 @@ export function createGame(
             audio.ui('confirm');
             if (row === 0) newRun();
             else {
-              [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+              gTune = cfg.tune;
+              gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
               go(row === 1 ? 'garage' : 'settings');
             }
@@ -814,7 +871,7 @@ export function createGame(
             if (dir) ch.row = cycle(ch.row, dir, ch.cars.length + 1);
             if (input.confirm || input.pause) {
               const car = input.confirm ? ch.cars[ch.row] : undefined;
-              if (car && s.prog && spendCarPick(s.prog, car)) saveProgress(s.prog, storage);
+              if (car && s.prog && spendCarPick(s.prog, car)) saveProgress(s.prog, pStore);
               s.chooser = null;
               s.carPick = false;
             }
@@ -834,6 +891,14 @@ export function createGame(
     },
 
     view(): FrameView {
+      const ghostView = () => {
+        const g = cfg.ghost && ghost && sample(ghost, s.time);
+        if (!g || !ghost || g.floor !== s.floorIndex) return null;
+        const model = Object.hasOwn(PLAYER_MODELS, ghost.car) ? ghost.car : cfg.car;
+        const c = ghost.look?.color;
+        const color = typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0];
+        return { ...g, model, color, look: ghost.look as Look | undefined };
+      };
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
       const drift =
@@ -875,12 +940,13 @@ export function createGame(
             fade: 0,
             blend,
             shake: cfg.shake ? s.shake : 0,
-            player: { model: cfg.car, color: cfg.color },
+            player: { model: cfg.car, color: cfg.color, look: raceLook },
             scrape: s.scrape,
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
+            ghost: ghostView(),
           };
       return {
         render,

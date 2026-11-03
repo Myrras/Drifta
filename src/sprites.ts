@@ -1,5 +1,6 @@
 import type { PlayerModel } from './types';
 import { PLAYER_MODELS } from './models';
+import { itemById, type Look } from './cosmetics';
 
 type Ctx = CanvasRenderingContext2D;
 /** [x, half width] in m, listed nose to tail; mirrored across the x axis */
@@ -125,6 +126,49 @@ function slots(g: Ctx, x: number, y: number, d: number, w: number, n: number) {
     const sx = x + (i + 0.5) * (d / n);
     line(g, 'rgba(0,0,0,0.55)', 0.04, sx, y - w, sx, y + w);
     line(g, 'rgba(0,0,0,0.55)', 0.04, sx, -y - w, sx, -y + w);
+  }
+}
+
+/** Soft coloured glow under the car (before tires and body). */
+function underglow(g: Ctx, look: Look | undefined, hl: number, B: number) {
+  const c = itemById(look?.underglow)?.color;
+  if (!c) return;
+  g.fillStyle = c;
+  g.globalAlpha = 0.1;
+  for (let i = 0; i < 5; i++) {
+    g.beginPath();
+    g.ellipse(0, 0, hl + 0.35 - i * 0.12, B + 0.35 - i * 0.1, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
+/** Hood overlay from x0 to the nose (carbon weave, or plain black for the skin); call inside the body clip. */
+function hood(g: Ctx, look: Look, black: boolean, x0: number, hl: number, B: number) {
+  if (!look.hood && !black) return;
+  const x1 = hl - 0.1;
+  g.fillStyle = look.hood ? '#1a1b1e' : TRIM;
+  g.fillRect(x0, -B, x1 - x0, 2 * B);
+  if (!look.hood) return;
+  // twill weave: diagonal runs of slightly lighter cells
+  const s = 0.07;
+  g.beginPath();
+  for (let i = 0; x0 + i * s < x1; i++)
+    for (let j = 0; -B + j * s < B; j++) if ((i + j) % 4 < 2) g.rect(x0 + i * s, -B + j * s, s, s);
+  g.fillStyle = '#2c2e33';
+  g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.06)'; // clear-coat sheen
+  g.fillRect(x0, -B * 0.35, x1 - x0, B * 0.3);
+}
+
+/** Aftermarket spoiler at tail x t. */
+function spoiler(g: Ctx, look: Look | undefined, c: string, t: number, B: number) {
+  if (look?.spoiler === 'ducktail') {
+    pair(g, [c, 'rgba(0,0,0,0.22)'], t + 0.06, 0, 0.14, B - 0.1, 0.02);
+    line(g, 'rgba(255,255,255,0.2)', 0.03, t + 0.18, -(B - 0.14), t + 0.18, B - 0.14);
+  } else if (look?.spoiler === 'gt') {
+    pair(g, [TRIM], t + 0.3, B - 0.32, 0.12, 0.06, 0.02); // uprights
+    wing(g, c, t - 0.12, 0.3, B - 0.02, 0.18); // overhangs the tail
   }
 }
 
@@ -478,18 +522,44 @@ function specs(model: Body, hl: number, B: number): Spec {
 }
 
 /** Draws a parked car centered at the origin, nose toward +x, 1 unit = 1 m (caller sets the transform). */
-export function drawParkedCar(ctx: CanvasRenderingContext2D, model: Body, color: string): void {
+export function drawParkedCar(
+  ctx: CanvasRenderingContext2D,
+  model: Body,
+  color: string,
+  look?: Look,
+): void {
   const g = ctx;
   const { length, width } = PLAYER_MODELS[model];
   const hl = length / 2;
   const B = width / 2 - 0.1; // body half width; tires peek out 0.1 m
   const s = specs(model, hl, B);
   const fa = hl - s.fo;
+  const skin = look?.skin === 'fortune-orange' && model === 'rx7';
+  color = (skin ? itemById(look.skin) : itemById(look?.paint))?.color ?? color;
+  const [gx, gw] = s.glass;
   g.save();
+  underglow(g, look, hl, B);
   for (const x of [fa, fa - s.wb]) pair(g, [TIRE], x - 0.31, B - 0.2, 0.62, 0.3, 0.07);
+  if (skin) for (const x of [fa, fa - s.wb]) pair(g, [color], x - 0.45, B - 0.2, 0.9, 0.26, 0.12); // widebody flares
   fill(g, color, s.body);
   g.save();
   g.clip();
+  if (look) {
+    hood(g, look, skin, gx + 0.05, hl, B);
+    if (skin) {
+      g.fillStyle = TRIM; // side graphic: tapered blade along each flank
+      for (const y of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(1.1, y * B);
+        g.lineTo(-1.7, y * B);
+        g.lineTo(-1.5, y * (B - 0.18));
+        g.lineTo(0.3, y * (B - 0.07));
+        g.closePath();
+        g.fill();
+      }
+    }
+    shape(g, s.body); // the overlays replaced the path; restore it for the edge strokes
+  }
   g.strokeStyle = 'rgba(0,0,0,0.07)'; // darker toward the edges
   for (const lw of [0.7, 0.55, 0.4, 0.28, 0.18, 0.1]) {
     g.lineWidth = lw;
@@ -500,10 +570,18 @@ export function drawParkedCar(ctx: CanvasRenderingContext2D, model: Body, color:
   g.stroke();
   g.restore();
   pair(g, [color, SHADE], s.mirror - 0.07, B - 0.02, 0.14, 0.11, 0.03);
-  const [gx, gw] = s.glass;
-  trap(g, GLASS, s.glass);
-  line(g, 'rgba(255,255,255,0.16)', 0.035, gx - 0.08, -(gw - 0.18), gx - 0.08, gw - 0.18);
-  trap(g, color, s.roof);
+  const tint = itemById(look?.tint)?.color;
+  trap(g, tint ?? GLASS, s.glass);
+  line(
+    g,
+    `rgba(255,255,255,${tint ? 0.06 : 0.16})`,
+    0.035,
+    gx - 0.08,
+    -(gw - 0.18),
+    gx - 0.08,
+    gw - 0.18,
+  );
+  trap(g, skin ? TRIM : color, s.roof);
   g.fillStyle = 'rgba(255,255,255,0.07)';
   g.fill();
   const [r1, , r2] = s.roof;
@@ -514,17 +592,21 @@ export function drawParkedCar(ctx: CanvasRenderingContext2D, model: Body, color:
     g.fill();
   }
   s.detail(g, color);
+  if (skin) lids(g, TRIM, hl - 0.62, 0.24, 0.3, 0.2); // black pop-up lids on the black hood
+  spoiler(g, look, color, -hl, B);
   g.restore();
 }
 
 /** NA roadster: short, rounded, pop-up lids, open cockpit with two seats and roll hoops. */
-function drawMx5(g: Ctx, color: string): void {
+function drawMx5(g: Ctx, color: string, look?: Look): void {
   const hl = PLAYER_MODELS.mx5.length / 2;
   const B = PLAYER_MODELS.mx5.width / 2 - 0.1;
   const fa = hl - 0.9;
+  color = itemById(look?.paint)?.color ?? color;
   g.save();
+  underglow(g, look, hl, B);
   for (const x of [fa, fa - 2.27]) pair(g, [TIRE], x - 0.29, B - 0.2, 0.58, 0.3, 0.07);
-  fill(g, color, [
+  const body: P[] = [
     [hl, 0.42],
     [hl - 0.06, 0.58],
     [hl - 0.3, B - 0.02],
@@ -534,9 +616,14 @@ function drawMx5(g: Ctx, color: string): void {
     [-hl + 0.2, B - 0.06],
     [-hl + 0.02, B - 0.3],
     [-hl, 0],
-  ]);
+  ];
+  fill(g, color, body);
   g.save();
   g.clip();
+  if (look) {
+    hood(g, look, false, 0.32, hl, B);
+    shape(g, body); // the hood replaced the path; restore it for the edge strokes
+  }
   g.strokeStyle = 'rgba(0,0,0,0.07)'; // darker toward the edges
   for (const lw of [0.7, 0.55, 0.4, 0.28, 0.18, 0.1]) {
     g.lineWidth = lw;
@@ -556,14 +643,20 @@ function drawMx5(g: Ctx, color: string): void {
   g.roundRect(-1.05, -B + 0.1, 1.2, 2 * B - 0.2, 0.2);
   g.fill();
   pair(g, ['#2a2b30', 'rgba(255,255,255,0.08)'], -0.75, 0.1, 0.42, 0.38, 0.1);
-  trap(g, GLASS, [0.42, B - 0.1, 0.18, B - 0.1, 0.05, 0.04, 0]); // low windshield
+  trap(g, itemById(look?.tint)?.color ?? GLASS, [0.42, B - 0.1, 0.18, B - 0.1, 0.05, 0.04, 0]); // low windshield
   pair(g, ['#101114'], -0.9, 0.5, 0.1, 0.12, 0.03); // roll hoops
   pair(g, [color, SHADE], 0.3, B - 0.02, 0.14, 0.11, 0.03); // mirrors
+  spoiler(g, look, color, -hl, B);
   g.restore();
 }
 
 /** Draws any player model centered at the origin, nose toward +x, 1 unit = 1 m. */
-export function drawCar(ctx: CanvasRenderingContext2D, model: PlayerModel, color: string): void {
-  if (model === 'mx5') drawMx5(ctx, color);
-  else drawParkedCar(ctx, model, color);
+export function drawCar(
+  ctx: CanvasRenderingContext2D,
+  model: PlayerModel,
+  color: string,
+  look?: Look,
+): void {
+  if (model === 'mx5') drawMx5(ctx, color, look);
+  else drawParkedCar(ctx, model, color, look);
 }

@@ -17,6 +17,8 @@ export interface Settings {
   sfx: number;
   engine: number;
   shake: boolean;
+  /** show the best-run ghost */
+  ghost: boolean;
   track: Track;
   /** drift clip recording quality */
   clips: ClipQuality;
@@ -36,6 +38,7 @@ export const defaultSettings = (): Settings => ({
   sfx: 0.8,
   engine: 0.8,
   shake: true,
+  ghost: true,
   track: 'phonk', // old 'tokyo' / 'eurobeat' saves fail validation and land here
   clips: 'medium',
   menuTheme: 'arcade',
@@ -65,6 +68,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     sfx: vol(raw.sfx, d.sfx),
     engine: vol(raw.engine, d.engine),
     shake: typeof raw.shake === 'boolean' ? raw.shake : d.shake,
+    ghost: typeof raw.ghost === 'boolean' ? raw.ghost : d.ghost,
     track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
     clips: CLIP_QUALITIES.includes(raw.clips as ClipQuality) ? (raw.clips as ClipQuality) : d.clips,
     menuTheme: MENU_THEMES.includes(raw.menuTheme as MenuTheme)
