@@ -129,6 +129,8 @@ describe('firing scheduler', () => {
     expect(at6k('mx5')).toBeCloseTo(200, -1);
     expect(at6k('wrx')).toBeCloseTo(200, -1);
     expect(at6k('rx7')).toBeCloseTo(200, -1);
+    expect(at6k('rx8')).toBeCloseTo(200, -1);
+    expect(at6k('celica')).toBeCloseTo(200, -1);
     expect(at6k('supra')).toBeCloseTo(300, -1);
     expect(at6k('nsx')).toBeCloseTo(300, -1);
   });
@@ -278,7 +280,45 @@ describe('rasp', () => {
     const at = (p: EngineProfile) => highShare(steady(5000, 1, p).subarray(0, 6144));
     const supra = at({ ...ENGINE_PROFILES.supra, turbo: undefined });
     expect(at({ ...ENGINE_PROFILES.rx7, turbo: undefined })).toBeGreaterThan(supra);
+    expect(at(ENGINE_PROFILES.rx8)).toBeGreaterThan(supra);
     expect(at(ENGINE_PROFILES.civic)).toBeGreaterThan(supra);
+  });
+});
+
+describe('rx8 and celica', () => {
+  it('RX-8: NA rotary to 9000, no turbo layer', () => {
+    const p = ENGINE_PROFILES.rx8;
+    expect(p.rotary).toBe(true);
+    expect(p.turbo).toBeUndefined();
+    expect(engineRpm(1, p)).toBe(9000);
+    expect(engineProfile('rx8', 'street')).toBe(p);
+  });
+
+  // side exhaust ports: few partial burns and no reflux doublets, so idle firings stay even
+  it('RX-8 idles smoother than the RX-7 brap', () => {
+    const spread = (p: EngineProfile) => {
+      const x = steady(1100, 0, { ...p, turbo: undefined });
+      const n = Math.round((SR * 60) / 1100 / 2); // one firing
+      const w = [];
+      for (let i = 0; i + n <= x.length; i += n) w.push(rms(x.subarray(i, i + n)));
+      const m = w.reduce((a, b) => a + b, 0) / w.length;
+      return Math.sqrt(w.reduce((s, v) => s + (v - m) ** 2, 0) / w.length) / m;
+    };
+    const rx7 = ENGINE_PROFILES.rx7;
+    expect(spread({ ...rx7, brap: ENGINE_PROFILES.rx8.brap })).toBeLessThan(spread(rx7) * 0.5);
+  });
+
+  it('Celica: single turbo sized between the S13 T25 and the 180SX GT28, redline 7000', () => {
+    const t = (m: 's13' | 'celica' | '180sx') => ENGINE_PROFILES[m].turbo!;
+    const c = t('celica');
+    expect(c.seq ?? c.par).toBeUndefined();
+    for (const i of [0, 1, 4]) {
+      expect(c.tu[i]).toBeGreaterThan(t('s13').tu[i]);
+      expect(c.tu[i]).toBeLessThan(t('180sx').tu[i]);
+    }
+    expect(c.tu[2]).toBeLessThan(t('s13').tu[2]);
+    expect(c.tu[2]).toBeGreaterThan(t('180sx').tu[2]);
+    expect(engineRpm(1, ENGINE_PROFILES.celica)).toBeGreaterThanOrEqual(7000);
   });
 });
 
