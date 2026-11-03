@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createGame, type AudioLike, type BestStore } from './game';
-import { garage } from './maps/garage';
+import { garage, garageRoute } from './maps/garage';
+import { collide } from './collision';
 import { testpad } from './maps/testpad';
 import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
@@ -543,5 +544,116 @@ describe('main menu, garage, settings', () => {
     game.update({ ...IDLE, pause: true }, DT);
     expect(game.view().hud.phase).toBe('title');
     expect(a.music).toHaveBeenLastCalledWith(false);
+  });
+
+  describe('auto-recover', () => {
+    const wedge = (map: GameMap, fn: (g: ReturnType<typeof setup>) => void) => {
+      const f = map.floors[0];
+      const n = f.solids.length;
+      const g = setup();
+      if (map !== garage) throw new Error('garage only');
+      const { x, y } = garage.start.pos;
+      f.solids.push(
+        { x: x + 2, y: y - 3, w: 1, h: 6, kind: 'wall' },
+        { x: x - 3, y: y - 3, w: 1, h: 6, kind: 'wall' },
+      );
+      try {
+        g.toRun();
+        Object.assign(g.game.debug.car, { pos: { x, y }, angle: 0 });
+        fn(g);
+      } finally {
+        f.solids.length = n;
+      }
+    };
+
+    it('puts a wedged car on the route, heading along it, and loses the combo', () => {
+      wedge(garage, ({ game, step }) => {
+        startCombo(game);
+        game.debug.scoring.combo!.grace = 99;
+        step({ throttle: 1 }, Math.round(2 / DT));
+        expect(game.debug.scoring.combo).not.toBeNull();
+        step({ throttle: 1 }, Math.round(0.55 / DT));
+        const car = game.debug.car;
+        const pts = garageRoute[0].points;
+        const i = pts.findIndex((q, k) => {
+          const b = pts[k + 1];
+          return b && Math.abs(Math.atan2(b.y - q.y, b.x - q.x) - car.angle) < 1e-6;
+        });
+        expect(i).toBeGreaterThanOrEqual(0);
+        expect(Math.hypot(car.vel.x, car.vel.y)).toBeLessThan(1);
+        expect(collide(car, garage.floors[0].solids, garage.floors[0].circles)).toBeNull();
+        expect(game.debug.scoring.combo).toBeNull();
+        expect(game.view().hud.popups.some((p) => p.text === 'RESET')).toBe(true);
+      });
+    });
+
+    it('does not trigger without input', () => {
+      wedge(garage, ({ game, step }) => {
+        step({}, Math.round(4 / DT));
+        expect(game.debug.car.pos.x).toBeCloseTo(garage.start.pos.x, 0);
+      });
+    });
+
+    it('does not trigger when pushing under 2.5 s', () => {
+      wedge(garage, ({ game, step }) => {
+        step({ throttle: 1 }, Math.round(2.3 / DT));
+        expect(Math.abs(game.debug.car.angle)).toBeLessThan(0.2);
+        expect(game.debug.car.pos.x).toBeCloseTo(garage.start.pos.x, 0);
+      });
+    });
+
+    it('falls back to the start without a route', () => {
+      const game = createGame([testpad], audio, () => memBest());
+      const go = (input: Partial<InputState>, n: number) => {
+        for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
+      };
+      go({ confirm: true }, 1);
+      go({}, Math.round(COUNTDOWN_SECONDS / DT));
+      const f = testpad.floors[0];
+      const n = f.solids.length;
+      f.solids.push(
+        { x: 52, y: 47, w: 1, h: 6, kind: 'wall' },
+        { x: 47, y: 47, w: 1, h: 6, kind: 'wall' },
+      );
+      try {
+        Object.assign(game.debug.car, { pos: { x: 50, y: 50 }, angle: 0 });
+        go({ throttle: 1 }, Math.round(3 / DT));
+        expect(Math.hypot(game.debug.car.pos.x - 100, game.debug.car.pos.y - 100)).toBeLessThan(5);
+      } finally {
+        f.solids.length = n;
+      }
+    });
+  });
+
+  describe('pause/countdown/title', () => {
+    it('confirm+pause resumes from pause', () => {
+      const { game, step, toRun } = setup();
+      toRun();
+      step({ pause: true });
+      expect(game.debug.phase).toBe('paused');
+      step({ pause: true, confirm: true });
+      expect(game.debug.phase).toBe('run');
+    });
+
+    it('pause or blur during countdown returns to title and bumps runId', () => {
+      const { game, step } = setup();
+      step({ confirm: true });
+      const id = game.debug.runId;
+      step({ pause: true });
+      expect(game.debug.phase).toBe('title');
+      expect(game.debug.runId).toBeGreaterThan(id);
+      step({ confirm: true });
+      const id2 = game.debug.runId;
+      game.pause();
+      expect(game.debug.phase).toBe('title');
+      expect(game.debug.runId).toBeGreaterThan(id2);
+    });
+
+    it('changing the title map bumps runId', () => {
+      const game = createGame([garage, testpad], audio, () => memBest());
+      const id = game.debug.runId;
+      game.update({ ...IDLE, right: true }, DT);
+      expect(game.debug.runId).toBeGreaterThan(id);
+    });
   });
 });

@@ -4,6 +4,7 @@ import type {
   Helix,
   InputState,
   Phase,
+  Vec,
   PlayerModel,
   ScoreEvent,
 } from './types';
@@ -12,6 +13,8 @@ import type { createAudio } from './audio';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar } from './car';
 import { collide, inRect, nearestDistance } from './collision';
+import { garage, garageRoute } from './maps/garage';
+import { docks, docksRoute } from './maps/docks';
 import { PLAYER_MODELS, type CarStats } from './models';
 import { loadSettings, saveSettings, type SettingsStorage } from './settings';
 import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
@@ -26,6 +29,15 @@ const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
 const POPUP_LIFE = 1.5; // s
 const SHAKE_DECAY = 3; // per s
 const RAMP_DRIFT_MIN = 0.6; // fraction of the helix that must be drifted
+const STUCK_SPEED = 0.8; // m/s
+const STUCK_INPUT = 0.3;
+const STUCK_NEAR = 0.3; // m
+const STUCK_TIME = 2.5; // s
+const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
+  [garage, garageRoute],
+  [docks, docksRoute],
+]);
+const NEAR_RANGE = 8; // m; solids farther than this cannot matter for collide or near-miss
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const MODEL_IDS = Object.keys(PLAYER_MODELS) as PlayerModel[];
@@ -75,6 +87,7 @@ export function createGame(
     drifted: 0,
     results: null as Results | null,
     resultsAge: 0,
+    stuck: 0,
   });
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
@@ -87,14 +100,14 @@ export function createGame(
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
     s.popups.push({ kind, text, amount, age: 0 });
 
-  function handle(events: ScoreEvent[]): void {
+  function handle(events: ScoreEvent[], failText = 'BAILED'): void {
     for (const e of events) {
       if (e.type === 'trick') popup('trick', e.trick, 0);
       else if (e.type === 'bank') {
         popup('bank', `+${e.amount}`, e.amount);
         audio.bank();
       } else {
-        popup('fail', 'BAILED', e.lost);
+        popup('fail', failText, e.lost);
         audio.fail();
       }
     }
@@ -157,6 +170,59 @@ export function createGame(
     audio.music(false);
   }
 
+  /** put the car on the route (or start) nearest to it, heading along it, clear of solids */
+  function recover(): void {
+    const car = s.car;
+    const floor = map.floors[s.floorIndex];
+    const clear = () => !collide(car, floor.solids, floor.circles);
+    const place = (pos: Vec, angle: number) =>
+      Object.assign(car, { pos: { ...pos }, angle, vel: { x: 0, y: 0 }, angVel: 0 });
+    const pts = ROUTES.get(map)?.find((r) => r.floor === s.floorIndex)?.points;
+    if (pts && pts.length > 1) {
+      let best = Infinity;
+      let seg = 0;
+      let t = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i];
+        const dx = pts[i + 1].x - a.x;
+        const dy = pts[i + 1].y - a.y;
+        const u = Math.max(
+          0,
+          Math.min(1, ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1)),
+        );
+        const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
+        if (d < best) [best, seg, t] = [d, i, u];
+      }
+      // step forward along the route until clear
+      search: for (let i = seg; i < pts.length - 1; i++, t = 0) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        for (let d = t * len; d <= len; d += 0.5) {
+          place({ x: a.x + ((b.x - a.x) * d) / len, y: a.y + ((b.y - a.y) * d) / len }, angle);
+          if (clear()) break search;
+        }
+      }
+    } else place(map.start.pos, map.start.angle);
+    handle(
+      stepScoring(
+        s.scoring,
+        {
+          drift: IDLE,
+          yawDelta: 0,
+          nearDist: Infinity,
+          hit: true,
+          rampDrift: false,
+          frozen: false,
+        },
+        0,
+      ),
+      'RESET',
+    );
+    s.stuck = 0;
+  }
+
   function run(input: InputState, dt: number): void {
     s.time += dt;
     let hard = false;
@@ -166,7 +232,13 @@ export function createGame(
     audio.update(car, s.drift, input.throttle);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
-    const hit = collide(car, floor.solids, floor.circles);
+    const near = (x: number, y: number, r: number) =>
+      (x - car.pos.x) ** 2 + (y - car.pos.y) ** 2 <= (r + NEAR_RANGE) ** 2;
+    const solids = floor.solids.filter((o) =>
+      near(o.x + o.w / 2, o.y + o.h / 2, Math.hypot(o.w, o.h) / 2),
+    );
+    const circles = floor.circles.filter((o) => near(o.x, o.y, o.r));
+    const hit = collide(car, solids, circles);
     s.scrape = 0;
     if (hit) {
       const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
@@ -177,9 +249,15 @@ export function createGame(
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
-    const nearDist = s.drift.drifting
-      ? nearestDistance(car, floor.solids, floor.circles)
-      : Infinity;
+    const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
+    const pushing = Math.max(input.throttle, input.brake) > STUCK_INPUT;
+    const touching = hit !== null || nearestDistance(car, solids, circles) < STUCK_NEAR;
+    const slow = Math.hypot(car.vel.x, car.vel.y) < STUCK_SPEED;
+    s.stuck = pushing && slow && touching && !s.helix ? s.stuck + dt : 0;
+    if (s.stuck >= STUCK_TIME) {
+      recover();
+      return;
+    }
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
 
@@ -194,6 +272,11 @@ export function createGame(
     if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
   }
 
+  const toTitle = () => {
+    audio.stop();
+    audio.music(false);
+    Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
+  };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
@@ -302,12 +385,6 @@ export function createGame(
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      const toTitle = () => {
-        audio.stop();
-        audio.music(false);
-        Object.assign(s, fresh(), { phase: 'title' });
-      };
-
       const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
       if (input.restart && !inMenu) {
         newRun();
@@ -319,7 +396,7 @@ export function createGame(
           if (dir && row === 0) {
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
-            Object.assign(s, fresh());
+            Object.assign(s, fresh(), { runId: s.runId + 1 });
           }
           if (input.confirm) {
             audio.resume();
@@ -337,6 +414,10 @@ export function createGame(
           settingsInput(input, dir);
           break;
         case 'countdown':
+          if (input.pause) {
+            toTitle();
+            break;
+          }
           s.countdown -= dt;
           if (s.countdown <= EPS) s.phase = 'run';
           break;
@@ -347,8 +428,8 @@ export function createGame(
           } else run(input, dt);
           break;
         case 'paused':
-          if (input.pause) toTitle();
-          else if (input.confirm) s.phase = 'run';
+          if (input.confirm) s.phase = 'run';
+          else if (input.pause) toTitle();
           break;
         case 'results':
           s.resultsAge += dt;
@@ -405,6 +486,7 @@ export function createGame(
     },
 
     pause(): void {
+      if (s.phase === 'countdown') return toTitle();
       if (s.phase !== 'run') return;
       s.phase = 'paused';
       audio.stop();
