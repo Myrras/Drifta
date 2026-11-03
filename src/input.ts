@@ -57,6 +57,9 @@ export function latchedEdge(): { latch(): void; poll(down: boolean): boolean } {
   };
 }
 
+/** OR two edge results; both are evaluated before the call so each tracker always updates. */
+const pick = (a: boolean, b: boolean) => a || b;
+
 const any = (keys: Set<string>, ...codes: string[]) => codes.some((c) => keys.has(c));
 
 export function keyboardInput(k: Set<string>): RawInput {
@@ -106,7 +109,7 @@ export function gamepadInput(p: Gamepad | null): RawInput {
     throttle: b(7)?.value ?? 0,
     brake: b(6)?.value ?? 0,
     handbrake: b(0)?.pressed ?? false,
-    pause: b(9)?.pressed ?? false,
+    pause: (b(9)?.pressed ?? false) || (b(1)?.pressed ?? false),
     restart: b(8)?.pressed ?? false,
     confirm: (b(9)?.pressed ?? false) || (b(0)?.pressed ?? false),
   };
@@ -190,21 +193,25 @@ export function createInput(
       const m = mergeInput(kb, gp);
       return {
         ...m,
-        pause: kbEdge.pause.poll(kbRaw.pause) || padEdge.pause(gp.pause),
-        restart: kbEdge.restart.poll(kbRaw.restart) || padEdge.restart(gp.restart),
-        confirm: kbEdge.confirm.poll(kbRaw.confirm) || padEdge.confirm(gp.confirm),
-        left:
-          kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')) ||
+        pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
+        restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),
+        confirm: pick(kbEdge.confirm.poll(kbRaw.confirm), padEdge.confirm(gp.confirm)),
+        left: pick(
+          kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')),
           padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5),
-        right:
-          kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')) ||
+        ),
+        right: pick(
+          kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')),
           padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5),
-        up:
-          kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')) ||
+        ),
+        up: pick(
+          kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')),
           padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5),
-        down:
-          kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')) ||
+        ),
+        down: pick(
+          kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')),
           padEdge.down((pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5),
+        ),
       };
     },
   };

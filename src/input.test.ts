@@ -120,3 +120,31 @@ describe('createInput left/right edges', () => {
     expect([a.up, a.down, input.poll().up]).toEqual([true, true, false]);
   });
 });
+
+describe('createInput pad edge tracking', () => {
+  type Pad = { connected: boolean; buttons: { pressed: boolean; value: number }[]; axes: number[] };
+  const setup = () => {
+    const w = new EventTarget() as unknown as Window;
+    const buttons = Array.from({ length: 16 }, () => ({ pressed: false, value: 0 }));
+    const state: { pad: Pad | null } = { pad: null };
+    (w as unknown as { navigator: unknown }).navigator = { getGamepads: () => [state.pad] };
+    return { w, buttons, state, input: createInput(w) };
+  };
+  it('keyboard and pad edge in the same poll: pad tracker still updates', () => {
+    const { w, buttons, state, input } = setup();
+    // Escape tapped and pad Start pressed in the same poll
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'Escape', repeat: false }));
+    w.dispatchEvent(Object.assign(new Event('keyup'), { code: 'Escape' }));
+    buttons[9].pressed = true;
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    expect(input.poll().pause).toBe(true);
+    // pad still held, no new press: no phantom edge
+    expect(input.poll().pause).toBe(false);
+  });
+  it('pad B (button 1) fires pause once', () => {
+    const { buttons, state, input } = setup();
+    buttons[1].pressed = true;
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    expect([input.poll().pause, input.poll().pause]).toEqual([true, false]);
+  });
+});

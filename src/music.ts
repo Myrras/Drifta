@@ -182,6 +182,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   }
 
   function tick(): void {
+    if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05; // stalled timer: skip missed steps
     while (nextTime < ctx.currentTime + 0.1) {
       scheduleStep(nextTime, stepIdx);
       stepIdx++;
