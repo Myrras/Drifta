@@ -8,9 +8,9 @@ const C_SOUND = 550; // m/s, hot exhaust gas: same as real pipe length x 0.62 at
 const POP_RPM = 3500;
 const TURBO_MIX = 4; // turbo layer level against the exhaust (profile gains are "of engine level")
 const WHOOSH = 4; // band-passed noise at the whine pitch, about as loud as the tone
-const CH_NOISE = 2.5; // surge chirp mix: resonant noise, tonal blip, air thump
-const CH_TONE = 0.15;
-const CH_THUMP = 0.25;
+const CH_HISS = 0.0095; // surge chirp mix: >3 kHz hiss, ~4.4 kHz whistle, ~420 Hz air thump
+const CH_WHISTLE = 0.048;
+const CH_THUMP = 0.065;
 
 export interface TurboProfile {
   /** rpm where boost starts / is full */
@@ -30,7 +30,7 @@ export interface TurboProfile {
   par?: boolean;
   /** external wastegate: chatter Hz, gain */
   wg?: [number, number];
-  /** street tune: no BOV, a compressor surge chirp train ("stutututu") on every lift at boost */
+  /** street tune: no BOV, a compressor surge chirp train ("s-tu-tu-tu") on every lift at boost, no overrun pops over it */
   surge?: boolean;
 }
 
@@ -512,8 +512,8 @@ export class EngineDSP {
   private readonly kFlAmp: number;
   private chT = 1; // s since the last surge chirp
   private chAmp = 0;
-  private chHz = 0;
-  private chPh = 0;
+  private chHold = 0;
+  private chLo = 0;
   private wPh = 0;
   private w2Ph = 0;
   private fmPh = 0;
@@ -537,7 +537,9 @@ export class EngineDSP {
   private readonly hissBp: Biquad;
   private readonly bovBp: Biquad;
   private readonly flBp: Biquad;
+  private readonly chHp: Biquad;
   private readonly chBp: Biquad;
+  private readonly ch2Bp: Biquad;
   private readonly whooshBp: Biquad;
   private readonly wgBp: Biquad;
   private dcX = 0;
@@ -576,7 +578,9 @@ export class EngineDSP {
     this.hissBp = new Biquad(sr, 'bp', 1000, 1.5);
     this.bovBp = new Biquad(sr, 'bp', 4500, 0.7);
     this.flBp = new Biquad(sr, 'bp', 3000, 1.2);
-    this.chBp = new Biquad(sr, 'bp', 2000, 5);
+    this.chHp = new Biquad(sr, 'hp', 3000, 0.7);
+    this.chBp = new Biquad(sr, 'bp', 4400, 30);
+    this.ch2Bp = new Biquad(sr, 'bp', 8800, 30);
     this.whooshBp = new Biquad(sr, 'bp', 1000, 3);
     this.wgBp = new Biquad(sr, 'bp', 2200, 1.5);
   }
@@ -657,16 +661,16 @@ export class EngineDSP {
         if (thr > 0.5) {
           this.liftT = 0;
           this.bovArm = true;
+          if (t.surge) this.flN = 0; // throttle open again: no more surge
         } else this.liftT += 1 / sr;
         if (thr < 0.2 && this.bovArm) {
           this.bovArm = false;
           if (this.liftT < 0.12 && S > 0.35 && t.surge) {
-            // street: surge train, longer and faster with more boost (13-25 chirps, 24-28 Hz)
+            // street: an "s" burst then 8-17 "tu" chirps, more with more boost (measured recording)
             const b = clamp01((S - 0.35) / 0.65);
             this.flutters++;
-            this.flN = this.flN0 = Math.round(13 + 12 * b);
-            this.flHz = 24 + 4 * b;
-            this.flPh = 1;
+            this.flN = this.flN0 = 1 + Math.round(8 + 9 * b);
+            this.flPh = 0; // s to the next chirp
             this.flAmp = 0.6 + 0.4 * S;
           } else if (this.liftT < 0.12 && S > 0.35) {
             this.bovs++;
@@ -737,7 +741,9 @@ export class EngineDSP {
           } else amp *= 1 + 0.03 * this.rand();
           this.imp[bank] += amp;
         }
-        if (this.popTime > 0 && rpm > 3000 && this.rand01() < p.pops[0] / fireHz) {
+        // street surge: pops would mask the chirp train (the recording has none)
+        const surging = t?.surge && this.flN > 0;
+        if (this.popTime > 0 && rpm > 3000 && !surging && this.rand01() < p.pops[0] / fireHz) {
           this.popEnv = this.popLevel();
           this.imp[bank] += 0.8 * this.popEnv;
         }
@@ -796,23 +802,31 @@ export class EngineDSP {
   /** One sample of whine, hiss, BOV, flutter and wastegate. */
   private turbo(t: TurboProfile, S: number, thr: number): number {
     const sr = this.sr;
-    // flutter: compressor surge pulses, rate falling over the burst (street 15%, else 25%)
-    const fall = t.surge ? 0.15 : 0.25;
-    if (this.flN > 0) {
-      this.flPh += (this.flHz * (1 - fall + (fall * this.flN) / this.flN0)) / sr;
+    if (this.flN > 0 && t.surge) {
+      // street surge: "s" burst, 200 ms, then chirps speeding up from 155 to 88 ms apart, shorter and 8 dB quieter by the end
+      this.flPh -= 1 / sr;
+      if (this.flPh <= 0) {
+        const k = this.flN0 - this.flN;
+        this.flN--;
+        const left = this.flN / this.flN0;
+        this.flEnv = this.flAmp;
+        this.chirps++;
+        this.chT = 0;
+        this.chHold = k ? 0.025 + 0.025 * left : 0.05;
+        this.chAmp = this.flAmp * (k ? 0.4 + 0.6 * left : 1.8) * (0.85 + 0.3 * this.rand01());
+        const wf = 4450 * 1.3 ** this.rand(); // 3.4-5.8 kHz
+        this.chBp.set(wf, 30);
+        this.ch2Bp.set(2 * wf, 30);
+        this.chLo = 420 * (1 + 0.08 * this.rand());
+        this.flPh = (k ? 0.088 + 0.067 * Math.exp(-(k - 1) / 2.5) : 0.2) * (1 + 0.1 * this.rand());
+      }
+    } else if (this.flN > 0) {
+      // flutter: compressor surge pulses, rate falling 25% over the burst
+      this.flPh += (this.flHz * (0.75 + (0.25 * this.flN) / this.flN0)) / sr;
       if (this.flPh >= 1) {
         this.flPh -= 1;
         this.flN--;
         this.flEnv = this.flAmp;
-        if (t.surge) {
-          const left = this.flN / this.flN0; // 1 -> 0 over the train: quieter, lower pitch
-          this.chirps++;
-          this.chT = 0;
-          this.chPh = 0;
-          this.chAmp = this.flAmp * (0.55 + 0.45 * left) * (0.85 + 0.3 * this.rand01());
-          this.chHz = (1500 + 800 * left) * (1 + 0.06 * this.rand());
-          this.chBp.set(this.chHz, 5);
-        }
       }
     }
     this.flEnv *= this.k25ms;
@@ -866,19 +880,28 @@ export class EngineDSP {
     return whine + hiss + bov + flutter + wg;
   }
 
-  /** One surge "tu": resonant noise, a tonal blip and a low air thump; ~1 ms attack, 6 ms decay. */
+  /**
+   * One surge "tu": a hiss burst (15 ms rise, hold, 12 ms fall; >3 kHz plus a narrow whistle and its octave)
+   * on a hiss floor 8 dB down, then a ~420 Hz air thump as the hiss ends.
+   */
   private chirp(): number {
-    if (this.chT > 0.04) return 0;
     const T = this.chT;
+    if (T > 0.3) return 0;
     this.chT += 1 / this.sr;
-    const att = Math.min(1, T / 0.0008);
-    const e = att * Math.exp(-T / 0.006);
-    this.chPh += (0.5 * this.chHz * (1 - 3 * T)) / this.sr;
+    const H = this.chHold;
+    const burst =
+      T < 0.015 ? Math.sin((Math.PI * T) / 0.03) ** 2 : T < H ? 1 : Math.exp(-(T - H) / 0.012);
+    const n = this.rand() * (burst + 0.7 * Math.exp(-T / (this.flN > 0 ? 1 : 0.06)));
+    const u = T - H + 0.01;
+    const thump =
+      u > 0
+        ? Math.min(1, u / 0.004) * Math.exp(-u / 0.01) * Math.sin(2 * Math.PI * this.chLo * u)
+        : 0;
     return (
       this.chAmp *
-      (CH_NOISE * this.chBp.run(this.rand() * e) +
-        CH_TONE * e * Math.sin(2 * Math.PI * this.chPh) +
-        CH_THUMP * att * Math.exp(-T / 0.008) * Math.sin(2 * Math.PI * 110 * T))
+      (CH_HISS * this.chHp.run(n) +
+        CH_WHISTLE * (this.chBp.run(n) + 0.4 * this.ch2Bp.run(n)) +
+        CH_THUMP * thump)
     );
   }
 }

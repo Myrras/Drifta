@@ -281,15 +281,45 @@ describe('tunes', () => {
       expect(engineProfile(m, 'street')).toBe(engineProfile(m, 'performance'));
   });
 
-  it.each(TURBO)('%s street: lift at boost gives a surge chirp train at 18-30 Hz, no BOV', (m) => {
-    const { dsp } = lift(engineProfile(m, 'street'), 6000, 0.4);
-    expect(dsp.chirps).toBeGreaterThanOrEqual(7);
-    expect(dsp.chirps).toBeLessThanOrEqual(13);
-    render(dsp, 6000, 0, 1);
+  // reference recording: "s" burst, ~200 ms, then 14-18 "tu" chirps going from 155 to ~85 ms apart
+  it.each(TURBO)('%s street: lift at boost gives an "s" then a ~10 Hz chirp train, no BOV', (m) => {
+    const dsp = new EngineDSP(SR, engineProfile(m, 'street'));
+    render(dsp, 6000, 1, 1.5);
+    const at: number[] = []; // ms after the lift
+    for (let i = 0; i < 250; i++) {
+      const n = dsp.chirps;
+      render(dsp, 6000, 0, 0.01);
+      if (dsp.chirps > n) at.push(i * 10);
+    }
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    expect(at.length).toBeGreaterThanOrEqual(15);
+    expect(at.length).toBeLessThanOrEqual(19);
+    expect(gaps[0]).toBeGreaterThanOrEqual(170);
+    expect(gaps[0]).toBeLessThanOrEqual(230);
+    expect(gaps[1]).toBeGreaterThanOrEqual(130);
+    expect(gaps[1]).toBeLessThanOrEqual(180);
+    const last = gaps.slice(-3).reduce((a, b) => a + b, 0) / 3;
+    expect(last).toBeGreaterThanOrEqual(75);
+    expect(last).toBeLessThanOrEqual(100);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(60); // never a 25 Hz burble
     expect(dsp.flutters).toBe(1);
-    expect(dsp.chirps).toBeGreaterThanOrEqual(10);
-    expect(dsp.chirps).toBeLessThanOrEqual(25);
     expect(dsp.bovs).toBe(0);
+  });
+
+  it('street surge stops when the throttle opens again', () => {
+    const { dsp } = lift(engineProfile('s13', 'street'), 6000, 0.5);
+    render(dsp, 6000, 1, 0.05); // smoothed throttle passes 0.5
+    const n = dsp.chirps;
+    render(dsp, 6000, 1, 1);
+    expect(n).toBeLessThan(10);
+    expect(dsp.chirps).toBe(n);
+  });
+
+  it('street surge mutes overrun pops', () => {
+    const p = engineProfile('180sx', 'street');
+    expect(lift(p, 6000, 1).out).toEqual(lift({ ...p, pops: [0, 0, 0] }, 6000, 1).out);
+    const perf = ENGINE_PROFILES['180sx'];
+    expect(lift(perf, 6000, 1).out).not.toEqual(lift({ ...perf, pops: [0, 0, 0] }, 6000, 1).out);
   });
 
   it('performance turbo cars still blow off', () => {
