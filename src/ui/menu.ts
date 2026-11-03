@@ -116,8 +116,8 @@ const GARAGE_HINTS: [Action, string][] = [
   ['adjust', 'change'],
   ['tune', 'tune'],
   ['rev', 'rev'],
-  ['confirm', 'select'],
-  ['back', 'back'],
+  ['confirm', 'save'],
+  ['back', 'discard'],
 ];
 const STARTER_HINTS: [Action, string][] = [
   ['adjust', 'car'],

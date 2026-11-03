@@ -1509,6 +1509,63 @@ describe('progression: starter, locks, car picks, cheat', () => {
     expect(next.debug.car.stats).toEqual(PLAYER_MODELS.civic.stats);
   });
 
+  describe('garage look saves on pad A', () => {
+    const pad = { device: 'pad' as const };
+    // PAINT is row 1, UNDERGLOW row 3; one step right = first underglow (PINK)
+    const equipGlow = (t: (i: Partial<InputState>) => void) => {
+      t({ down: true });
+      t({ down: true });
+      t({ down: true });
+      t({ right: true });
+    };
+    const raceLook = (game: ReturnType<typeof createGame>) => {
+      game.update({ ...IDLE, confirm: true }, DT); // PLAY
+      game.update(IDLE, DT);
+      return game.view().render.player.look;
+    };
+
+    it('owned item: A saves, survives reload, used in the race', () => {
+      const p = started('civic');
+      p.cosmetics.push('underglow-pink');
+      const { game, tap, toGarage, mem, reload } = rig(p);
+      toGarage();
+      equipGlow(tap);
+      tap({ ...pad, confirm: true });
+      expect(game.view().hud.phase).toBe('title');
+      expect(JSON.parse(mem.get(PROGRESS_KEY)!).looks.civic).toMatchObject({
+        underglow: 'underglow-pink',
+      });
+      expect(raceLook(reload())).toMatchObject({ underglow: 'underglow-pink' });
+    });
+
+    it('cheat item: A saves it as chosen, shown this session, hidden after reload while unowned', () => {
+      const { game, tap, toGarage, mem, reload, g } = rig(started('civic'));
+      tap({ cheat: true });
+      toGarage();
+      equipGlow(tap);
+      expect(g().look.underglow).toBe('underglow-pink');
+      tap({ ...pad, confirm: true });
+      expect(JSON.parse(mem.get(PROGRESS_KEY)!).looks.civic).toMatchObject({
+        underglow: 'underglow-pink',
+      });
+      expect(raceLook(game)).toMatchObject({ underglow: 'underglow-pink' });
+      const next = reload();
+      expect(next.debug.cheat).toBe(false);
+      expect(raceLook(next)?.underglow).toBeUndefined();
+    });
+
+    it('a cheat look reappears once the item is owned', () => {
+      const { game, tap, toGarage, prog } = rig(started('civic'));
+      tap({ cheat: true });
+      toGarage();
+      equipGlow(tap);
+      tap({ ...pad, confirm: true });
+      prog.cosmetics.push('underglow-pink');
+      tap({ confirm: true }); // title returns on the GARAGE row
+      expect(game.view().hud.menu!.garage!.look.underglow).toBe('underglow-pink');
+    });
+  });
+
   it('the cheat edge is ignored outside the title', () => {
     const { game, tap, toGarage } = rig(started('civic'));
     toGarage();
