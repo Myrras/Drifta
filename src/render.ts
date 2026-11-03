@@ -1,7 +1,15 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
-import type { CarState, Floor, GameMap, Helix, Rect, Solid, Vec } from './types';
+import type { CarState, Floor, GameMap, Helix, PlayerModel, Rect, Solid, Vec } from './types';
 import { garage, garageRoute } from './maps/garage';
-import { CAR_MODELS } from './models';
+import { CAR_MODELS, PLAYER_MODELS } from './models';
+import {
+  createPool,
+  drawSmoke,
+  drawSparks,
+  puffSprites,
+  updateSmoke,
+  updateSparks,
+} from './particles';
 import { drawParkedCar } from './sprites';
 import type { RenderView } from './view';
 
@@ -45,9 +53,6 @@ const PARKED_COLORS = [
   '#6e4040',
 ];
 
-const PLAYER_RED = '#d32030';
-const PLAYER_HOOD = '#a81a28';
-const PLAYER_DECK = '#b81c2b';
 const CAR_SHADOW_OFFSET: Vec = { x: 0.25, y: 0.35 };
 const CAR_SHADOW_ALPHA = 0.55;
 const POD_Y = 0.48; // pop-up headlight pods, m off the center line
@@ -62,19 +67,41 @@ const HEAD_LEN = 25; // player headlight cones
 const PARKED_HEAD_LEN = 18;
 const HAZARD_HZ = 1.5;
 
-const SKID_STYLE = 'rgba(12,12,14,0.35)';
 const SKID_W = 0.25;
 const SKID_MIN_KMH = 15;
-const REAR_AXLE = -1.2; // m from car center along heading
-const TRACK_HALF = CAR_WIDTH / 2 - 0.2;
 
-const SMOKE_CAP = 300;
-const SMOKE_LIFE = 1.2;
-const SMOKE_RATE = 2.2; // particles/s per (rad x km/h)
-const SMOKE_MAX_RATE = 140;
-const SMOKE_INHERIT = 0.2;
-const SMOKE_ALPHA = 0.2;
-const SMOKE_RGB = '205,205,210';
+const SMOKE_CAP = 500;
+const SMOKE_LIFE = 2;
+const SMOKE_RATE = 3; // particles/s per (rad x km/h)
+const SMOKE_MAX_RATE = 200;
+const SMOKE_INHERIT = 0.25;
+const SMOKE_ALPHA = 0.34; // at full |slip| x speed
+
+const SPARK_CAP = 300;
+const SPARK_RATE = 220; // particles/s at scrape = 1
+const IMPACT_SPARKS = 45;
+const FLASH_LIFE = 0.16;
+
+// weight: body offset vs its shadow
+const ROLL_K = 0.012; // m per m/s² lateral
+const ROLL_MAX = 0.12;
+const PITCH_K = 0.006;
+const PITCH_MAX = 0.07;
+const SQUASH = 0.035; // max length squash at hard braking/accel
+const WEIGHT_RATE = 8; // 1/s smoothing
+const BOUNCE = 0.07; // body scale amplitude after an impact
+
+// speed feel
+const SPEED_FX_KMH = 90;
+const SPEED_FX_FULL = 150;
+const STREAKS = 48;
+const PUNCH = 0.04; // zoom-in on impact
+const DRIFT_LOOK = 3; // m extra look-ahead toward the nose while drifting
+
+const DOCKS = 'WANGAN DOCKS';
+const ASPHALT = '#1b1c1f';
+const QUAY_YELLOW = '#d6a51f';
+const CONTAINER_COLORS = ['#7b3a2c', '#2e4a6e', '#3c5e48', '#62666a', '#a8642c'];
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -149,9 +176,10 @@ interface Lamp {
   tint: Tint;
   glow: number;
 }
-type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white';
+type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium';
 const TINTS: Record<Tint, string> = {
   cool: '205,230,255',
+  sodium: '255,150,45',
   warm: '255,232,190',
   red: '255,30,40',
   amber: '255,150,20',
@@ -245,6 +273,36 @@ function hazard(g: Ctx, r: Rect, band: number) {
     g.lineTo(x - r.h, r.y + r.h);
   }
   g.fill();
+  g.restore();
+}
+
+/** 20 ft / 40 ft shipping container footprint. */
+function isContainer(s: Solid) {
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.2;
+  const long = Math.max(s.w, s.h);
+  return near(Math.min(s.w, s.h), 2.44) && (near(long, 12.2) || near(long, 6.1));
+}
+
+/** Container roof detail over its base color, local frame centered: corrugation, frame, end doors. */
+function container(g: Ctx, w: number, h: number) {
+  g.save();
+  if (h > w) {
+    g.rotate(Math.PI / 2);
+    [w, h] = [h, w];
+  }
+  const [hw, hh] = [w / 2, h / 2];
+  for (let x = -hw + 0.3, i = 0; x < hw - 0.3; x += 0.22, i++) {
+    g.fillStyle = i % 2 ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.07)';
+    g.fillRect(x, -hh + 0.12, 0.11, h - 0.24);
+  }
+  g.strokeStyle = 'rgba(0,0,0,0.4)';
+  g.lineWidth = 0.12;
+  g.strokeRect(-hw + 0.06, -hh + 0.06, w - 0.12, h - 0.12);
+  g.fillStyle = 'rgba(0,0,0,0.3)'; // door end + corner castings
+  g.fillRect(hw - 0.3, -hh + 0.1, 0.18, h - 0.2);
+  for (const x of [-hw, hw - 0.22]) for (const y of [-hh, hh - 0.22]) g.fillRect(x, y, 0.22, 0.22);
+  g.fillStyle = 'rgba(255,255,255,0.08)'; // light from above-left
+  g.fillRect(-hw + 0.1, -hh + 0.1, w - 0.2, 0.12);
   g.restore();
 }
 
@@ -479,7 +537,18 @@ function buildLights(map: GameMap, idx: number) {
   const mask = mk();
   const glow = mk();
   const lamps: Lamp[] = [];
-  if (idx === 0) {
+  if (map.name === DOCKS) {
+    for (const l of f.lights)
+      lamps.push({
+        cone: false,
+        ...l,
+        ang: 0,
+        size: LIGHT_R * 1.35,
+        cut: 0.7,
+        tint: 'sodium',
+        glow: 0.3,
+      });
+  } else if (idx === 0) {
     // roof: lamp posts (its pillars) instead of ceiling lights
     for (const s of f.solids) {
       if (s.kind !== 'pillar') continue;
@@ -602,9 +671,10 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   const { c, g } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
   g.scale(STATIC_PX, STATIC_PX);
   const rand = rng(idx * 7919 + 17);
+  const docks = map.name === DOCKS;
 
-  // concrete + large-scale mottling + speckle + slab joints
-  g.fillStyle = roof ? CONCRETE_ROOF : CONCRETE;
+  // concrete (or dock asphalt) + large-scale mottling + speckle
+  g.fillStyle = docks ? ASPHALT : roof ? CONCRETE_ROOF : CONCRETE;
   g.fillRect(0, 0, f.w, f.h);
   for (let i = 0; i < (f.w * f.h) / 30; i++) {
     const x = rand() * f.w;
@@ -617,16 +687,34 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.fillStyle = grad;
     g.fillRect(x - r, y - r, 2 * r, 2 * r);
   }
-  for (let i = 0; i < f.w * f.h * 0.5; i++) {
+  for (let i = 0; i < f.w * f.h * (docks ? 1.2 : 0.5); i++) {
     g.fillStyle = rand() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.045)';
-    g.fillRect(rand() * f.w, rand() * f.h, 0.1, 0.1);
+    const d = docks ? 0.06 : 0.1; // finer aggregate
+    g.fillRect(rand() * f.w, rand() * f.h, d, d);
   }
-  g.strokeStyle = 'rgba(0,0,0,0.22)';
-  g.lineWidth = 0.06;
-  g.beginPath();
-  for (let x = 10; x < f.w; x += 10) (g.moveTo(x, 0), g.lineTo(x, f.h));
-  for (let y = 10; y < f.h; y += 10) (g.moveTo(0, y), g.lineTo(f.w, y));
-  g.stroke();
+  if (docks) {
+    // faint wet sheen: long soft streaks of cool reflection
+    for (let i = 0; i < (f.w * f.h) / 250; i++) {
+      g.save();
+      g.translate(rand() * f.w, rand() * f.h);
+      g.rotate(rand() * Math.PI);
+      g.scale(3 + rand() * 3, 1);
+      const r = 1.5 + rand() * 2.5;
+      const grad = g.createRadialGradient(0, 0, 0, 0, 0, r);
+      grad.addColorStop(0, `rgba(150,170,205,${0.03 + rand() * 0.04})`);
+      grad.addColorStop(1, 'rgba(150,170,205,0)');
+      g.fillStyle = grad;
+      g.fillRect(-r, -r, 2 * r, 2 * r);
+      g.restore();
+    }
+  } else {
+    g.strokeStyle = 'rgba(0,0,0,0.22)'; // slab joints
+    g.lineWidth = 0.06;
+    g.beginPath();
+    for (let x = 10; x < f.w; x += 10) (g.moveTo(x, 0), g.lineTo(x, f.h));
+    for (let y = 10; y < f.h; y += 10) (g.moveTo(0, y), g.lineTo(f.w, y));
+    g.stroke();
+  }
 
   // painted bays (tall or wide): long sides + back line, yellow wheel stop near the back
   const walls = f.solids.filter((s) => s.kind === 'wall');
@@ -708,7 +796,31 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.shadowOffsetY = 4;
   };
   const noShadow = () => (g.shadowColor = 'transparent');
+  /** Runs draw in the solid's local frame: origin at its center, rotated by its angle. */
+  const local = (s: Solid, draw: () => void) => {
+    g.save();
+    g.translate(s.x + s.w / 2, s.y + s.h / 2);
+    g.rotate(s.angle ?? 0);
+    draw();
+    g.restore();
+  };
+  let containers = 0;
   for (const w of walls) {
+    if (w.angle !== undefined) {
+      const c = isContainer(w) ? CONTAINER_COLORS[containers++ % CONTAINER_COLORS.length] : null;
+      local(w, () => {
+        shadow();
+        g.fillStyle = c ?? WALL;
+        g.fillRect(-w.w / 2, -w.h / 2, w.w, w.h);
+        noShadow();
+        if (c) container(g, w.w, w.h);
+        else {
+          g.fillStyle = WALL_TOP;
+          g.fillRect(-w.w / 2 + 0.1, -w.h / 2 + 0.1, w.w - 0.2, w.h - 0.2);
+        }
+      });
+      continue;
+    }
     shadow();
     g.fillStyle = WALL;
     g.fillRect(w.x, w.y, w.w, w.h);
@@ -717,20 +829,33 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.fillRect(w.x + 0.1, w.y + 0.1, w.w - 0.2, w.h - 0.2);
     const t = 0.3;
     const horiz = w.w >= w.h;
+    const top = w.y + w.h / 2 < f.h / 2;
+    const left = w.x + w.w / 2 < f.w / 2;
+    const perimeter =
+      w.x <= 0.01 || w.y <= 0.01 || w.x + w.w >= f.w - 0.01 || w.y + w.h >= f.h - 0.01;
+    if (docks && perimeter) {
+      // quay edge: yellow line painted on the ground just inside the wall
+      g.fillStyle = QUAY_YELLOW;
+      if (horiz) g.fillRect(w.x, top ? w.y + w.h + 0.25 : w.y - 0.55, w.w, t);
+      else g.fillRect(left ? w.x + w.w + 0.25 : w.x - 0.55, w.y, t, w.h);
+      continue;
+    }
     const strip: Rect = horiz
-      ? { x: w.x, y: w.y + w.h / 2 < f.h / 2 ? w.y + w.h - t : w.y, w: w.w, h: t }
-      : { x: w.x + w.w / 2 < f.w / 2 ? w.x + w.w - t : w.x, y: w.y, w: t, h: w.h };
+      ? { x: w.x, y: top ? w.y + w.h - t : w.y, w: w.w, h: t }
+      : { x: left ? w.x + w.w - t : w.x, y: w.y, w: t, h: w.h };
     hazard(g, strip, 0.4);
   }
   for (const s of f.solids) {
     if (s.kind !== 'pillar') continue;
-    shadow();
-    g.fillStyle = PILLAR;
-    g.fillRect(s.x, s.y, s.w, s.h);
-    noShadow();
-    const e = s.w * 0.12;
-    g.fillStyle = PILLAR_TOP;
-    g.fillRect(s.x + e, s.y + e, s.w - 2 * e, s.h - 2 * e);
+    local(s, () => {
+      shadow();
+      g.fillStyle = PILLAR;
+      g.fillRect(-s.w / 2, -s.h / 2, s.w, s.h);
+      noShadow();
+      const e = s.w * 0.12;
+      g.fillStyle = PILLAR_TOP;
+      g.fillRect(-s.w / 2 + e, -s.h / 2 + e, s.w - 2 * e, s.h - 2 * e);
+    });
   }
   parkedPoses(f).forEach((p, i) => {
     const pick = (colors: string[]) => colors[(i * 7 + idx * 3) % colors.length];
@@ -783,30 +908,72 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
 
 const SPRITE_M = 0.5; // sprite margin (m) around the car for shadow blur
 
-/** Player roadster sprite + its blurred shadow, local frame +x = nose. */
-function playerSprites() {
-  const L = CAR_LENGTH;
-  const hl = L / 2;
-  const bh = CAR_WIDTH / 2 - 0.1; // body half width; tires peek out 0.1 m
+/** Pop-up headlight pod center (m off the center line); other models have fixed lamps. */
+const POPUP_Y: Partial<Record<PlayerModel, number>> = {
+  mx5: POD_Y,
+  rx7: 0.32,
+  '180sx': 0.42,
+  ae86: 0.37,
+  nsx: 0.37,
+};
+
+/** Half length/width of the player's body: the roadster matches the collision box. */
+function playerDims(model: PlayerModel) {
+  const m = model === 'mx5' ? { length: CAR_LENGTH, width: CAR_WIDTH } : PLAYER_MODELS[model];
+  return { hl: m.length / 2, hw: m.width / 2 };
+}
+
+/** Raised pop-up pods: dark recess behind, body-color top, lens face forward. */
+function pods(g: Ctx, hl: number, py: number, color: string) {
+  g.strokeStyle = 'rgba(0,0,0,0.55)';
+  g.lineWidth = 0.03;
+  for (const y of [-py, py]) {
+    g.fillStyle = '#1a0306';
+    g.fillRect(hl - 0.68, y - 0.15, 0.4, 0.3);
+    g.fillStyle = color;
+    g.fillRect(hl - 0.6, y - 0.13, 0.28, 0.26);
+    g.fillStyle = 'rgba(255,255,255,0.1)';
+    g.fillRect(hl - 0.6, y - 0.13, 0.28, 0.26);
+    g.strokeRect(hl - 0.6, y - 0.13, 0.28, 0.26);
+    g.fillStyle = '#fff2cc';
+    g.fillRect(hl - 0.32, y - 0.12, 0.06, 0.24);
+  }
+}
+
+function bodyPath(g: Ctx, hl: number, bh: number) {
+  g.beginPath();
+  g.roundRect(-hl, -bh, 2 * hl, 2 * bh, [0.35, 0.7, 0.7, 0.35]);
+}
+
+/** Player car sprite (roadster or a JDM model in its paint) + its blurred shadow, local frame +x = nose. */
+function playerSprites(model: PlayerModel, color: string) {
+  const { hl, hw } = playerDims(model);
+  const bh = hw - 0.1; // body half width; tires peek out 0.1 m
+  const w = 2 * hl + 2 * SPRITE_M;
+  const h = 2 * hw + 2 * SPRITE_M;
   const mk = () => {
-    const s = makeCanvas((L + 2 * SPRITE_M) * SPRITE_PX, (CAR_WIDTH + 2 * SPRITE_M) * SPRITE_PX);
+    const s = makeCanvas(w * SPRITE_PX, h * SPRITE_PX);
     s.g.translate(s.c.width / 2, s.c.height / 2);
     s.g.scale(SPRITE_PX, SPRITE_PX);
     return s;
   };
-  const body = (g: Ctx) => {
-    g.beginPath();
-    g.roundRect(-hl, -bh, L, 2 * bh, [0.35, 0.7, 0.7, 0.35]);
-  };
-
   const sh = mk();
   sh.g.shadowColor = '#000';
   sh.g.shadowBlur = 14;
   sh.g.fillStyle = '#000';
-  body(sh.g);
+  bodyPath(sh.g, hl, bh);
   sh.g.fill();
 
   const { c, g } = mk();
+  if (model === 'mx5') roadster(g, hl, bh, color);
+  else drawParkedCar(g, model, color);
+  const py = POPUP_Y[model];
+  if (py !== undefined) pods(g, hl, py, color);
+  return { car: c, shadow: sh.c, w, h };
+}
+
+function roadster(g: Ctx, hl: number, bh: number, color: string) {
+  const L = 2 * hl;
   g.fillStyle = '#121315'; // tires
   for (const x of [hl - 0.85, -hl + 0.8]) {
     for (const y of [-1, 1]) {
@@ -815,35 +982,26 @@ function playerSprites() {
       g.fill();
     }
   }
-  g.fillStyle = PLAYER_RED;
-  body(g);
+  g.fillStyle = color;
+  bodyPath(g, hl, bh);
   g.fill();
   g.fillStyle = 'rgba(255,255,255,0.1)'; // side gloss
   g.fillRect(-hl + 0.35, -bh + 0.07, L - 0.8, 0.1);
-  g.fillStyle = PLAYER_HOOD;
-  g.beginPath();
-  g.roundRect(0.42, -bh + 0.2, hl - 0.55, 2 * bh - 0.4, [0.1, 0.5, 0.5, 0.1]);
-  g.fill();
-  g.fillStyle = PLAYER_DECK;
-  g.beginPath();
-  g.roundRect(-hl + 0.18, -bh + 0.2, 0.85, 2 * bh - 0.4, 0.25);
-  g.fill();
-  // raised pop-up headlight pods: dark recess behind, body-color top, lens face forward
-  g.strokeStyle = 'rgba(0,0,0,0.55)';
-  g.lineWidth = 0.03;
-  for (const y of [-1, 1]) {
-    g.fillStyle = '#1a0306';
-    g.fillRect(hl - 0.68, y * POD_Y - 0.15, 0.4, 0.3);
-    g.fillStyle = '#e0303e';
-    g.fillRect(hl - 0.6, y * POD_Y - 0.13, 0.28, 0.26);
-    g.strokeRect(hl - 0.6, y * POD_Y - 0.13, 0.28, 0.26);
-    g.fillStyle = '#fff2cc';
-    g.fillRect(hl - 0.32, y * POD_Y - 0.12, 0.06, 0.24);
+  for (const [shade, x, w, r] of [
+    [0.2, 0.42, hl - 0.55, [0.1, 0.5, 0.5, 0.1]], // hood
+    [0.13, -hl + 0.18, 0.85, 0.25], // deck
+  ] as const) {
+    g.beginPath();
+    g.roundRect(x, -bh + 0.2, w, 2 * bh - 0.4, r);
+    g.fillStyle = color;
+    g.fill();
+    g.fillStyle = `rgba(0,0,0,${shade})`;
+    g.fill();
   }
   g.fillStyle = '#4a070d'; // tail lights
   g.fillRect(-hl + 0.02, -bh + 0.2, 0.08, 0.32);
   g.fillRect(-hl + 0.02, bh - 0.52, 0.08, 0.32);
-  g.fillStyle = PLAYER_RED; // mirrors
+  g.fillStyle = color; // mirrors
   g.fillRect(0.0, -bh - 0.09, 0.14, 0.12);
   g.fillRect(0.0, bh - 0.03, 0.14, 0.12);
   g.fillStyle = '#0c0f13'; // windshield
@@ -877,24 +1035,22 @@ function playerSprites() {
   g.beginPath();
   g.arc(-0.12, -0.33, 0.15, 0, Math.PI * 2);
   g.stroke();
-  return { car: c, shadow: sh.c };
 }
 
-const BODY_HALF = CAR_WIDTH / 2 - 0.1;
-const TAIL_Y = BODY_HALF - 0.36;
 const REVERSE_Y = 0.22;
 const reversing = (car: CarState) =>
   car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle) < -0.5;
 
-/** Player light sources: headlight cones, pod/tail/brake/reverse glows, a faint body glow. */
-function playerLamps(car: CarState, brake: number): Lamp[] {
+/** Player light sources: headlight cones, pod/head/tail/brake/reverse glows, a faint body glow. */
+function playerLamps(car: CarState, brake: number, model: PlayerModel): Lamp[] {
   const c = Math.cos(car.angle);
   const s = Math.sin(car.angle);
   const at = (u: number, w: number) => ({
     x: car.pos.x + u * c - w * s,
     y: car.pos.y + u * s + w * c,
   });
-  const hl = CAR_LENGTH / 2;
+  const { hl, hw } = playerDims(model);
+  const py = POPUP_Y[model];
   const braking = brake > 0.1;
   const rev = reversing(car);
   const ang = car.angle;
@@ -905,7 +1061,7 @@ function playerLamps(car: CarState, brake: number): Lamp[] {
     out.push(
       {
         cone: true,
-        ...at(hl - 0.2, side * 0.6),
+        ...at(hl - 0.2, side * (hw - 0.3)),
         ang,
         size: HEAD_LEN,
         cut: 1,
@@ -914,7 +1070,7 @@ function playerLamps(car: CarState, brake: number): Lamp[] {
       },
       {
         cone: false,
-        ...at(hl - 0.3, side * POD_Y),
+        ...(py !== undefined ? at(hl - 0.3, side * py) : at(hl - 0.15, side * (hw - 0.4))),
         ang,
         size: 1,
         cut: 0.5,
@@ -923,7 +1079,7 @@ function playerLamps(car: CarState, brake: number): Lamp[] {
       },
       {
         cone: false,
-        ...at(-hl, side * TAIL_Y),
+        ...at(-hl, side * (hw - 0.46)),
         ang,
         size: braking ? 2 : 1,
         cut: braking ? 0.4 : 0.15,
@@ -955,41 +1111,84 @@ function playerLamps(car: CarState, brake: number): Lamp[] {
   return out;
 }
 
-/** Lit lamp lenses on top of the darkness: pod lenses, tail/brake lights, reverse lights. */
-function playerLenses(g: Ctx, car: CarState, brake: number) {
-  const hl = CAR_LENGTH / 2;
-  g.save();
-  g.translate(car.pos.x, car.pos.y);
-  g.rotate(car.angle);
+/** Lit lamp lenses on top of the darkness, in the body frame (caller sets the transform). */
+function playerLenses(g: Ctx, car: CarState, brake: number, model: PlayerModel) {
+  const { hl, hw } = playerDims(model);
+  const py = POPUP_Y[model];
+  const tailY = hw - 0.46;
   g.fillStyle = '#fff6dc';
-  for (const y of [-1, 1]) g.fillRect(hl - 0.32, y * POD_Y - 0.12, 0.06, 0.24);
+  if (py !== undefined) for (const y of [-py, py]) g.fillRect(hl - 0.32, y - 0.12, 0.06, 0.24);
   g.fillStyle = brake > 0.1 ? '#ff3a48' : '#a8101c';
-  for (const y of [-1, 1]) g.fillRect(-hl + 0.02, y * TAIL_Y - 0.16, 0.08, 0.32);
+  for (const y of [-1, 1]) g.fillRect(-hl + 0.04, y * tailY - 0.16, 0.07, 0.32);
   if (reversing(car)) {
     g.fillStyle = '#f4f4f0';
-    for (const y of [-1, 1]) g.fillRect(-hl + 0.02, y * REVERSE_Y - 0.07, 0.07, 0.14);
+    for (const y of [-1, 1]) g.fillRect(-hl + 0.04, y * REVERSE_Y - 0.07, 0.07, 0.14);
   }
-  g.restore();
 }
 
-function rearWheels(car: CarState): [Vec, Vec] {
+function rearWheels(car: CarState, model: PlayerModel): [Vec, Vec] {
+  const { hl, hw } = playerDims(model);
+  const axle = -(hl - 0.8);
+  const track = hw - 0.2;
   const c = Math.cos(car.angle);
   const s = Math.sin(car.angle);
-  const bx = car.pos.x + REAR_AXLE * c;
-  const by = car.pos.y + REAR_AXLE * s;
+  const bx = car.pos.x + axle * c;
+  const by = car.pos.y + axle * s;
   return [
-    { x: bx + TRACK_HALF * s, y: by - TRACK_HALF * c },
-    { x: bx - TRACK_HALF * s, y: by + TRACK_HALF * c },
+    { x: bx + track * s, y: by - track * c },
+    { x: bx - track * s, y: by + track * c },
   ];
 }
 
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  age: number;
-  r0: number;
+/** Nearest point on a (possibly rotated) solid's outline; `inside` when p penetrates it. */
+function closestOn(p: Vec, s: Solid): { q: Vec; inside: boolean } {
+  const cx = s.x + s.w / 2;
+  const cy = s.y + s.h / 2;
+  const c = Math.cos(s.angle ?? 0);
+  const sn = Math.sin(s.angle ?? 0);
+  const [hw, hh] = [s.w / 2, s.h / 2];
+  let lx = (p.x - cx) * c + (p.y - cy) * sn;
+  let ly = -(p.x - cx) * sn + (p.y - cy) * c;
+  const inside = Math.abs(lx) < hw && Math.abs(ly) < hh;
+  if (inside) {
+    // exit through the nearest edge
+    if (hw - Math.abs(lx) < hh - Math.abs(ly)) lx = Math.sign(lx) * hw;
+    else ly = Math.sign(ly) * hh;
+  } else {
+    lx = Math.max(-hw, Math.min(hw, lx));
+    ly = Math.max(-hh, Math.min(hh, ly));
+  }
+  return { q: { x: cx + lx * c - ly * sn, y: cy + lx * sn + ly * c }, inside };
+}
+
+/** Body corner nearest to (or deepest into) any obstacle: contact point q, unit normal n out of it. */
+function contact(car: CarState, model: PlayerModel, f: Floor) {
+  const { hl, hw } = playerDims(model);
+  const c = Math.cos(car.angle);
+  const s = Math.sin(car.angle);
+  let best = { d: Infinity, q: car.pos, n: { x: 0, y: -1 } };
+  for (const [u, w] of [
+    [hl, hw],
+    [hl, -hw],
+    [-hl, -hw],
+    [-hl, hw],
+  ]) {
+    const p = { x: car.pos.x + u * c - w * s, y: car.pos.y + u * s + w * c };
+    const hits = f.solids.map((o) => closestOn(p, o));
+    for (const k of f.circles) {
+      const d = Math.hypot(p.x - k.x, p.y - k.y) || 1;
+      const q = { x: k.x + ((p.x - k.x) * k.r) / d, y: k.y + ((p.y - k.y) * k.r) / d };
+      hits.push({ q, inside: d < k.r });
+    }
+    for (const { q, inside } of hits) {
+      const dist = Math.hypot(p.x - q.x, p.y - q.y);
+      const d = inside ? -dist : dist; // penetration ranks before any gap
+      if (d >= best.d || dist < 1e-6) continue;
+      const k = (inside ? -1 : 1) / dist;
+      best = { d, q, n: { x: (p.x - q.x) * k, y: (p.y - q.y) * k } };
+    }
+  }
+  return best;
 }
 
 export function createRenderer(canvas: HTMLCanvasElement) {
@@ -1003,37 +1202,52 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
   let shade = makeCanvas(1, 1); // half-res darkness mask
   let clock = 0;
-  const sprites = playerSprites();
-  const puff = glowSprite(SMOKE_RGB, [
-    [0, 1],
-    [0.5, 0.55],
-    [1, 0],
-  ]);
-  const smoke: Particle[] = Array.from({ length: SMOKE_CAP }, () => ({
-    x: 0,
-    y: 0,
-    vx: 0,
-    vy: 0,
-    age: SMOKE_LIFE,
-    r0: 0,
-  }));
-  let smokeNext = 0;
+  const carSprites = new Map<string, ReturnType<typeof playerSprites>>();
+  const puffs = puffSprites();
+  const smoke = createPool(SMOKE_CAP);
+  const sparks = createPool(SPARK_CAP);
   let smokeAcc = 0;
+  let sparkAcc = 0;
+  let wheelSide = 0;
+  const flash = { x: 0, y: 0, age: Infinity };
+  const vignette = glowSprite('0,0,0', [
+    [0, 0],
+    [0.6, 0],
+    [1, 0.85],
+  ]);
+  /** speed lines in normalized screen coords */
+  const streaks = Array.from({ length: STREAKS }, () => ({
+    x: Math.random(),
+    y: Math.random(),
+    len: 0.5 + Math.random(),
+  }));
 
   const cam = { x: 0, y: 0, viewH: VIEW_H_REST };
+  const look = { x: 0, y: 0 }; // extra drift look-ahead, smoothed
   let lastFloor = -1;
   let lastRun = NaN;
   let prevWheels: [Vec, Vec] | null = null;
+  // weight: smoothed lateral/longitudinal acceleration (m/s², car frame), impact bounce
+  const body = { lat: 0, lon: 0, bounceT: Infinity, bounceA: 0 };
+  const prevVel = { x: 0, y: 0, ok: false };
+  let prevImpact = 0;
+  let punchT = Infinity;
 
   function skidLayer(f: Floor) {
     let s = skids.get(f);
     if (!s) {
       s = makeCanvas(f.w * SKID_PX, f.h * SKID_PX);
       s.g.scale(SKID_PX, SKID_PX);
-      s.g.strokeStyle = SKID_STYLE;
       s.g.lineWidth = SKID_W;
       skids.set(f, s);
     }
+    return s;
+  }
+
+  function spritesFor(model: PlayerModel, color: string) {
+    const key = `${model}|${color}`;
+    let s = carSprites.get(key);
+    if (!s) carSprites.set(key, (s = playerSprites(model, color)));
     return s;
   }
 
@@ -1052,9 +1266,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   function draw(v: RenderView, dt: number) {
     const f = v.map.floors[v.floorIndex];
     const car = v.car;
-    const kmh = Math.hypot(car.vel.x, car.vel.y) * 3.6;
+    const model = v.player.model;
+    const speed = Math.hypot(car.vel.x, car.vel.y);
+    const kmh = speed * 3.6;
     const step = Math.min(dt, 0.1);
     clock += step;
+    const ca = Math.cos(car.angle);
+    const sa = Math.sin(car.angle);
 
     if (v.runId !== lastRun)
       for (const s of skids.values()) s.g.clearRect(0, 0, s.c.width, s.c.height);
@@ -1062,15 +1280,69 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const snap = v.runId !== lastRun || (v.floorIndex !== lastFloor && !v.blend);
     if (snap) {
       prevWheels = null;
-      for (const p of smoke) p.age = SMOKE_LIFE;
-      smokeAcc = 0;
+      smoke.clear();
+      sparks.clear();
+      smokeAcc = sparkAcc = 0;
+      flash.age = punchT = body.bounceT = Infinity;
+      body.lat = body.lon = 0;
+      prevVel.ok = false;
+      prevImpact = v.impact;
+      look.x = look.y = 0;
     }
     lastRun = v.runId;
     lastFloor = v.floorIndex;
 
-    // camera
-    const tx = car.pos.x + car.vel.x * LOOK_AHEAD;
-    const ty = car.pos.y + car.vel.y * LOOK_AHEAD;
+    // fx triggers: rising impact pulse, wall scrape
+    flash.age += step;
+    punchT += step;
+    body.bounceT += step;
+    const hit = v.impact > 0.3 && v.impact > prevImpact + 0.01;
+    prevImpact = v.impact;
+    const touch = hit || v.scrape > 0 ? contact(car, model, f) : null;
+    if (hit) {
+      body.bounceT = punchT = 0;
+      body.bounceA = Math.min(1, v.impact);
+    }
+
+    // weight: body leans/pitches against the acceleration, shadow stays put
+    if (prevVel.ok && step > 0) {
+      const ax = (car.vel.x - prevVel.x) / step;
+      const ay = (car.vel.y - prevVel.y) / step;
+      const k = 1 - Math.exp(-WEIGHT_RATE * step);
+      body.lat += (-ax * sa + ay * ca - body.lat) * k;
+      body.lon += (ax * ca + ay * sa - body.lon) * k;
+    }
+    Object.assign(prevVel, car.vel, { ok: true });
+    const clamp = (x: number, m: number) => Math.max(-m, Math.min(m, x));
+    const roll = clamp(-body.lat * ROLL_K, ROLL_MAX);
+    const pitch = clamp(-body.lon * PITCH_K, PITCH_MAX);
+    const bx = car.pos.x + pitch * ca - roll * sa;
+    const by = car.pos.y + pitch * sa + roll * ca;
+    const sq = SQUASH * Math.min(1, Math.abs(body.lon) / 12);
+    const bounce =
+      1 + BOUNCE * body.bounceA * Math.exp(-7 * body.bounceT) * Math.sin(26 * body.bounceT);
+    const bodyFrame = (g: Ctx) => {
+      g.translate(bx, by);
+      g.rotate(car.angle);
+      g.scale((1 - sq) * bounce, (1 + sq / 2) * bounce);
+    };
+
+    // camera, with a gentle extra look toward the nose while drifting
+    let lx = 0;
+    let ly = 0;
+    if (v.drift.drifting && speed > 1) {
+      const px = -car.vel.y / speed;
+      const py = car.vel.x / speed;
+      const m =
+        DRIFT_LOOK * Math.min(1, Math.abs(v.drift.slip) / 0.6) * Math.sign(ca * px + sa * py);
+      lx = px * m;
+      ly = py * m;
+    }
+    const kl = 1 - Math.exp(-2 * step);
+    look.x += (lx - look.x) * kl;
+    look.y += (ly - look.y) * kl;
+    const tx = car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
+    const ty = car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
     const tvh = VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1);
     if (snap) {
       cam.x = tx;
@@ -1084,17 +1356,19 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       cam.viewH += (tvh - cam.viewH) * kz;
     }
     const dip = v.blend ? 1 - DIP * Math.sin(Math.PI * v.blend.t) : 1;
-    const scale = (cssH / cam.viewH) * dip; // CSS px per meter
+    const punch = punchT < 0.05 ? punchT / 0.05 : Math.exp(-(punchT - 0.05) * 7);
+    const scale = (cssH / cam.viewH) * dip * (1 + PUNCH * punch); // CSS px per meter
     const halfW = cssW / 2 / scale;
     const halfH = cssH / 2 / scale;
     const visible = (x: number, y: number, r: number) =>
       Math.abs(x - cam.x) < halfW + r && Math.abs(y - cam.y) < halfH + r;
 
-    // skid marks
-    const wheels = rearWheels(car);
+    // skid marks, darker at higher slip
+    const wheels = rearWheels(car, model);
     const skidding = v.drift.drifting || (v.handbrake && v.drift.speedKmh > SKID_MIN_KMH);
     if (skidding && prevWheels) {
       const g = skidLayer(f).g;
+      g.strokeStyle = `rgba(12,12,14,${0.22 + 0.4 * Math.min(1, Math.abs(v.drift.slip) / 0.7)})`;
       g.beginPath();
       for (let i = 0; i < 2; i++) {
         g.moveTo(prevWheels[i].x, prevWheels[i].y);
@@ -1104,32 +1378,64 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     prevWheels = skidding ? wheels : null;
 
-    // smoke
+    // tire smoke from both rear wheels: amount, size and density follow |slip| x speed
     if (v.drift.drifting) {
       const k = Math.abs(v.drift.slip) * v.drift.speedKmh;
+      const amt = Math.min(1, k / 40);
       smokeAcc += Math.min(k * SMOKE_RATE, SMOKE_MAX_RATE) * step;
       while (smokeAcc >= 1) {
         smokeAcc -= 1;
-        const w = wheels[smokeNext & 1];
-        const p = smoke[smokeNext];
-        smokeNext = (smokeNext + 1) % SMOKE_CAP;
-        p.x = w.x + (Math.random() - 0.5) * 0.3;
-        p.y = w.y + (Math.random() - 0.5) * 0.3;
-        p.vx = car.vel.x * SMOKE_INHERIT + (Math.random() - 0.5) * 1.2;
-        p.vy = car.vel.y * SMOKE_INHERIT + (Math.random() - 0.5) * 1.2;
-        p.age = 0;
-        p.r0 = Math.min(0.35 + k * 0.012, 1.2);
+        const w = wheels[(wheelSide ^= 1)];
+        const p = smoke.spawn(
+          w.x + (Math.random() - 0.5) * 0.3,
+          w.y + (Math.random() - 0.5) * 0.3,
+          car.vel.x * SMOKE_INHERIT + (Math.random() - 0.5) * 1.6,
+          car.vel.y * SMOKE_INHERIT + (Math.random() - 0.5) * 1.6,
+          SMOKE_LIFE * (0.75 + Math.random() * 0.5),
+        );
+        p.size = 0.35 + 0.65 * amt + Math.random() * 0.2;
+        p.alpha = SMOKE_ALPHA * (0.35 + 0.65 * amt);
+        p.spin = (Math.random() - 0.5) * 2.4;
+        p.kind = Math.floor(Math.random() * puffs.length);
       }
     }
-    const drag = Math.exp(-1.5 * step);
-    for (const p of smoke) {
-      if (p.age >= SMOKE_LIFE) continue;
-      p.age += step;
-      p.x += p.vx * step;
-      p.y += p.vy * step;
-      p.vx *= drag;
-      p.vy *= drag;
+    updateSmoke(smoke, step);
+
+    // sparks: streaming along the wall while scraping, a burst on impact
+    if (touch) {
+      const { q, n } = touch;
+      let ux = -n.y;
+      let uy = n.x;
+      if (ux * car.vel.x + uy * car.vel.y < 0) [ux, uy] = [-ux, -uy];
+      if (v.scrape > 0) {
+        sparkAcc += SPARK_RATE * v.scrape * (0.3 + Math.min(1, speed / 15)) * step;
+        while (sparkAcc >= 1) {
+          sparkAcc -= 1;
+          const a = (Math.random() - 0.5) * 0.6;
+          const sp = 3 + speed * (0.4 + 0.6 * Math.random());
+          const out = Math.random() * 0.15;
+          sparks.spawn(
+            q.x,
+            q.y,
+            (ux * Math.cos(a) - uy * Math.sin(a) + n.x * out) * sp,
+            (ux * Math.sin(a) + uy * Math.cos(a) + n.y * out) * sp,
+            0.12 + Math.random() * 0.22,
+          );
+        }
+      }
+      if (hit) {
+        flash.x = q.x;
+        flash.y = q.y;
+        flash.age = 0;
+        const base = Math.atan2(n.y, n.x);
+        for (let i = 0; i < IMPACT_SPARKS; i++) {
+          const a = base + (Math.random() - 0.5) * 2.8;
+          const sp = 4 + Math.random() * 12 * Math.min(1, v.impact + 0.3);
+          sparks.spawn(q.x, q.y, Math.cos(a) * sp, Math.sin(a) * sp, 0.2 + Math.random() * 0.3);
+        }
+      }
     }
+    updateSparks(sparks, step);
 
     // world
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1158,29 +1464,19 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     ctx.globalAlpha = 1;
 
-    const sw = CAR_LENGTH + 2 * SPRITE_M;
-    const sh = CAR_WIDTH + 2 * SPRITE_M;
-    for (const [img, ox, oy, a] of [
-      [sprites.shadow, CAR_SHADOW_OFFSET.x, CAR_SHADOW_OFFSET.y, CAR_SHADOW_ALPHA],
-      [sprites.car, 0, 0, 1],
-    ] as const) {
-      ctx.save();
-      ctx.globalAlpha = a;
-      ctx.translate(car.pos.x + ox, car.pos.y + oy);
-      ctx.rotate(car.angle);
-      ctx.drawImage(img, -sw / 2, -sh / 2, sw, sh);
-      ctx.restore();
-    }
+    const spr = spritesFor(model, v.player.color);
+    ctx.save();
+    ctx.globalAlpha = CAR_SHADOW_ALPHA;
+    ctx.translate(car.pos.x + CAR_SHADOW_OFFSET.x, car.pos.y + CAR_SHADOW_OFFSET.y);
+    ctx.rotate(car.angle);
+    ctx.drawImage(spr.shadow, -spr.w / 2, -spr.h / 2, spr.w, spr.h);
+    ctx.restore();
+    ctx.save();
+    bodyFrame(ctx);
+    ctx.drawImage(spr.car, -spr.w / 2, -spr.h / 2, spr.w, spr.h);
+    ctx.restore();
 
-    for (const p of smoke) {
-      if (p.age >= SMOKE_LIFE) continue;
-      const t = p.age / SMOKE_LIFE;
-      const r = p.r0 * (1 + 2.5 * t);
-      if (!visible(p.x, p.y, r)) continue;
-      ctx.globalAlpha = SMOKE_ALPHA * (1 - t);
-      ctx.drawImage(puff, p.x - r, p.y - r, 2 * r, 2 * r);
-    }
-    ctx.globalAlpha = 1;
+    drawSmoke(ctx, smoke, puffs, visible); // under the darkness: lit by the same lights
 
     // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t
     const layers = floors.map(([idx, a]) => {
@@ -1190,7 +1486,22 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
       return { fl, l, w, amb: idx === 0 ? AMBIENT_ROOF : AMBIENT };
     });
-    const dyn: [Lamp, number][] = playerLamps(car, v.brake).map((l) => [l, 1]);
+    const dyn: [Lamp, number][] = playerLamps(car, v.brake, model).map((l) => [l, 1]);
+    if (touch && v.scrape > 0) {
+      const { x, y } = touch.q;
+      dyn.push([
+        { cone: false, x, y, ang: 0, size: 2.5, cut: 0.5, tint: 'amber', glow: 0.8 },
+        v.scrape,
+      ]);
+    }
+    if (flash.age < FLASH_LIFE) {
+      const t = flash.age / FLASH_LIFE;
+      const { x, y } = flash;
+      dyn.push([
+        { cone: false, x, y, ang: 0, size: 2 + 5 * t, cut: 1, tint: 'white', glow: 1 },
+        1 - t,
+      ]);
+    }
     if ((clock * HAZARD_HZ) % 1 < 0.5)
       for (const { l, w } of layers)
         for (const set of l.hazards)
@@ -1214,7 +1525,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
     ctx.setTransform(ws, 0, 0, ws, ox, oy);
-    playerLenses(ctx, car, v.brake);
+    ctx.save();
+    bodyFrame(ctx);
+    playerLenses(ctx, car, v.brake, model);
+    ctx.restore();
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, f.w, f.h); // keep glows off the void outside the floor
@@ -1228,8 +1542,36 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.restore();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    drawSparks(ctx, sparks, visible);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // speed: dark vignette + faint lines streaming past the screen edges
+    const sf = Math.max(0, Math.min(1, (kmh - SPEED_FX_KMH) / (SPEED_FX_FULL - SPEED_FX_KMH)));
+    if (sf > 0) {
+      ctx.globalAlpha = 0.55 * sf;
+      ctx.drawImage(vignette, 0, 0, cssW, cssH);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineWidth = 1.5;
+      const ux = -car.vel.x / speed;
+      const uy = -car.vel.y / speed;
+      const px = speed * scale * 1.6 * step; // a bit faster than the ground: wind, not debris
+      for (const s of streaks) {
+        s.x = (((s.x + (ux * px) / cssW) % 1) + 1) % 1;
+        s.y = (((s.y + (uy * px) / cssH) % 1) + 1) % 1;
+        const edge = Math.min(1, (Math.hypot(s.x * 2 - 1, s.y * 2 - 1) - 0.65) / 0.45);
+        if (edge <= 0) continue;
+        const x = s.x * cssW;
+        const y = s.y * cssH;
+        const len = s.len * (30 + 70 * sf);
+        ctx.strokeStyle = `rgba(220,230,255,${0.2 * sf * edge})`;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - ux * len, y - uy * len);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
     if (v.fade > 0) {
       ctx.globalAlpha = Math.min(v.fade, 1);
       ctx.fillStyle = '#000';
