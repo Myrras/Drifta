@@ -15,6 +15,7 @@ const base: RawInput = {
   throttle: 0,
   brake: 0,
   handbrake: false,
+  clutch: false,
   pause: false,
   restart: false,
   confirm: false,
