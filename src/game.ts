@@ -246,7 +246,7 @@ export function createGame(
     const car = s.car;
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
-    audio.update(car, s.drift, input.throttle);
+    audio.update(car, s.drift, input.throttle, cfg.car);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const near = (x: number, y: number, r: number) =>

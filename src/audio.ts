@@ -1,5 +1,5 @@
-import type { CarState, DriftInfo } from './types';
-import { engineRpm } from './engine';
+import type { CarState, DriftInfo, PlayerModel } from './types';
+import { ENGINE_PROFILES, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
 import { createMusic, type Track } from './music';
 
@@ -45,6 +45,7 @@ export function createAudio() {
   let sqGain: GainNode;
   let engNode: AudioWorkletNode | null = null;
   let lastPost = -1;
+  let engCar: PlayerModel | null = null; // car whose profile the worklet has
   let sqSrc: AudioBufferSourceNode | null = null;
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
@@ -169,11 +170,16 @@ export function createAudio() {
         ctx = null;
       }
     },
-    update(car: CarState, drift: DriftInfo, throttle: number): void {
+    update(car: CarState, drift: DriftInfo, throttle: number, model: PlayerModel): void {
       if (!ctx) return;
       if (engNode && ctx.currentTime - lastPost >= 1 / 60) {
         lastPost = ctx.currentTime;
-        engNode.port.postMessage({ rpm: engineRpm(car.rpm), throttle });
+        const prof = ENGINE_PROFILES[model];
+        if (model !== engCar) {
+          engCar = model;
+          engNode.port.postMessage({ profile: prof });
+        }
+        engNode.port.postMessage({ rpm: engineRpm(car.rpm, prof), throttle });
         set(engGain.gain, 0.35, 0.05);
       }
       if (sqSrc) {
