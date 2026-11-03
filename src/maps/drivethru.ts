@@ -211,19 +211,32 @@ const allBays: Bay[] = [
   ...row(false, 8, 76, W - 1, -1), // east wall
 ];
 const center = (r: Rect) => v(r.x + r.w / 2, r.y + r.h / 2);
-/** Off the line by 9 m (car corners stay 6.5 m clear) and clear of every fixed solid. */
-const bays: Bay[] = allBays.filter(
-  (b) =>
-    routeDist(center(b)) >= 9 &&
-    fixed.slice(4).every((s) => s.angle !== undefined || !overlaps(b, s, 0.5)),
-);
-
 const rand = rng(1985);
 const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+/**
+ * Meet clusters: runs of 3-7 bays with gaps of bare tarmac between (no paint there), each bay
+ * off the line by 9 m (car corners stay 6.5 m clear) and clear of every fixed solid.
+ */
+const bays: Bay[] = [];
+for (let i = 0, run = 0; i < allBays.length; i++) {
+  if (run <= 0) {
+    i += 8 + Math.floor(rand() * 10); // gap
+    run = 3 + Math.floor(rand() * 5);
+    if (i >= allBays.length) break;
+  }
+  run--;
+  const b = allBays[i];
+  if (
+    routeDist(center(b)) >= 9 &&
+    fixed.slice(4).every((s) => s.angle !== undefined || !overlaps(b, s, 0.5))
+  )
+    bays.push(b);
+}
+
 const cars: Solid[] = [];
 const hoods: Decor[] = [];
 for (const b of bays) {
-  if (rand() < 0.22) continue; // some empty bays
+  if (rand() < 0.1) continue; // a few empty bays
   const model = pick(MODELS);
   const { length, width, colors } = CAR_MODELS[model];
   const c = center(b);
@@ -241,7 +254,7 @@ for (const b of bays) {
     color,
     ...(r < 0.12 ? { lights: 'on' as const } : r < 0.16 ? { lights: 'hazard' as const } : {}),
   });
-  if (rand() < 0.75)
+  if (rand() < 0.8)
     hoods.push({
       floor: 0,
       kind: 'hood',

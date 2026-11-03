@@ -116,7 +116,9 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
 
   it('parks every car exactly inside a painted bay', () => {
     const cars = f.solids.filter((s) => s.kind === 'car');
-    expect(cars.length).toBeGreaterThan(60);
+    expect(cars.length).toBeGreaterThanOrEqual(120);
+    expect(cars.length).toBeLessThanOrEqual(160);
+    expect(f.bays.length).toBeLessThan(cars.length * 1.25); // few empty outlines
     for (const c of cars) {
       const m = CAR_MODELS[c.model!];
       expect(c.w).toBeCloseTo(m.length);
