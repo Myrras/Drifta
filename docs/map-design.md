@@ -15,7 +15,7 @@ Top-down drift maps. Each principle ends with how Drifta applies it.
 11. **Run-off and forgiving exits.** A missed corner costs the combo, not the run. Drifta: bounce on walls, no damage, open space after hard sections.
 12. **No dead ends.** Every area leads forward or loops; no forced reverse. Drifta: no 180 degree turns on floors; the only half turn is the helix.
 13. **Free-roam with suggested line.** Open areas show a faint line players may ignore for a higher score. Drifta: test pad is free-roam; suggested-line decals are in docs/ideas.md.
-14. **Pacing and par time.** Par is a clean run plus about 15%; keep runs near a minute so retries are cheap. Drifta: par 40 s on B2 MEET, 82 s on TOKYO NIGHTS (two routes, A over the scramble and B along the canal), +100 per second under par.
+14. **Pacing and par time.** Par is a clean run plus about 15%; keep runs near a minute so retries are cheap. Drifta: par 40 s on B2 MEET, 77 s on TOKYO NIGHTS (two routes, A over the scramble and B along the canal, then a helix up to the elevated expressway: sweepers and S-bends, no right angles, one long banked curve), +100 per second under par.
 
 ## Sources
 
