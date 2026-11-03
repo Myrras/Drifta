@@ -8,8 +8,8 @@ const C_SOUND = 550; // m/s, hot exhaust gas: same as real pipe length x 0.62 at
 const POP_RPM = 3500;
 const TURBO_MIX = 4; // turbo layer level against the exhaust (profile gains are "of engine level")
 const WHOOSH = 4; // band-passed noise at the whine pitch, about as loud as the tone
-const CH_HISS = 0.0065; // surge chirp mix: 3-8 kHz hiss, whistles, 0.3-0.8 kHz air thump
-const CH_WHISTLE = 0.05;
+const CH_HISS = 0.0105; // surge chirp mix, noise only: 3-8 kHz hiss, a ~1 kHz wide band at tu[2], ~400 Hz air thump
+const CH_BAND = 0.025;
 const CH_THUMP = 0.6;
 const SURGE_WHINE = 0.3; // whine level while the surge train runs (the recording's whine is ~7 dB under ours)
 
@@ -25,7 +25,7 @@ export interface TurboProfile {
   bov: [number, number];
   /** compressor surge on lift: pulses, Hz, chance per lift */
   flutter: [number, number, number];
-  /** street surge: first / last chirp gap ms, whistle Hz, chirps at full boost, weight (chirp length, thump depth) */
+  /** street surge: first / last chirp gap ms, air band centre Hz, chirps at full boost, weight (chirp length, thump depth) */
   tu: [number, number, number, number, number];
   /** sequential twin: second turbo cuts in at this rpm (tone x1.25), boost dip at changeover */
   seq?: [number, number];
@@ -551,7 +551,6 @@ export class EngineDSP {
   private readonly chBand: Biquad;
   private readonly chBp: Biquad;
   private readonly ch2Bp: Biquad;
-  private readonly ch3Bp: Biquad;
   private readonly chLoBp: Biquad;
   private readonly whooshBp: Biquad;
   private readonly wgBp: Biquad;
@@ -592,9 +591,8 @@ export class EngineDSP {
     this.bovBp = new Biquad(sr, 'bp', 4500, 0.7);
     this.flBp = new Biquad(sr, 'bp', 3000, 1.2);
     this.chBand = new Biquad(sr, 'bp', 4200, 0.6);
-    this.chBp = new Biquad(sr, 'bp', 4400, 30);
-    this.ch2Bp = new Biquad(sr, 'bp', 8800, 30);
-    this.ch3Bp = new Biquad(sr, 'bp', 6400, 30);
+    this.chBp = new Biquad(sr, 'bp', 4400, 2.5); // two in series: no ringing, but a clear band
+    this.ch2Bp = new Biquad(sr, 'bp', 4400, 2.5);
     this.chLoBp = new Biquad(sr, 'bp', 400, 2.5);
     this.whooshBp = new Biquad(sr, 'bp', 1000, 3);
     this.wgBp = new Biquad(sr, 'bp', 2200, 1.5);
@@ -831,10 +829,9 @@ export class EngineDSP {
         this.chHold = (k ? 0.025 + 0.025 * left : 0.05) * w;
         this.chW = w;
         this.chAmp = this.flAmp * (k ? 0.4 + 0.6 * left : 1.8) * (0.85 + 0.3 * this.rand01());
-        const wf = wf0 * 1.2 ** this.rand();
-        this.chBp.set(wf, 30);
-        this.ch2Bp.set(2 * wf, 30);
-        this.ch3Bp.set(wf * (1.4 + 0.1 * this.rand01()), 30);
+        const wf = wf0 * 1.25 ** this.rand(); // band centre, fixed through the chirp
+        this.chBp.set(wf, 2.5);
+        this.ch2Bp.set(wf, 2.5);
         this.chLoBp.set((400 / w) * (1 + 0.1 * this.rand()), 2.5); // heavier turbo: deeper "u"
         this.flPh =
           (k ? g1 + (g0 - g1) * Math.exp(-(k - 1) / 2.5) : 200) * 0.001 * (1 + 0.1 * this.rand());
@@ -902,7 +899,7 @@ export class EngineDSP {
   }
 
   /**
-   * One surge "tu": a hiss burst (15 ms rise, hold, 12 ms fall; 3-8 kHz plus three narrow whistles)
+   * One surge "tu", noise only: a hiss burst (15 ms rise, hold, 12 ms fall; 3-8 kHz plus a ~1 kHz wide band)
    * on a hiss floor 8 dB down, then a 0.3-0.8 kHz air thump as the hiss ends.
    */
   private chirp(): number {
@@ -918,7 +915,7 @@ export class EngineDSP {
     return (
       this.chAmp *
       (CH_HISS * this.chBand.run(n) +
-        CH_WHISTLE * (this.chBp.run(n) + 0.6 * this.ch3Bp.run(n) + 0.4 * this.ch2Bp.run(n)) +
+        CH_BAND * this.ch2Bp.run(this.chBp.run(n)) +
         CH_THUMP * this.chW * this.chLoBp.run(this.rand() * thump))
     );
   }
