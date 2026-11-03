@@ -102,6 +102,7 @@ export function hash(n: number): number {
 // ---------- arcade: Shutoko loop at 2 a.m. ----------
 
 const HORIZON = 0.7; // skyline base, fraction of h
+const HORIZON_LIVE = 0.86; // ... over the live attract scene, out of the way of the car
 interface Tower {
   x: number; // left edge, fraction of w
   w: number; // fraction of w
@@ -149,24 +150,45 @@ function arcadeBackdrop(
   h: number,
   t: number,
   th: Theme,
+  live: boolean,
 ): void {
   const u = Math.min(w, h) / 100;
-  const hy = h * HORIZON;
+  const hz = live ? HORIZON_LIVE : HORIZON;
+  const hy = h * hz;
+  // live: low skyline, tall at the sides and short in the middle, over a clear sky
+  const tall = (b: Tower): number =>
+    (live ? b.h * (0.3 + 0.7 * Math.abs(2 * (b.x + b.w / 2) - 1) ** 1.2) : b.h) * h;
   ctx.save();
-  ctx.fillStyle = cachedGrad(ctx, `a-sky|${h}`, () =>
-    linear(ctx, 0, 0, 0, h, [
-      [0, 'rgba(7,5,28,0.8)'],
-      [0.42, 'rgba(30,10,70,0.58)'],
-      [HORIZON - 0.015, 'rgba(160,24,124,0.42)'],
-      [HORIZON + 0.005, 'rgba(10,6,30,0.86)'],
-      [1, 'rgba(4,3,16,0.9)'],
-    ]),
+  ctx.fillStyle = cachedGrad(ctx, `a-sky|${h}|${live}`, () =>
+    linear(
+      ctx,
+      0,
+      0,
+      0,
+      h,
+      live
+        ? [
+            [0, 'rgba(7,5,28,0.62)'],
+            [0.24, 'rgba(20,8,52,0.12)'],
+            [hz - 0.2, 'rgba(30,10,70,0.08)'],
+            [hz - 0.015, 'rgba(160,24,124,0.32)'],
+            [hz + 0.005, 'rgba(10,6,30,0.8)'],
+            [1, 'rgba(4,3,16,0.88)'],
+          ]
+        : [
+            [0, 'rgba(7,5,28,0.8)'],
+            [0.42, 'rgba(30,10,70,0.58)'],
+            [hz - 0.015, 'rgba(160,24,124,0.42)'],
+            [hz + 0.005, 'rgba(10,6,30,0.86)'],
+            [1, 'rgba(4,3,16,0.9)'],
+          ],
+    ),
   );
   ctx.fillRect(0, 0, w, h);
 
-  ctx.fillStyle = 'rgba(6,3,20,0.92)';
+  ctx.fillStyle = live ? 'rgba(6,3,20,0.8)' : 'rgba(6,3,20,0.92)';
   ctx.beginPath();
-  for (const b of TOWERS) ctx.rect(b.x * w, hy - b.h * h, b.w * w, b.h * h + 1);
+  for (const b of TOWERS) ctx.rect(b.x * w, hy - tall(b), b.w * w, tall(b) + 1);
   ctx.fill();
 
   // three twinkle groups so the city breathes without per-window state
@@ -180,7 +202,7 @@ function arcadeBackdrop(
         const b = TOWERS[win.t];
         ctx.rect(
           (b.x + b.w * (0.12 + win.fx * 0.7)) * w,
-          hy - b.h * h * (0.1 + win.fy * 0.82),
+          hy - tall(b) * (0.1 + win.fy * 0.82),
           0.55 * u,
           0.75 * u,
         );
@@ -197,7 +219,7 @@ function arcadeBackdrop(
     ctx.shadowColor = col;
     ctx.fillStyle = col;
     ctx.globalAlpha = hash(Math.floor(t * 9) + i * 13) > 0.95 ? 0.2 : 0.85;
-    const top = hy - b.h * h;
+    const top = hy - tall(b);
     ctx.fillRect((b.x + b.w * 0.5) * w - 0.35 * u, top - 7 * u, 0.7 * u, 6.4 * u);
   });
   ctx.shadowBlur = 0;
@@ -263,25 +285,46 @@ function arcadeOverlay(ctx: CanvasRenderingContext2D, w: number, h: number, t: n
 
 // ---------- vhs: a taped-off-TV car-magazine cover ----------
 
-function vhsBackdrop(ctx: CanvasRenderingContext2D, w: number, h: number, t: number): void {
+function vhsBackdrop(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  t: number,
+  live: boolean,
+): void {
   const u = Math.min(w, h) / 100;
   ctx.save();
-  ctx.fillStyle = cachedGrad(ctx, `v-wash|${h}`, () =>
-    linear(ctx, 0, 0, 0, h, [
-      [0, 'rgba(34,20,14,0.82)'],
-      [0.55, 'rgba(84,40,22,0.6)'],
-      [1, 'rgba(26,14,10,0.88)'],
-    ]),
+  // live: clear middle so the attract scene shows, cover tint kept at the top and bottom
+  ctx.fillStyle = cachedGrad(ctx, `v-wash|${h}|${live}`, () =>
+    linear(
+      ctx,
+      0,
+      0,
+      0,
+      h,
+      live
+        ? [
+            [0, 'rgba(34,20,14,0.66)'],
+            [0.25, 'rgba(60,32,18,0.14)'],
+            [0.7, 'rgba(84,40,22,0.12)'],
+            [1, 'rgba(26,14,10,0.8)'],
+          ]
+        : [
+            [0, 'rgba(34,20,14,0.82)'],
+            [0.55, 'rgba(84,40,22,0.6)'],
+            [1, 'rgba(26,14,10,0.88)'],
+          ],
+    ),
   );
   ctx.fillRect(0, 0, w, h);
 
   // the cover's livery stripes: yellow / orange / red, raked like a door decal
-  const rake = h * 0.55;
+  const rake = h * (live ? 0.24 : 0.55); // live: the stripes hug the bottom edge
   const band = 5.5 * u;
   const drift = Math.sin(t * 0.35) * 3 * u;
   const cols = ['rgba(244,178,58,0.5)', 'rgba(228,112,42,0.5)', 'rgba(200,52,40,0.5)'];
   cols.forEach((c, i) => {
-    const y0 = h * 0.92 - i * band * 1.25 + drift;
+    const y0 = h * (live ? 0.99 : 0.92) - i * band * 1.25 + drift;
     ctx.fillStyle = c;
     ctx.beginPath();
     ctx.moveTo(-w * 0.1, y0);
@@ -415,9 +458,28 @@ export function drawBackdrop(
   h: number,
   t: number,
   theme: Theme,
+  live = false,
 ): void {
-  if (theme.id === 'vhs') vhsBackdrop(ctx, w, h, t);
-  else arcadeBackdrop(ctx, w, h, t, theme);
+  if (theme.id === 'vhs') vhsBackdrop(ctx, w, h, t, live);
+  else arcadeBackdrop(ctx, w, h, t, theme, live);
+  if (live) columnScrim(ctx, w, h, theme);
+}
+
+/** Live scene behind the menu: soft dark band only behind the centred logo and rows. */
+function columnScrim(ctx: CanvasRenderingContext2D, w: number, h: number, th: Theme): void {
+  const half = Math.min(40 * (Math.min(w, h) / 100), w * 0.5); // rows are min(72u, 0.94w) wide
+  const x0 = w / 2 - half * 1.35;
+  const x1 = w / 2 + half * 1.35;
+  const rgb = th.id === 'vhs' ? '24,14,8' : '8,5,28';
+  ctx.fillStyle = cachedGrad(ctx, `scrim|${th.id}|${w}|${h}`, () =>
+    linear(ctx, x0, 0, x1, 0, [
+      [0, `rgba(${rgb},0)`],
+      [0.22, `rgba(${rgb},0.5)`],
+      [0.78, `rgba(${rgb},0.5)`],
+      [1, `rgba(${rgb},0)`],
+    ]),
+  );
+  ctx.fillRect(x0, 0, x1 - x0, h);
 }
 
 /** Post-fx drawn last over menus and HUD. */

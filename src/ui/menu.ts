@@ -699,7 +699,7 @@ export function drawMenu(
   const { th, u } = F;
   track(m, now);
   const hk = hintsFor(m.ui);
-  drawBackdrop(ctx, width, height, now, th);
+  drawBackdrop(ctx, width, height, now, th, m.screen !== 'garage'); // attract scene behind
   if (m.screen === 'garage') {
     if (m.garage) drawGarage(ctx, m.garage, hk.garage);
   } else if (m.screen === 'title') {

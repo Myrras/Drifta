@@ -204,7 +204,7 @@ export function createTach() {
     ctx.beginPath();
     for (let k = 500; k < max; k += 1000) tick(ctx, cx, cy, rpmAngle(k, max), r * 0.82, r * 0.9);
     ctx.stroke();
-    ctx.font = `${r * 0.15}px ${DISPLAY}`;
+    ctx.font = `${Math.max(11, r * 0.17)}px ${DISPLAY}`; // floor keeps small windows readable
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (let k = 0; k <= max; k += 1000) {
@@ -282,7 +282,7 @@ export function createTach() {
     const gap = r * 0.045;
     const rowW = r * 1.9;
     const lw = (rowW - gap * (LEDS - 1)) / LEDS;
-    const y = cy - r * 1.32;
+    const y = cy - r * 1.3 - gap - h; // plate clears the bezel (r * 1.2) by r * 0.1
     const sk = -SKEW * h;
     ctx.globalAlpha = 1;
     ctx.fillStyle = INK;
@@ -303,14 +303,19 @@ export function createTach() {
           : i < LEDS * 0.7
             ? mid
             : pal.accent;
-      ctx.fillStyle = on ? col : pal.dim;
-      ctx.globalAlpha = on ? 1 : 0.2;
+      const x = cx - rowW / 2 + i * (lw + gap);
+      // lit: full colour, halo and a hot core; unlit: tinted dark glass with a top glint
+      ctx.fillStyle = col;
+      ctx.globalAlpha = on ? 1 : 0.24;
       if (on) {
         ctx.shadowColor = col;
-        ctx.shadowBlur = r * 0.2 * glow;
+        ctx.shadowBlur = r * 0.32 * glow;
       }
-      para(ctx, cx - rowW / 2 + i * (lw + gap), y, lw, h, sk);
+      para(ctx, x, y, lw, h, sk);
       ctx.shadowBlur = 0;
+      ctx.fillStyle = on ? '#ffffff' : pal.text;
+      ctx.globalAlpha = on ? 0.5 : 0.14;
+      para(ctx, x + sk * 0.6 + lw * 0.12, y + h * 0.12, lw * 0.76, h * 0.28, sk * 0.28);
     }
     ctx.restore();
   }
