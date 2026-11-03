@@ -155,4 +155,20 @@ describe('hint lines', () => {
     const c = { ...r, chooser: { cars: [], row: 0 } };
     expect(resultsHint(ps, c)).toBe('D-PAD ←→ car · ✕ choose · ○ later');
   });
+  it('MP results bar: host rematch, guest waits, rival gone leaves', () => {
+    const r = { ...res, drifts: [] };
+    const host = { connected: true, role: 'host' } as const;
+    const guest = { connected: true, role: 'guest' } as const;
+    expect(resultsHint(kb, r, host)).toBe('ENTER rematch · ESC leave');
+    expect(resultsHint(xbox, r, host)).toBe('A rematch · B leave');
+    expect(resultsHint(kb, r, guest)).toBe('waiting for host · ESC leave');
+    expect(resultsHint(ps, res, guest)).toBe(
+      'D-PAD ←→ pick · □ save clip · waiting for host · ○ leave',
+    );
+    expect(resultsHint(kb, r, { ...guest, connected: false })).toBe('ESC title');
+    expect(resultsHint(xbox, { ...r, carPick: true }, guest)).toBe('A choose car · B leave');
+    expect(resultsHint(kb, { ...r, carPick: true }, { connected: false })).toBe(
+      'ENTER choose car · ESC title',
+    );
+  });
 });

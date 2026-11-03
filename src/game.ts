@@ -13,7 +13,17 @@ import type {
   ScoreEvent,
   Trick,
 } from './types';
-import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContext } from './view';
+import type {
+  FrameView,
+  MenuRow,
+  MenuView,
+  MpHud,
+  Popup,
+  RenderView,
+  Results,
+  RivalView,
+  UiContext,
+} from './view';
 import { boomCars, type createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
@@ -217,6 +227,9 @@ export function createGame(
   let mpWait = -1;
   let mpOpen = false; // connect overlay is up: title ignores input
   const inMp = () => mp !== null;
+  let mpGone = false; // rival dropped during the race: toast shown once
+  let mpToast = '';
+  let mpToastT = 0;
   let boomFloor: Floor | null = null; // floor whose boom cars boomList holds
   let boomList: Vec[] = [];
   // daily / legend run in progress; a legend swaps in its car until the title
@@ -518,6 +531,23 @@ export function createGame(
     s.phase = 'results';
     audio.stop();
     audio.music(false);
+    mp?.finish(total, s.time);
+  }
+
+  /** an MP race in progress (or its results) */
+  const mpRace = () =>
+    mp !== null &&
+    (s.phase === 'countdown' || s.phase === 'run' || s.phase === 'paused' || s.phase === 'results');
+  function mpSend(): void {
+    const { car, scoring } = s;
+    mp?.sendPose(s.time, car.pos.x, car.pos.y, car.angle, s.floorIndex);
+    mp?.sendScore(scoring.banked, scoring.combo ? comboValue(scoring.combo) : 0);
+  }
+  /** MP pause: the clock runs on with the car frozen */
+  function mpHold(dt: number): void {
+    s.time += dt;
+    rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
+    mpSend();
   }
 
   /** put the car on the route (or start) nearest to it, heading along it, clear of solids */
@@ -709,10 +739,21 @@ export function createGame(
     go('title', MP_ROW);
     if (msg) [toastMsg, toastT] = [msg, 3];
   }
+  /** rematch: back to the lobby with a fresh run; the session keeps the map */
+  function toLobby(): void {
+    audio.stop();
+    audio.music(true);
+    audio.setIntensity((intensity = 0.15));
+    clips?.clear();
+    mpWait = -1;
+    Object.assign(s, fresh(), { runId: s.runId + 1 });
+    go('mplobby');
+  }
   function joinMp(r: { link: Link; role: 'host' | 'guest' } | null): void {
     mpOpen = false;
     editEnded = true; // the key that closed the overlay may still be latched
     if (!r) return;
+    [mpGone, mpToastT] = [false, 0];
     const me: PlayerInfo = {
       name: cfg.name,
       car: cfg.car,
@@ -1052,6 +1093,7 @@ export function createGame(
       caretT += dt;
       noteT = Math.max(0, noteT - dt);
       toastT = Math.max(0, toastT - dt);
+      mpToastT = Math.max(0, mpToastT - dt);
       if (input.device) ui.device = input.device;
       if (input.padStyle) ui.padStyle = input.padStyle;
       s.handbrake = input.handbrake;
@@ -1069,18 +1111,19 @@ export function createGame(
         s.phase === 'starter' ||
         s.phase === 'mplobby';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
-      if (input.restart && !inMenu && s.phase !== 'photo') {
+      if (input.restart && !inMenu && s.phase !== 'photo' && !inMp()) {
         newRun();
         return;
       }
       if (mp) {
         mp.tick();
+        const name = mp.rival.info?.name ?? 'RIVAL';
         if (mp.phase === 'closed' && s.phase === 'mplobby')
-          exitMp(
-            mp.error === 'version'
-              ? 'VERSION MISMATCH - REFRESH'
-              : `${mp.rival.info?.name ?? 'RIVAL'} LEFT`,
-          );
+          exitMp(mp.error === 'version' ? 'VERSION MISMATCH - REFRESH' : `${name} LEFT`);
+        else if (mp.phase === 'closed' && mpRace() && !mpGone) {
+          mpGone = true;
+          [mpToast, mpToastT] = [`${name} DISCONNECTED`, 3];
+        } else if (mp.phase === 'lobby' && mpRace()) toLobby(); // host chose rematch
       }
       if (s.phase === 'title' || s.phase === 'settings' || s.phase === 'mplobby') stepAttract(dt);
       switch (s.phase) {
@@ -1169,12 +1212,16 @@ export function createGame(
           if (s.countdown <= EPS) s.phase = 'run';
           break;
         case 'run':
-          if (input.photo) enterPhoto();
+          if (input.photo && !inMp()) enterPhoto();
           else if (input.pause) {
             s.phase = 'paused';
             audio.stop();
             clips?.pause(true);
-          } else run(input, dt);
+            if (inMp()) mpHold(dt);
+          } else {
+            run(input, dt);
+            if (inMp()) mpSend();
+          }
           break;
         case 'photo':
           if (input.pause) leavePhoto();
@@ -1182,12 +1229,16 @@ export function createGame(
           else photoCam = stepPhoto(photoCam, input, dt, PHOTO_VIEW_H);
           break;
         case 'paused':
-          if (input.photo) enterPhoto();
+          if (inMp()) mpHold(dt);
+          if (input.photo && !inMp()) enterPhoto();
           else if (input.confirm) {
             s.phase = 'run';
             Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
             clips?.pause(false);
-          } else if (input.pause) toTitle();
+          } else if (input.pause) {
+            if (inMp()) exitMp();
+            else toTitle();
+          }
           break;
         case 'results': {
           s.resultsAge += dt;
@@ -1202,13 +1253,23 @@ export function createGame(
               s.chooser = null;
               s.carPick = false;
             }
-          } else if (input.pause) toTitle();
-          else if (input.confirm && ready && s.carPick && s.prog && !s.cheat) {
+          } else if (input.pause) {
+            if (mp) exitMp();
+            else toTitle();
+          } else if (input.confirm && ready && s.carPick && s.prog && !s.cheat) {
             const p = s.prog;
             const cars = MODEL_IDS.filter((m) => !isCarUnlocked(p, m, s.cheat));
             if (cars.length) s.chooser = { cars, row: 0 };
             else s.carPick = false; // everything owned: the pick stays banked
             // cheat on: no chooser (everything reads unlocked), the pick is kept; confirm retries
+          } else if (input.confirm && ready && mp) {
+            // host: rematch; guest waits for the host; rival gone: leave
+            if (mp.phase === 'closed') exitMp();
+            else if (mp.role === 'host') {
+              audio.ui('confirm');
+              mp.backToLobby();
+              toLobby();
+            }
           } else if (input.confirm && ready) newRun();
           else if (input.save) {
             if (ready) saveDrift();
@@ -1226,6 +1287,30 @@ export function createGame(
         const c = ghost.look?.color;
         const color = typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0];
         return { ...g, model, color, look: ghost.look as Look | undefined };
+      };
+      const m = mpRace() ? mp : null;
+      const rivalsView = (): RivalView[] => {
+        const info = m?.rival.info;
+        const p = m?.rivalPose(s.time);
+        if (!m || !info || !p || !m.rival.connected || p.floor !== s.floorIndex) return [];
+        const model = Object.hasOwn(PLAYER_MODELS, info.car) ? info.car : cfg.car;
+        const look = info.look as Look | undefined;
+        return [
+          { x: p.x, y: p.y, angle: p.angle, model, color: info.color, look, name: info.name },
+        ];
+      };
+      const mpHud = (): (MpHud & { role: 'host' | 'guest' }) | undefined => {
+        if (!m) return undefined;
+        const r = m.rival;
+        return {
+          rival: r.info?.name ?? 'RIVAL',
+          rivalScore: r.total ?? r.banked + r.combo,
+          rivalTotal: r.total,
+          connected: r.connected,
+          waiting: s.phase === 'results' && r.total === null && r.connected,
+          toast: mpToastT > 0 ? mpToast : undefined,
+          role: m.role,
+        };
       };
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
@@ -1278,6 +1363,7 @@ export function createGame(
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
             ghost: ghostView(),
+            rivals: m ? rivalsView() : undefined,
             photo:
               s.phase === 'photo'
                 ? {
@@ -1308,6 +1394,7 @@ export function createGame(
           redline: prof.limit - REDLINE_BELOW_LIMIT,
           photoShot: shot,
           gear: gearOf(car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle)),
+          mp: mpHud(),
           results:
             s.phase === 'results' && s.results
               ? {
@@ -1333,6 +1420,13 @@ export function createGame(
                     }),
                     row: s.chooser.row,
                   },
+                  rival: m
+                    ? {
+                        name: m.rival.info?.name ?? 'RIVAL',
+                        total: m.rival.total,
+                        time: m.rival.time,
+                      }
+                    : undefined,
                 }
               : null,
         },
@@ -1371,7 +1465,7 @@ export function createGame(
     },
 
     pause(): void {
-      if (s.phase === 'countdown') return toTitle();
+      if (s.phase === 'countdown' && !inMp()) return toTitle();
       if (s.phase !== 'run') return;
       s.phase = 'paused';
       audio.stop();

@@ -1838,10 +1838,11 @@ describe('multiplayer entry and lobby', () => {
       setItem: (k: string, v: string) => void mem.set(k, v),
     };
     const open = vi.fn<MpHost['open']>((_mode, done) => done(link && { link, role }));
+    const bests: Record<string, BestStore> = {};
     const game = createGame(
       [garage, testpad],
       audio,
-      () => memBest(),
+      (n) => (bests[n] ??= memBest()),
       storage,
       undefined,
       undefined,
@@ -1860,7 +1861,7 @@ describe('multiplayer entry and lobby', () => {
       if (mode === 'join') tap({ right: true });
       tap({ confirm: true });
     };
-    return { game, tap, menu, open, enter };
+    return { game, tap, menu, open, enter, bests };
   };
   const pair = () => {
     const [a, b] = linkPair();
@@ -2001,5 +2002,194 @@ describe('multiplayer entry and lobby', () => {
     host.tap({});
     expect(host.game.debug.phase).toBe('title');
     expect(host.menu().toast).toBe('VERSION MISMATCH - REFRESH');
+  });
+
+  describe('race', () => {
+    type P = ReturnType<typeof player>;
+    /** lobby -> START -> both in the countdown on GARAGE */
+    const race = () => {
+      const p = pair();
+      const { host, guest } = p;
+      host.enter('host');
+      guest.enter('join');
+      host.tap({});
+      host.tap({ down: true });
+      host.tap({ confirm: true });
+      guest.tap({ down: true });
+      guest.tap({ confirm: true });
+      host.tap({ down: true });
+      host.game.update({ ...IDLE, confirm: true }, DT);
+      const lockstep = (k: number, hi: Partial<InputState> = {}, gi: Partial<InputState> = {}) => {
+        for (let i = 0; i < k; i++) {
+          guest.game.update({ ...IDLE, ...gi }, DT);
+          host.game.update({ ...IDLE, ...hi }, DT);
+        }
+      };
+      lockstep(Math.round(START_DELAY_MS / 1000 / DT));
+      const toRun = () => lockstep(Math.round(COUNTDOWN_SECONDS / DT));
+      const atFinish = (q: P) => {
+        q.game.debug.floorIndex = garage.finish.floor;
+        q.game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+      };
+      const lockout = () => lockstep(Math.ceil(0.5 / DT) + 1);
+      expect([host.game.debug.phase, guest.game.debug.phase]).toEqual(['countdown', 'countdown']);
+      return { ...p, lockstep, toRun, atFinish, lockout };
+    };
+
+    it('shows the rival on the same floor only; single player has no rivals or mp hud', () => {
+      const { host, guest, lockstep, toRun } = race();
+      toRun();
+      lockstep(30);
+      const g = guest.game.debug.car;
+      const rv = host.game.view().render.rivals!;
+      expect(rv).toHaveLength(1);
+      expect(rv[0]).toMatchObject({ name: 'GUESTY', model: 'mx5' });
+      expect(rv[0].x).toBeCloseTo(g.pos.x, 1);
+      expect(rv[0].y).toBeCloseTo(g.pos.y, 1);
+      expect(host.game.view().hud.mp).toMatchObject({ rival: 'GUESTY', connected: true });
+      guest.game.debug.floorIndex = garage.finish.floor;
+      lockstep(30);
+      expect(host.game.view().render.rivals).toEqual([]);
+
+      const { game, toRun: soloRun } = setup();
+      soloRun();
+      expect(game.view().render.rivals).toBeUndefined();
+      expect(game.view().hud.mp).toBeUndefined();
+    });
+
+    it("sends the rival's score to the hud", () => {
+      const { host, guest, lockstep, toRun } = race();
+      guest.game.debug.scoring.banked = 1234;
+      toRun();
+      lockstep(1);
+      expect(host.game.view().hud.mp).toMatchObject({ rivalScore: 1234, rivalTotal: null });
+    });
+
+    it('MP pause keeps the clock and pose sending running with the car frozen', () => {
+      const { b, host, guest, lockstep, toRun } = race();
+      toRun();
+      lockstep(10, {}, { throttle: 1 });
+      guest.tap({ pause: true });
+      expect(guest.game.debug.phase).toBe('paused');
+      const t = guest.game.debug.time;
+      const pos = { ...guest.game.debug.car.pos };
+      const send = vi.spyOn(b, 'send');
+      lockstep(60, {}, { throttle: 1 });
+      expect(guest.game.debug.time).toBeCloseTo(t + 60 * DT, 5);
+      expect(guest.game.debug.car.pos).toEqual(pos);
+      expect(send.mock.calls.filter(([m]) => m.t === 'pose').length).toBeGreaterThan(10);
+      guest.tap({ confirm: true });
+      expect(guest.game.debug.phase).toBe('run');
+
+      host.game.pause(); // blur / tab hide
+      expect(host.game.debug.phase).toBe('paused');
+      const ht = host.game.debug.time;
+      lockstep(30);
+      expect(host.game.debug.time).toBeCloseTo(ht + 30 * DT, 5);
+      host.tap({ pause: true }); // quit leaves MP
+      expect(host.game.debug.phase).toBe('title');
+      guest.tap({});
+      expect(guest.game.view().hud.mp?.toast).toBe('HOSTY DISCONNECTED');
+    });
+
+    it('MP countdown ignores blur; photo mode and restart are off', () => {
+      const { guest, lockstep, toRun } = race();
+      guest.game.pause();
+      expect(guest.game.debug.phase).toBe('countdown');
+      toRun();
+      lockstep(10);
+      const { runId, time } = guest.game.debug;
+      guest.tap({ restart: true });
+      expect(guest.game.debug.runId).toBe(runId);
+      expect(guest.game.debug.time).toBeGreaterThan(time);
+      guest.tap({ photo: true });
+      expect(guest.game.debug.phase).toBe('run');
+      guest.tap({ pause: true });
+      guest.tap({ photo: true });
+      expect(guest.game.debug.phase).toBe('paused');
+    });
+
+    it('host finishes first and waits; both see both totals; best is saved', () => {
+      const { host, guest, lockstep, toRun, atFinish } = race();
+      toRun();
+      lockstep(30);
+      atFinish(host);
+      lockstep(1);
+      const hr = host.game.view().hud;
+      expect(hr.phase).toBe('results');
+      expect(hr.mp!.waiting).toBe(true);
+      expect(hr.results!.rival).toEqual({ name: 'GUESTY', total: null, time: null });
+      expect(host.bests[garage.name].get()).toBe(hr.results!.total);
+      expect(guest.game.view().hud.mp!.rivalTotal).toBe(hr.results!.total);
+
+      lockstep(30);
+      atFinish(guest);
+      lockstep(1);
+      const h = host.game.view().hud;
+      const g = guest.game.view().hud;
+      expect(g.phase).toBe('results');
+      expect(h.mp!.waiting).toBe(false);
+      expect(h.results!.rival).toEqual({
+        name: 'GUESTY',
+        total: g.results!.total,
+        time: g.results!.time,
+      });
+      expect(g.results!.rival).toMatchObject({ name: 'HOSTY', total: h.results!.total });
+      expect(guest.bests[garage.name].get()).toBe(g.results!.total);
+    });
+
+    it('a disconnect mid-run toasts, drops the ghost and lets you finish solo', () => {
+      const { b, host, lockstep, toRun, atFinish } = race();
+      toRun();
+      lockstep(30);
+      expect(host.game.view().render.rivals).toHaveLength(1);
+      b.close();
+      const step = (i: Partial<InputState>, n = 1) => {
+        for (let k = 0; k < n; k++) host.game.update({ ...IDLE, ...i }, DT);
+      };
+      step({});
+      let v = host.game.view();
+      expect(v.hud.phase).toBe('run');
+      expect(v.hud.mp).toMatchObject({ toast: 'GUESTY DISCONNECTED', connected: false });
+      expect(v.render.rivals).toEqual([]);
+      const pos = { ...host.game.debug.car.pos };
+      step({ throttle: 1 }, 200);
+      expect(host.game.debug.phase).toBe('run');
+      expect(host.game.debug.car.pos).not.toEqual(pos);
+      expect(host.game.view().hud.mp!.toast).toBeUndefined();
+      atFinish(host);
+      step({});
+      v = host.game.view();
+      expect(v.hud.results!.rival!.total).toBeNull();
+      expect(v.hud.mp!.waiting).toBe(false);
+      step({}, 40);
+      step({ confirm: true });
+      expect(host.game.debug.phase).toBe('title');
+      expect(host.menu().row).toBe(2);
+    });
+
+    it('rematch: guest confirm waits, host confirm takes both back to the lobby', () => {
+      const { host, guest, lockstep, toRun, atFinish, lockout } = race();
+      toRun();
+      atFinish(host);
+      atFinish(guest);
+      lockstep(1);
+      lockout();
+      expect(guest.game.view().hud.results!.carPick).toBe(false);
+      guest.tap({ confirm: true });
+      expect(guest.game.debug.phase).toBe('results');
+      host.tap({ confirm: true });
+      expect(host.game.debug.phase).toBe('mplobby');
+      guest.tap({});
+      expect(guest.game.debug.phase).toBe('mplobby');
+      for (const p of [host, guest]) {
+        expect(p.menu().mp).toMatchObject({ ready: false, rivalReady: false });
+        expect(p.game.debug.time).toBe(0);
+      }
+      expect(value(host, 'MAP')).toBe(`◀ ${garage.name} ▶`);
+      expect(value(guest, 'MAP')).toBe(garage.name);
+      guest.tap({ pause: true });
+      expect(guest.game.debug.phase).toBe('title');
+    });
   });
 });

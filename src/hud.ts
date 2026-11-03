@@ -835,7 +835,14 @@ export const positionLabel = (p: 1 | 2 | 3 | null): string => (p ? ORD[p] : 'NO 
 export const paintName = (id: string): string =>
   itemById(id)?.name ?? id.replace(/-/g, ' ').toUpperCase();
 
-export function resultsHint(ui: HudView['ui'], r: NonNullable<HudView['results']>): string {
+/** MP results: role decides REMATCH (host) or waiting (guest) */
+export type MpHint = Pick<MpHud, 'connected'> & { role?: 'host' | 'guest' };
+
+export function resultsHint(
+  ui: HudView['ui'],
+  r: NonNullable<HudView['results']>,
+  mp?: MpHint,
+): string {
   if (r.chooser)
     return hintLine(
       [
@@ -850,8 +857,14 @@ export function resultsHint(ui: HudView['ui'], r: NonNullable<HudView['results']
   if (r.drifts.length > 1) items.push(['pick', 'pick']);
   const d = r.drifts[r.driftRow];
   if (d?.clip && !d.saved) items.push(['save', 'save clip']);
-  items.push(['confirm', r.carPick ? 'choose car' : 'retry'], ['back', 'menu']);
-  return hintLine(items, ui.device, ui.padStyle);
+  const line = (xs: [Action, string][]) => hintLine(xs, ui.device, ui.padStyle);
+  if (r.carPick) items.push(['confirm', 'choose car']);
+  if (mp && !mp.connected) return line([...items, ['back', 'title']]);
+  if (mp?.role === 'guest' && !r.carPick)
+    return [line(items), 'waiting for host', line([['back', 'leave']])].filter(Boolean).join(' · ');
+  if (!r.carPick) items.push(['confirm', mp ? 'rematch' : 'retry']);
+  items.push(['back', mp ? 'leave' : 'menu']);
+  return line(items);
 }
 
 function cssWidth(ctx: CanvasRenderingContext2D, s: string, font: string): number {
@@ -1234,7 +1247,7 @@ function drawResults(
   });
 
   if (r.chooser) drawChooser(ctx, r.chooser, width, height, u, th, pulse);
-  hintBar(ctx, resultsHint(v.ui, r), width, height, u, th);
+  hintBar(ctx, resultsHint(v.ui, r, v.mp), width, height, u, th);
 }
 
 /** Results side panel beside the total: label, value, optional verdict tag (winner gets the glow). */
