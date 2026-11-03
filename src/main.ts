@@ -7,6 +7,7 @@ import { createClipRecorder } from './clips';
 import { garage } from './maps/garage';
 import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
+import { tokyo } from './maps/tokyo';
 import { BEST_SCORE_KEY, DT } from './config';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -41,7 +42,7 @@ const bestFor = (name: string) => {
   };
 };
 const clips = createClipRecorder(canvas, () => audio.stream());
-const game = createGame([garage, docks, testpad], audio, bestFor, undefined, clips);
+const game = createGame([garage, docks, tokyo, testpad], audio, bestFor, undefined, clips);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
