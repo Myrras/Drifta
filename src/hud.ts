@@ -1390,6 +1390,29 @@ function sidePanel(
   });
 }
 
+function statBar(
+  ctx: CanvasRenderingContext2D,
+  th: Theme,
+  u: number,
+  label: string,
+  v: number,
+  x: number,
+  w: number,
+  y: number,
+): void {
+  text(ctx, label, x, y, 1.8 * u, th.dim, { css: th.font(700, 1.8 * u), stroke: null });
+  const bx = x + 9 * u;
+  const bw = w - 9 * u;
+  const bh = 1.2 * u;
+  ctx.fillStyle = 'rgba(255,255,255,0.16)';
+  ctx.fillRect(bx, y - bh / 2, bw, bh);
+  ctx.fillStyle = th.id === 'vhs' ? th.accent : th.accent2;
+  ctx.fillRect(bx, y - bh / 2, bw * (0.08 + 0.92 * v), bh);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  for (let k = 1; k < 10; k++)
+    ctx.fillRect(bx + (bw * k) / 10, y - bh / 2, Math.max(1, 0.2 * u), bh);
+}
+
 /** Car pick overlay: one locked car at a time, LATER as the last stop. */
 function drawChooser(
   ctx: CanvasRenderingContext2D,
@@ -1415,9 +1438,10 @@ function drawChooser(
     stroke: null,
   });
   const pw = Math.min(70 * u, width - 8 * u);
-  const ph = 21 * u;
+  const ph = (later ? 21 : 30) * u;
+  const top = cy - 10.5 * u;
   const g = th.glow ? th.accent : undefined;
-  box(ctx, cx - pw / 2, cy - ph / 2, pw, ph, 1.4 * u, th.panel, th.accent, 0.45 * u, g);
+  box(ctx, cx - pw / 2, top, pw, ph, 1.4 * u, th.panel, th.accent, 0.45 * u, g);
   const name = later ? 'LATER' : c.cars[c.row].name.toUpperCase();
   if (!later) {
     const car = c.cars[c.row];
@@ -1428,6 +1452,13 @@ function drawChooser(
       cy - 4 * u - sz / 2,
       sz,
       sz,
+    );
+  }
+  if (!later) {
+    const { power, grip, weight } = c.cars[c.row].stats;
+    const bx = cx - pw / 2 + 5 * u;
+    Object.entries({ POWER: power, GRIP: grip, WEIGHT: weight }).forEach(([label, v], i) =>
+      statBar(ctx, th, u, label, v, bx, pw - 10 * u, cy + (11 + i * 2.7) * u),
     );
   }
   const px = fitPx(ctx, name, (p) => th.font(800, p, true), 5.5 * u, pw - 14 * u);
@@ -1466,7 +1497,7 @@ function drawChooser(
     ctx.globalAlpha = i === c.row ? 1 : 0.5;
     ctx.beginPath();
     const dx = cx + (i - (nOpt - 1) / 2) * dg;
-    ctx.arc(dx, cy + ph / 2 + 3 * u, (i === c.row ? 0.7 : 0.45) * u, 0, Math.PI * 2);
+    ctx.arc(dx, top + ph + 3 * u, (i === c.row ? 0.7 : 0.45) * u, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();

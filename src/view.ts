@@ -104,7 +104,13 @@ export interface Results {
   carPick: boolean;
   /** car pick overlay: locked cars, then LATER at index cars.length */
   chooser: {
-    cars: { model: PlayerModel; name: string; color: string; look: Look }[];
+    cars: {
+      model: PlayerModel;
+      name: string;
+      color: string;
+      look: Look;
+      stats: { power: number; grip: number; weight: number };
+    }[];
     row: number;
   } | null;
   /** best banked combos, highest first (max 3) */
