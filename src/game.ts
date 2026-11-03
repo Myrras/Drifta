@@ -75,6 +75,7 @@ export interface ClipRecorder {
   /** drop everything */
   clear(): void;
   has(id: number): boolean;
+  still?(id: number): HTMLCanvasElement | undefined;
   /** download the clip */
   save(id: number, filename: string): void;
 }
