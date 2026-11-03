@@ -36,7 +36,7 @@ export const defaultSettings = (): Settings => ({
   sfx: 0.8,
   engine: 0.8,
   shake: true,
-  track: 'tokyo',
+  track: 'phonk', // old 'tokyo' / 'eurobeat' saves fail validation and land here
   clips: 'medium',
   menuTheme: 'arcade',
   car: 'mx5',

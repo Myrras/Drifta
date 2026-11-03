@@ -686,14 +686,14 @@ describe('main menu, garage, settings', () => {
 
   it('music row toggles the track and persists', () => {
     const { game, a, tap, mem } = rig();
-    expect(a.setTrack).toHaveBeenLastCalledWith('tokyo');
+    expect(a.setTrack).toHaveBeenLastCalledWith('phonk');
     tap({ up: true });
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     tap({ right: true });
-    expect(a.setTrack).toHaveBeenLastCalledWith('eurobeat');
-    expect(game.view().hud.menu!.rows[4].value).toBe('EUROBEAT');
-    expect(JSON.parse(mem.get(SETTINGS_KEY)!).track).toBe('eurobeat');
+    expect(a.setTrack).toHaveBeenLastCalledWith('mine');
+    expect(game.view().hud.menu!.rows[4].value).toBe('MY MUSIC (EMPTY)');
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).track).toBe('mine');
   });
 
   it('clip quality row cycles and persists', () => {
@@ -774,22 +774,20 @@ describe('main menu, garage, settings', () => {
     }
   });
 
-  it('MUSIC row cycles three tracks and labels an empty library', () => {
+  it('MUSIC row cycles two tracks and labels an empty library', () => {
     const { game, a, tap } = rig();
     tap({ up: true });
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     const value = () => game.view().hud.menu!.rows[4].value;
-    expect(value()).toBe('TOKYO');
-    tap({ right: true });
-    expect(value()).toBe('EUROBEAT');
+    expect(value()).toBe('PHONK');
     tap({ right: true });
     expect(value()).toBe('MY MUSIC (EMPTY)');
     a.myMusicCount = () => 7;
     expect(value()).toBe('MY MUSIC (7)');
     tap({ right: true });
-    expect(value()).toBe('TOKYO');
-    expect(a.setTrack).toHaveBeenLastCalledWith('tokyo');
+    expect(value()).toBe('PHONK');
+    expect(a.setTrack).toHaveBeenLastCalledWith('phonk');
   });
 
   it('skip works in a run but not in settings', () => {

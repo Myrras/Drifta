@@ -46,7 +46,7 @@ Already exists (do not duplicate): 2-floor B2 MEET garage, TOKYO NIGHTS city, op
 
 ## Audio & music
 
-- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original) (done, 2 tracks plus MY MUSIC MP3 import and N / RB skip): genre feel, Initial D Eurobeat, NFS Underground. M
+- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original) (done, original PHONK track plus MY MUSIC MP3 import and N / RB skip): genre feel, Initial D Eurobeat, NFS Underground. M
 - Turbo flutter, blow-off valve, backfire pops on lift (done): JDM sound cues. S
 - Tire squeal varying by slip and surface. S
 - Music layers fade in with combo multiplier: Tony Hawk-style intensity. M

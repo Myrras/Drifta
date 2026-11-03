@@ -171,7 +171,7 @@ export function createGame(
   let usage = '';
   const afterChange = () => {
     void audio.refreshMyMusic();
-    if (cfg.track === 'mine') audio.setTrack('mine'); // leave a TOKYO fallback once the library changes
+    if (cfg.track === 'mine') audio.setTrack('mine'); // leave a PHONK fallback once the library changes
     void host?.size().then((v) => (usage = v));
   };
   let tab = 0;

@@ -1,54 +1,7 @@
-/** Procedural drift tracks (tokyo, eurobeat) plus MY MUSIC (library MP3s). Pattern logic is pure (testable); createMusic wires it to Web Audio. */
+/** Procedural PHONK track plus MY MUSIC (library MP3s). Pattern logic is pure (testable); createMusic wires it to Web Audio. */
 import { createShuffleBag, getBlob, listTracks } from './musicLibrary';
 
-export const BPM = 155;
 export const STEPS_PER_BAR = 16;
-const STEP_SEC = 60 / BPM / 4;
-
-/** A minor, 8 bars: i VI VII i | iv VI VII V. Root MIDI note + triad intervals. */
-const MAJ = [0, 4, 7];
-const MIN = [0, 3, 7];
-const PROG: { root: number; tri: number[] }[] = [
-  { root: 57, tri: MIN }, // Am
-  { root: 53, tri: MAJ }, // F
-  { root: 55, tri: MAJ }, // G
-  { root: 57, tri: MIN }, // Am
-  { root: 50, tri: MIN }, // Dm
-  { root: 53, tri: MAJ }, // F
-  { root: 55, tri: MAJ }, // G
-  { root: 52, tri: MAJ }, // E
-];
-const STAB_STEPS = [0, 3, 6, 10, 12];
-
-export const chordAt = (bar: number) => PROG[((bar % 8) + 8) % 8];
-export const chordNotes = (bar: number): number[] => {
-  const c = chordAt(bar);
-  return c.tri.map((i) => c.root + i);
-};
-
-export interface Drums {
-  kick: boolean;
-  clap: boolean;
-  hat: boolean;
-}
-
-/** Kick on every beat, clap on 2 & 4, closed hat on 8ths (all intensities). */
-export function drumsAt(step: number): Drums {
-  const s = step % STEPS_PER_BAR;
-  return { kick: s % 4 === 0, clap: s === 4 || s === 12, hat: s % 2 === 0 };
-}
-
-/** Offbeat 8th bass (steps 2,6,10,14), octave-jumping on the second offbeat of each half bar. */
-export function bassAt(bar: number, step: number): number | null {
-  const s = step % STEPS_PER_BAR;
-  if (s % 4 !== 2) return null;
-  return chordAt(bar).root - 24 + (s % 8 === 6 ? 12 : 0);
-}
-
-export function stabAt(bar: number, step: number, intensity: number): number[] | null {
-  if (intensity <= 0.3 || !STAB_STEPS.includes(step % STEPS_PER_BAR)) return null;
-  return chordNotes(bar).map((n) => n + 12);
-}
 
 /** Deterministic hash in [0,1) from integers. */
 function hash(a: number, b: number): number {
@@ -58,86 +11,116 @@ function hash(a: number, b: number): number {
   return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
 }
 
-/** Fixed-seed 16th-note arpeggio from chord tones; same output for the same bar every time. */
-export function leadAt(bar: number, step: number, intensity: number): number | null {
-  if (intensity <= 0.6) return null;
-  const s = step % STEPS_PER_BAR;
-  const b = ((bar % 8) + 8) % 8;
-  if (s % 2 === 1 && hash(b, s) < 0.45) return null; // rests on weak 16ths
-  const tones = chordNotes(b);
-  const idx = Math.floor(hash(b * 31 + 5, s) * 4); // 3 tones + octave
-  return tones[idx % 3] + 24 + (idx === 3 ? 12 : 0);
-}
-
-/* ---- Tokyo: dark half-time hip-hop, D in-scale (miyako-bushi). Original patterns, style only. ---- */
-
-export const TRACKS = ['tokyo', 'eurobeat', 'mine'] as const;
+export const TRACKS = ['phonk', 'mine'] as const;
 export type Track = (typeof TRACKS)[number];
 export const TRACK_LABELS: Record<Track, string> = {
-  tokyo: 'TOKYO',
-  eurobeat: 'EUROBEAT',
+  phonk: 'PHONK',
   mine: 'MY MUSIC',
 };
-export const TOKYO_BPM = 130;
-export const TOKYO_SCALE = [0, 1, 5, 7, 8]; // D Eb G A Bb
-const TOKYO_ROOT = 50; // D3
-/** Bar roots as scale degrees: D D Bb A | D D G A (negative = below the root). */
-const TOKYO_PROG = [0, 0, -1, -2, 0, 0, -3, -2];
-/** Koto riff as scale degrees per 16th (null = rest); A answers on bars 0-1, B on bars 2-3. */
-const RIFF_A = [5, null, 7, null, 8, 9, null, 8, null, 7, null, 6, 5, null, null, null];
-const RIFF_B = [10, null, 9, 8, null, 9, null, 7, 8, null, 6, null, 5, null, 4, null];
+
+/* ---- PHONK: drift phonk in F# phrygian. Original patterns, style only, no samples. ---- */
+
+export const PHONK_BPM = 130;
+export const PHONK_SCALE = [0, 1, 3, 5, 7, 8, 10]; // F# G A B C# D E
+const PHONK_ROOT = 42; // F#2
 
 const mod = (a: number, n: number) => ((a % n) + n) % n;
-/** Scale degree to MIDI note; degree 5 is the root an octave up. */
-export const tokyoDegree = (d: number) =>
-  TOKYO_ROOT + 12 * Math.floor(d / 5) + TOKYO_SCALE[mod(d, 5)];
-const tokyoRoot = (bar: number) => TOKYO_PROG[mod(bar, 8)];
-/** Last bar of every 8 is a stop bar: one taiko, silence, two "hey" stabs back in. */
-export const tokyoStop = (bar: number) => mod(bar, 8) === 7;
+/** Scale degree to MIDI note; degree 7 is the root an octave up. */
+export const phonkDegree = (d: number) =>
+  PHONK_ROOT + 12 * Math.floor(d / 7) + PHONK_SCALE[mod(d, 7)];
 
-export interface TokyoDrums {
-  kick: boolean;
-  clap: boolean;
-  taiko: boolean;
-  hat: boolean;
-  hey: boolean;
+export type PhonkPart = 'intro' | 'dropA' | 'dropB' | 'break';
+/** 4-bar intro once, then a 24-bar loop: drop A (8), drop B (8), breakdown (4), intro reprise (4). */
+export function phonkPart(bar: number): PhonkPart {
+  if (bar < 4) return 'intro';
+  const c = mod(bar - 4, 24);
+  return c < 8 ? 'dropA' : c < 16 ? 'dropB' : c < 20 ? 'break' : 'intro';
 }
 
-/** Half-time: clap on beat 3, sparse kick, taiko accents; rolls and extra hits with intensity. */
-export function tokyoDrumsAt(bar: number, step: number, intensity: number): TokyoDrums {
+/** Bar roots per 4-bar phrase as scale degrees (negative = below F#). */
+const ROOTS: Record<PhonkPart, number[]> = {
+  intro: [0, 0, -2, -1], // F# F# D E
+  dropA: [0, 0, -2, -1],
+  dropB: [0, 1, -2, -3], // F# G D C#
+  break: [0, -2, -1, -3],
+};
+const rootAt = (bar: number) => ROOTS[phonkPart(bar)][mod(bar, 4)];
+
+/** Cowbell melody bars as scale degrees above F#4 per 16th (null = rest). */
+const _ = null;
+const A0 = [7, _, _, 7, _, _, 6, _, 4, _, 5, 4, 2, _, 4, _];
+const A1 = [7, _, _, 7, _, _, 8, _, 7, _, 6, _, 5, 4, 2, _];
+const B0 = [9, _, 7, 9, _, _, 8, _, 7, _, 4, _, 5, _, 6, _];
+const B1 = [7, _, 7, 4, _, _, 5, _, 4, _, 2, 1, 0, _, _, _];
+const COWBELL: Record<PhonkPart, (number | null)[][]> = {
+  intro: [A0, A1, A0, B1],
+  dropA: [A0, A1, A0, B1],
+  dropB: [B0, B1, B0, A1],
+  break: [A0, A1, A0, A1],
+};
+
+export interface PhonkDrums {
+  kick: boolean;
+  clap: boolean;
+  snare: boolean;
+  /** 0 none, 1 one hit, 2 a 1/32 roll (two hits in the step) */
+  hat: 0 | 1 | 2;
+}
+
+/** Half-time trap groove: clap on beat 3, hat rolls; the intro builds, the breakdown drops the kick. */
+export function phonkDrumsAt(bar: number, step: number, intensity: number): PhonkDrums {
   const s = mod(step, STEPS_PER_BAR);
-  const b = mod(bar, 8);
-  if (tokyoStop(bar))
-    return { kick: false, clap: false, taiko: s === 0, hat: false, hey: s === 12 || s === 14 };
+  const l = mod(bar, 4);
+  const part = phonkPart(bar);
+  if (part === 'intro') {
+    const build = l === 3 && s >= 8; // snare + 1/32 hat roll into the drop
+    return {
+      kick: false,
+      clap: false,
+      snare: build,
+      hat: build ? 2 : l > 0 && s % 2 === 0 ? 1 : 0,
+    };
+  }
+  if (part === 'break') return { kick: false, clap: s === 8, snare: false, hat: 0 };
   const hot = intensity > 0.6;
+  const roll32 =
+    (l % 2 === 1 && s >= 14) ||
+    (part === 'dropB' && l === 2 && s >= 6 && s < 8) ||
+    (hot && s === 15);
+  const roll16 = hot || (l === 1 && s >= 12) || (intensity > 0.3 && l === 2 && s >= 4 && s < 8);
   return {
-    kick: s === 0 || s === 10 || (b % 2 === 1 && s === 7),
+    kick: s === 0 || s === 10 || (l % 2 === 1 && s === 6),
     clap: s === 8,
-    taiko: (b % 4 === 0 && s === 0) || (b % 2 === 1 && (s === 12 || s === 14)) || (hot && s === 4),
-    hat: s % 2 === 0 || (hot && b % 4 === 2 && s >= 12),
-    hey: intensity > 0.3 && b % 4 === 3 && s === 6,
+    snare: l === 3 && s >= 13 && s % 2 === 1,
+    hat: roll32 ? 2 : s % 2 === 0 || roll16 ? 1 : 0,
   };
 }
 
-/** Sliding 808: root on the kick hits, octave flip at the end of odd bars to slide back down. */
-export function tokyoBassAt(bar: number, step: number): number | null {
+/** Distorted 808 on the kick hits with slides; long held notes in the breakdown, none in the intro. */
+export function phonkBassAt(bar: number, step: number): number | null {
   const s = mod(step, STEPS_PER_BAR);
-  const n = tokyoDegree(tokyoRoot(bar)) - 12;
-  if (tokyoStop(bar)) return s === 0 ? n : null;
-  if (s === 0 || s === 10) return n;
-  return s === 14 && mod(bar, 2) === 1 ? n + 12 : null;
+  const l = mod(bar, 4);
+  const part = phonkPart(bar);
+  if (part === 'intro') return null;
+  const n = phonkDegree(rootAt(bar));
+  if (part === 'break') return s === 0 ? n : s === 8 && l % 2 === 1 ? n + 12 : null;
+  if (s === 0 || s === 10 || (l % 2 === 1 && s === 6)) return n;
+  if (l === 1 && s === 13) return phonkDegree(rootAt(bar) + 2);
+  return l === 3 && s === 14 ? n + 12 : null; // octave flip, slides down into the next bar
 }
 
-/** Plucked koto/shamisen riff; needs intensity > 0.3. */
-export function tokyoRiffAt(bar: number, step: number, intensity: number): number | null {
-  if (intensity <= 0.3 || tokyoStop(bar)) return null;
-  const d = (mod(bar, 4) < 2 ? RIFF_A : RIFF_B)[mod(step, STEPS_PER_BAR)];
-  return d === null ? null : tokyoDegree(d);
+/** Memphis cowbell lead; only the beats in the breakdown. */
+export function phonkCowbellAt(bar: number, step: number): number | null {
+  const s = mod(step, STEPS_PER_BAR);
+  const part = phonkPart(bar);
+  if (part === 'break' && s % 4 !== 0) return null;
+  const d = COWBELL[part][mod(bar, 4)][s];
+  return d === null ? null : phonkDegree(14 + d);
 }
 
-/** Dark pad: root, 2nd and 4th scale degree above it, once per bar. */
-export const tokyoPadAt = (bar: number): number[] =>
-  [0, 2, 4].map((i) => tokyoDegree(tokyoRoot(bar) + i));
+/** Dark pad triad an octave above the bass, intro and breakdown only. */
+export const phonkPadAt = (bar: number): number[] =>
+  phonkPart(bar).startsWith('drop') ? [] : [0, 2, 4].map((i) => phonkDegree(rootAt(bar) + 7 + i));
 
 const mtof = (m: number) => 440 * 2 ** ((m - 69) / 12);
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
@@ -158,14 +141,29 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   stabBus.connect(lp);
   leadBus.connect(lp);
 
+  // 808 chain: tanh saturation, then a tone filter to keep the fizz down; bypasses lp like the kick
+  const shaper = ctx.createWaveShaper();
+  const curve = new Float32Array(1024);
+  for (let i = 0; i < curve.length; i++)
+    curve[i] = Math.tanh(3 * ((i / (curve.length - 1)) * 2 - 1));
+  shaper.curve = curve;
+  shaper.oversample = '2x';
+  const tone = ctx.createBiquadFilter();
+  tone.type = 'lowpass';
+  tone.frequency.value = 1800;
+  const bassOut = ctx.createGain();
+  bassOut.gain.value = 0.45;
+  shaper.connect(tone).connect(bassOut).connect(bus);
+
   const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
   const nd = noise.getChannelData(0);
   for (let i = 0; i < nd.length; i++) nd[i] = hash(i, 99) * 2 - 1;
 
+  const stepSec = 60 / PHONK_BPM / 4;
   let intensity = 0;
-  let track: Track = 'tokyo';
-  let stepSec = 60 / TOKYO_BPM / 4;
+  let track: Track = 'phonk';
   let lastBass = 0;
+  let bassGate: GainNode | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let nextTime = 0;
   let stepIdx = 0;
@@ -180,8 +178,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   let fails = 0;
 
   function fallback(): void {
-    track = 'tokyo';
-    stepSec = 60 / TOKYO_BPM / 4;
+    track = 'phonk';
     stepIdx = 0;
     el?.pause();
   }
@@ -288,114 +285,73 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
     o.stop(t + 0.25);
   }
 
-  function scheduleStep(t: number, idx: number): void {
-    const bar = Math.floor(idx / STEPS_PER_BAR);
-    const step = idx % STEPS_PER_BAR;
-    const d = drumsAt(step);
-    if (d.kick) kick(t);
-    if (d.clap) noiseHit(t, 0.12, 0.5, 'bandpass', 1800);
-    if (d.hat) noiseHit(t, 0.04, step % 4 === 2 ? 0.28 : 0.16, 'highpass', 7000);
-    const b = bassAt(bar, step);
-    if (b !== null) {
-      const o = ctx.createOscillator();
-      const f = ctx.createBiquadFilter();
-      const g = ctx.createGain();
-      const dur = STEP_SEC * 1.8;
-      o.type = 'sawtooth';
-      o.frequency.value = mtof(b);
-      f.type = 'lowpass';
-      f.frequency.value = 600;
-      env(g, t, 0.45, dur);
-      o.connect(f).connect(g).connect(lp);
-      o.start(t);
-      o.stop(t + dur + 0.02);
-    }
-    const st = stabAt(bar, step, intensity);
-    if (st) {
-      const f = ctx.createBiquadFilter();
-      f.type = 'lowpass';
-      f.frequency.value = 3000;
-      f.connect(stabBus);
-      for (const n of st)
-        for (const dt of [-12, 0, 12]) osc('sawtooth', mtof(n), t, STEP_SEC * 1.5, f, 0.05, dt);
-    }
-    const ld = leadAt(bar, step, intensity);
-    if (ld !== null) osc('square', mtof(ld), t, STEP_SEC * 1.2, leadBus, 0.07);
+  /** Hard clap: three noise bursts plus a short tonal snare body. */
+  function clap(t: number): void {
+    for (const dt of [0, 0.012, 0.024]) noiseHit(t + dt, 0.15, 0.45, 'bandpass', 1500);
+    osc('triangle', 185, t, 0.09, lp, 0.3);
   }
 
-  function taiko(t: number): void {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(140, t);
-    o.frequency.exponentialRampToValueAtTime(60, t + 0.25);
-    env(g, t, 0.9, 0.6);
-    o.connect(g).connect(bus);
-    o.start(t);
-    o.stop(t + 0.65);
-    noiseHit(t, 0.08, 0.4, 'lowpass', 400);
-  }
-
-  /** Synth "hey": bright square fifth plus a falling bandpassed noise burst. No voice. */
-  function hey(t: number): void {
-    for (const n of [62, 69]) osc('square', mtof(n), t, 0.14, lp, 0.06);
-    const s = ctx.createBufferSource();
+  /** Synth cowbell: two square partials (ratio ~800/540) through a bandpass, fast decay. */
+  function cowbell(n: number, t: number, dest: AudioNode, vol: number): void {
     const f = ctx.createBiquadFilter();
     const g = ctx.createGain();
-    s.buffer = noise;
+    const hz = mtof(n);
     f.type = 'bandpass';
-    f.Q.value = 4;
-    f.frequency.setValueAtTime(1400, t);
-    f.frequency.exponentialRampToValueAtTime(700, t + 0.15);
-    env(g, t, 0.6, 0.16);
-    s.connect(f).connect(g).connect(lp);
-    s.start(t);
-    s.stop(t + 0.2);
+    f.frequency.value = hz * 1.8;
+    f.Q.value = 1.2;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.002);
+    g.gain.exponentialRampToValueAtTime(vol * 0.25, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    f.connect(g).connect(dest);
+    for (const k of [1, 1.48]) {
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = hz * k;
+      o.connect(f);
+      o.start(t);
+      o.stop(t + 0.37);
+    }
   }
 
-  /** Pluck: saw with a falling filter and a slight downward pitch bend at the attack. */
-  function pluck(n: number, t: number, dest: AudioNode, vol: number): void {
+  /** Monophonic distorted 808: glides from the last note, gates the previous one. */
+  function bass808(n: number, t: number, len: number): void {
+    if (bassGate) {
+      bassGate.gain.setValueAtTime(1, t);
+      bassGate.gain.linearRampToValueAtTime(0, t + 0.015);
+    }
     const o = ctx.createOscillator();
-    const f = ctx.createBiquadFilter();
     const g = ctx.createGain();
-    o.type = 'sawtooth';
-    o.frequency.value = mtof(n);
-    o.detune.setValueAtTime(40, t);
-    o.detune.linearRampToValueAtTime(0, t + 0.05);
-    f.type = 'lowpass';
-    f.Q.value = 6;
-    f.frequency.setValueAtTime(4000, t);
-    f.frequency.exponentialRampToValueAtTime(700, t + 0.25);
-    env(g, t, vol, 0.45);
-    o.connect(f).connect(g).connect(dest);
+    const gate = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(mtof(lastBass || n), t);
+    o.frequency.exponentialRampToValueAtTime(mtof(n), t + 0.11);
+    env(g, t, 0.9, len + 0.1);
+    o.connect(g).connect(gate).connect(shaper);
     o.start(t);
-    o.stop(t + 0.5);
+    o.stop(t + len + 0.12);
+    bassGate = gate;
+    lastBass = n;
   }
 
-  function tokyoStep(t: number, idx: number): void {
+  function phonkStep(t: number, idx: number): void {
     const bar = Math.floor(idx / STEPS_PER_BAR);
     const step = idx % STEPS_PER_BAR;
-    const d = tokyoDrumsAt(bar, step, intensity);
+    const d = phonkDrumsAt(bar, step, intensity);
     if (d.kick) kick(t);
-    if (d.taiko) taiko(t);
-    if (d.clap) for (const dt of [0, 0.012, 0.024]) noiseHit(t + dt, 0.15, 0.45, 'bandpass', 1500);
-    if (d.hat) noiseHit(t, 0.03, step % 4 === 2 ? 0.22 : 0.12, 'highpass', 8000);
-    if (d.hey) hey(t);
-    const b = tokyoBassAt(bar, step);
+    if (d.clap) clap(t);
+    if (d.snare) noiseHit(t, 0.08, 0.3, 'bandpass', 1800);
+    if (d.hat) noiseHit(t, 0.03, step % 4 === 2 ? 0.2 : 0.12, 'highpass', 8000);
+    if (d.hat === 2) noiseHit(t + stepSec / 2, 0.025, 0.1, 'highpass', 8000);
+    const bassAt = (i: number) => phonkBassAt(Math.floor(i / STEPS_PER_BAR), i);
+    const b = bassAt(idx);
     if (b !== null) {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      const dur = stepSec * 6;
-      o.type = 'sine';
-      o.frequency.setValueAtTime(mtof(lastBass || b), t);
-      o.frequency.exponentialRampToValueAtTime(mtof(b), t + 0.08); // 808 glide from the last note
-      env(g, t, 0.8, dur);
-      o.connect(g).connect(bus);
-      o.start(t);
-      o.stop(t + dur + 0.02);
-      lastBass = b;
+      let n = 1;
+      while (n < STEPS_PER_BAR && bassAt(idx + n) === null) n++;
+      bass808(b, t, n * stepSec);
     }
-    if (step === 0 && !tokyoStop(bar)) {
+    const pad = step === 0 ? phonkPadAt(bar) : [];
+    if (pad.length) {
       const g = ctx.createGain();
       const f = ctx.createBiquadFilter();
       const dur = stepSec * STEPS_PER_BAR;
@@ -405,7 +361,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
       g.gain.linearRampToValueAtTime(0.04, t + 0.3);
       g.gain.linearRampToValueAtTime(0, t + dur);
       f.connect(g).connect(lp);
-      for (const n of tokyoPadAt(bar))
+      for (const n of pad)
         for (const dt of [-8, 8]) {
           const o = ctx.createOscillator();
           o.type = 'sawtooth';
@@ -416,24 +372,26 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
           o.stop(t + dur + 0.02);
         }
     }
-    const r = tokyoRiffAt(bar, step, intensity);
-    if (r !== null) {
-      pluck(r, t, stabBus, 0.12);
-      pluck(r + 12, t, leadBus, 0.05); // octave double, audible only above 0.6
+    const c = phonkCowbellAt(bar, step);
+    if (c !== null) {
+      cowbell(c, t, lp, 0.1);
+      cowbell(c + 12, t, leadBus, 0.035); // octave double, audible only above 0.6
     }
+    const e = idx >= 3 ? phonkCowbellAt(Math.floor((idx - 3) / STEPS_PER_BAR), idx - 3) : null;
+    if (e !== null) cowbell(e, t, stabBus, 0.035); // dotted-8th echo, audible above 0.3
   }
 
   function tick(): void {
     if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05; // stalled timer: skip missed steps
     if (track === 'mine') return;
     while (nextTime < ctx.currentTime + 0.1) {
-      (track === 'tokyo' ? tokyoStep : scheduleStep)(nextTime, stepIdx);
+      phonkStep(nextTime, stepIdx);
       stepIdx++;
       nextTime += stepSec;
     }
   }
 
-  const beat = 60 / BPM;
+  const beat = 60 / PHONK_BPM;
   return {
     start(): void {
       running = true;
@@ -459,7 +417,6 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
         return;
       }
       el?.pause();
-      stepSec = 60 / (t === 'tokyo' ? TOKYO_BPM : BPM) / 4;
       stepIdx = 0;
       lastBass = 0;
     },

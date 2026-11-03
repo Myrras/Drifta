@@ -67,7 +67,7 @@ export function createAudio() {
   let mus: ReturnType<typeof createMusic> | null = null;
   let musicOn = false;
   let intensity = 0.15;
-  let track: Track = 'tokyo';
+  let track: Track = 'phonk';
   let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
   let tap: MediaStreamAudioDestinationNode | null = null;
 
