@@ -8,6 +8,7 @@ import { garage } from './maps/garage';
 import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
 import { tokyo } from './maps/tokyo';
+import { drivethru } from './maps/drivethru';
 import { BEST_SCORE_KEY, DT } from './config';
 import { clearLibrary, importFiles, libraryBytes, MAX_BYTES } from './musicLibrary';
 
@@ -67,7 +68,7 @@ const musicHost = {
   size: async () => `${Math.round((await libraryBytes()) / 2 ** 20)} / ${MAX_BYTES / 2 ** 20} MB`,
 };
 const game = createGame(
-  [garage, docks, tokyo, testpad],
+  [garage, docks, tokyo, drivethru, testpad],
   audio,
   bestFor,
   undefined,
