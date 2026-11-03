@@ -6,9 +6,9 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 
 ## Driving & cars
 
-- **TOP** Clutch-kick drift initiation (planned): rewards skill, core technique in Initial D Arcade Stage and CarX. M
+- **TOP** Clutch-kick drift initiation (done): rewards skill, core technique in Initial D Arcade Stage and CarX. M
 - Manual gears + shift timing (planned, after clutch-kick): engine-sound depth, CarX, Drift Hunters. L
-- **TOP** Car select with 3-4 handling presets (grip, power, angle): variety for little code, Drift Hunters, CarX. M
+- **TOP** Car select with 3-4 handling presets (grip, power, angle) (done): variety for little code, Drift Hunters, CarX. M
 - Tuning sliders (gear ratio, grip, angle) in garage: Drift Hunters, CarX. M
 - Drift assist toggle / difficulty (assist off scores more): Absolute Drift is unforgiving, assist widens audience. S
 - Tire wear/heat affecting grip: CarX, Forza. M
@@ -16,8 +16,8 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 
 ## Scoring & modes
 
-- **TOP** Per-map score targets with medals (bronze/silver/gold): clear goals and replay loop, Forza drift zones, Tony Hawk. S
-- **TOP** Clipping zones: marked areas with boosted drift score, Forza Horizon Drift Attack, Absolute Drift clip points. M
+- **TOP** Per-map score targets with medals (bronze/silver/gold) (done): clear goals and replay loop, Forza drift zones, Tony Hawk. S
+- **TOP** Clipping zones (done): marked areas with boosted drift score, Forza Horizon Drift Attack, Absolute Drift clip points. M
 - Variety bonus for linking different tricks: Tony Hawk. S
 - Risk meter: bigger payoff for long unbroken chains, Tony Hawk specials. M
 - Ghost replay of best run: Absolute Drift Zen Edition. M
@@ -45,17 +45,17 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 
 ## Audio & music
 
-- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original): genre feel, Initial D Eurobeat, NFS Underground. M
-- Turbo flutter, blow-off valve, backfire pops on lift: JDM sound cues. S
+- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original) (done, 2 tracks): genre feel, Initial D Eurobeat, NFS Underground. M
+- Turbo flutter, blow-off valve, backfire pops on lift (done): JDM sound cues. S
 - Tire squeal varying by slip and surface. S
 - Music layers fade in with combo multiplier: Tony Hawk-style intensity. M
 - Callouts for big combos ("SMOOTH!"): Initial D, Tony Hawk. S
 
 ## UI / feel & juice
 
-- **TOP** Camera shake + short hit-stop on wall hit, trauma-based and tuned: Vlambeer, Art of Screenshake. S
+- **TOP** Camera shake + short hit-stop on wall hit (shake done, hit-stop open), trauma-based and tuned: Vlambeer, Art of Screenshake. S
 - **TOP** Combo juice: score popups at the car, multiplier pulse, bank flourish, edge flash: Juice it or lose it, Tony Hawk. S
-- **TOP** Drift angle indicator (small arc by the car): readable feedback, Absolute Drift. S
+- **TOP** Drift angle indicator (small arc by the car) (done): readable feedback, Absolute Drift. S
 - Smoke/skid intensity scaling with angle; sparks on wall scrape. S
 - Speed lines / zoom punch on handbrake: arcade racers. S
 - Slow-mo replay of last combo: Tony Hawk, Forza photo mode. M
