@@ -2,6 +2,7 @@ import type { CarState, DriftInfo, PlayerModel } from './types';
 import { engineProfile, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
 import { createMusic, type Track } from './music';
+import { listTracks } from './musicLibrary';
 import type { Tune } from './settings';
 
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
@@ -221,6 +222,18 @@ export function createAudio() {
     setTrack(t: Track): void {
       track = t;
       mus?.setTrack(t);
+    },
+    /** Skip to the next MY MUSIC song (no-op for other tracks). */
+    skipTrack(): void {
+      mus?.skip();
+    },
+    /** Songs in the library as of the last refresh; 0 means show '(empty)'. */
+    myMusicCount(): number {
+      return mus?.myMusicCount() ?? 0;
+    },
+    /** Re-read the library after import/clear; resolves to the song count. */
+    async refreshMyMusic(): Promise<number> {
+      return mus ? mus.reload() : (await listTracks()).length;
     },
     setVolumes(v: typeof vols): void {
       vols = { ...v };
