@@ -155,9 +155,6 @@ export function createInput(
 ): { poll(): PolledInput } {
   let device: InputDevice = 'kb';
   let padStyle: PadStyle = 'xbox';
-  const toKb = () => (device = 'kb');
-  win.addEventListener('mousemove', toKb);
-  win.addEventListener('mousedown', toKb);
   const smooth = keyboardSmoother();
   let last = now();
   const held = new Set<string>();
