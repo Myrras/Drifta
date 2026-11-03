@@ -19,11 +19,11 @@ export type Msg =
   | { t: 'ping'; id: number; at: number }
   // echoes ping id + at
   | { t: 'pong'; id: number; at: number }
-  // host -> guest: chosen map name
-  | { t: 'map'; map: string }
+  // host -> guest: chosen map name and hazards toggle
+  | { t: 'map'; map: string; hazards: boolean }
   | { t: 'ready'; ready: boolean }
   // host -> guest: countdown begins in `delay` ms (host side); guest subtracts rtt/2
-  | { t: 'start'; map: string; delay: number }
+  | { t: 'start'; map: string; delay: number; hazards: boolean }
   // time: run time s; sent on the unreliable channel
   | { t: 'pose'; time: number; x: number; y: number; angle: number; floor: number }
   | { t: 'score'; banked: number; combo: number }
@@ -91,11 +91,15 @@ function check(o: Obj): Msg | null {
     case 'pong':
       return nums(o, ['id', 'at']) ? { t: o.t, id: o.id as number, at: o.at as number } : null;
     case 'map':
-      return str(o.map) ? { t: 'map', map: o.map } : null;
+      return str(o.map) && typeof o.hazards === 'boolean'
+        ? { t: 'map', map: o.map, hazards: o.hazards }
+        : null;
     case 'ready':
       return typeof o.ready === 'boolean' ? { t: 'ready', ready: o.ready } : null;
     case 'start':
-      return str(o.map) && num(o.delay) ? { t: 'start', map: o.map, delay: o.delay } : null;
+      return str(o.map) && num(o.delay) && typeof o.hazards === 'boolean'
+        ? { t: 'start', map: o.map, delay: o.delay, hazards: o.hazards }
+        : null;
     case 'pose':
       return nums(o, ['time', 'x', 'y', 'angle', 'floor'])
         ? {

@@ -126,8 +126,44 @@ describe('session', () => {
 
   it('ignores map from the guest side', () => {
     connect();
-    b.send({ t: 'map', map: 'Evil' });
+    b.send({ t: 'map', map: 'Evil', hazards: false });
     expect(h.map).toBeNull();
+    expect(h.hazards).toBe(true);
+  });
+
+  it('pickMap with hazards off reaches the guest', () => {
+    connect();
+    expect([h.hazards, g.hazards]).toEqual([true, true]);
+    h.pickMap('Tokyo', false);
+    expect([g.map, g.hazards, h.hazards]).toEqual(['Tokyo', false, false]);
+    h.pickMap('Harbor');
+    expect([g.map, g.hazards]).toEqual(['Harbor', true]);
+  });
+
+  it('setHazards clears ready flags and reaches the guest', () => {
+    connect();
+    h.setHazards(false);
+    expect(b.inbox.filter((m) => m.t === 'map')).toHaveLength(0);
+    h.pickMap('Tokyo');
+    h.setReady(true);
+    g.setReady(true);
+    const n = b.inbox.length;
+    h.setHazards(true);
+    expect(b.inbox).toHaveLength(n);
+    expect(h.rival.ready).toBe(true);
+    h.setHazards(false);
+    expect(b.inbox.at(-1)).toEqual({ t: 'map', map: 'Tokyo', hazards: false });
+    expect([h.hazards, g.hazards, g.map]).toEqual([false, false, 'Tokyo']);
+    expect([h.ready, h.rival.ready, g.ready, g.rival.ready]).toEqual([false, false, false, false]);
+  });
+
+  it('setHazards is host-only', () => {
+    connect();
+    h.pickMap('Tokyo');
+    const n = a.inbox.length;
+    g.setHazards(false);
+    expect(a.inbox).toHaveLength(n);
+    expect([g.hazards, h.hazards]).toEqual([true, true]);
   });
 
   it('canStart requires host, map, both ready, rival connected', () => {
@@ -150,18 +186,37 @@ describe('session', () => {
     t = 40;
     b.flush();
     expect(g.rtt).toBe(40);
-    const hs: [string, number][] = [];
-    const gs: [string, number][] = [];
-    h.onStart((m, ms) => hs.push([m, ms]));
-    g.onStart((m, ms) => gs.push([m, ms]));
+    const hs: [string, number, boolean][] = [];
+    const gs: [string, number, boolean][] = [];
+    h.onStart((m, ms, hz) => hs.push([m, ms, hz]));
+    g.onStart((m, ms, hz) => gs.push([m, ms, hz]));
     h.pickMap('Harbor');
     h.setReady(true);
     g.setReady(true);
     h.start();
-    expect(hs).toEqual([['Harbor', START_DELAY_MS]]);
-    expect(gs).toEqual([['Harbor', START_DELAY_MS - 20]]);
+    expect(hs).toEqual([['Harbor', START_DELAY_MS, true]]);
+    expect(gs).toEqual([['Harbor', START_DELAY_MS - 20, true]]);
     expect(h.phase).toBe('race');
     expect(g.phase).toBe('race');
+  });
+
+  it('onStart passes hazards off on both sides, guest from the start message', () => {
+    connect();
+    const hs: boolean[] = [];
+    const gs: boolean[] = [];
+    h.onStart((_, __, hz) => hs.push(hz));
+    g.onStart((_, __, hz) => gs.push(hz));
+    a.hold = true;
+    h.pickMap('Tokyo', false);
+    a.queue.length = 0;
+    a.flush();
+    h.setReady(true);
+    g.setReady(true);
+    expect(g.hazards).toBe(true);
+    h.start();
+    expect(b.inbox.at(-1)).toMatchObject({ t: 'start', hazards: false });
+    expect([hs, gs]).toEqual([[false], [false]]);
+    expect(g.hazards).toBe(false);
   });
 
   it('pings once per second and smooths rtt', () => {
@@ -258,6 +313,16 @@ describe('session', () => {
     expect(g.rival.connected).toBe(false);
     expect(g.rival.total).toBe(5000);
     expect(g.rivalPose(1)).toBeNull();
+  });
+
+  it('backToLobby keeps map and hazards', () => {
+    connect();
+    h.pickMap('Tokyo', false);
+    h.setReady(true);
+    g.setReady(true);
+    h.start();
+    h.backToLobby();
+    for (const s of [h, g]) expect([s.map, s.hazards]).toEqual(['Tokyo', false]);
   });
 
   it('backToLobby resets both sides and allows a rematch', () => {
