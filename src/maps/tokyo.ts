@@ -859,7 +859,7 @@ const rand = rng(2024);
 const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
 const PAINT_W = 'rgba(215,215,205,0.5)';
 const YELLOW = 'rgba(225,170,40,0.6)';
-const ZEBRA_W = 'rgba(225,225,215,0.55)';
+const ZEBRA_W = 'rgba(236,236,228,0.78)';
 const WALK = 4.5;
 const CITY = ring(21); // inside the barrier tops
 const inCity = (p: Vec) => inPoly(p, CITY);
@@ -985,21 +985,39 @@ for (let s = 15; s < loopPath.len; s += 25 + rand() * 30) {
   if (rand() < 0.6) add({ kind: 'manhole', ...p });
   else add({ kind: 'stain', ...p, r: 0.6 + rand() * 0.6 });
 }
-// the scramble: zebras on every arm, both diagonals, stop lines for the loop
+// the scramble, like Shibuya: a zebra on every arm and one long diagonal corner to corner, worn
+// by turning tires, stop lines and arrows on the loop's two approaches, yellow curb lines round
+// the corners
 {
   const { x, y } = SCRAMBLE;
-  const e = HALF - 0.3;
+  const [d, e, bar] = [HALF - 1.8, HALF + 0.5, [0.7, 0.7]]; // the diagonal's ends in the box
+  paint([v(x - d, y - d), v(x + d, y + d)], 5, ZEBRA_W, bar);
   for (const [a, b] of [
     [v(x - e, y - ZEBRA), v(x + e, y - ZEBRA)],
     [v(x - e, y + ZEBRA), v(x + e, y + ZEBRA)],
     [v(x - ZEBRA, y - e), v(x - ZEBRA, y + e)],
     [v(x + ZEBRA, y - e), v(x + ZEBRA, y + e)],
-    [v(x - e + 1.2, y - e + 1.2), v(x + e - 1.2, y + e - 1.2)],
-    [v(x + e - 1.2, y - e + 1.2), v(x - e + 1.2, y + e - 1.2)],
   ])
-    paint([a, b], 4, ZEBRA_W, [0.45, 0.45]);
-  paint([v(x + ZEBRA + 2.6, y + 0.3), v(x + ZEBRA + 2.6, y + e)], 0.45, ZEBRA_W);
-  paint([v(x + 0.3, y - ZEBRA - 2.6), v(x + e, y - ZEBRA - 2.6)], 0.45, ZEBRA_W);
+    paint([a, b], 5, ZEBRA_W, bar);
+  // the right turn from the east arm to the north one, round (x + 6, y - 6)
+  for (const r of [8, 10]) {
+    const arc = Array.from({ length: 13 }, (_, i) => {
+      const a = PI / 2 + (i / 12) * (PI / 2) + Math.sin(i + r) * 0.03;
+      return v(x + 6 + r * Math.cos(a), y - 6 + r * Math.sin(a));
+    });
+    add({ kind: 'skid', points: [v(x + 15, y - 6 + r), ...arc, v(x + 6 - r, y - 15)] });
+  }
+  const stop = ZEBRA + 3.2;
+  paint([v(x + stop, y + 0.3), v(x + stop, y + HALF - 0.3)], 0.5, ZEBRA_W);
+  paint([v(x + 0.3, y - stop), v(x + HALF - 0.3, y - stop)], 0.5, ZEBRA_W);
+  add({ kind: 'arrow', x: x + stop + 6, y: y + 4, angle: PI });
+  add({ kind: 'arrow', x: x + 4, y: y - stop - 6, angle: PI / 2 });
+  for (const b of blocks) {
+    // repeated points (rounded corners) would send the offset to infinity
+    const ring = [...b.q.pts, b.q.pts[0]].filter((p, i, a) => !i || dist(p, a[i - 1]) > 0.01);
+    for (const run of cut(offset(ring, -0.5, true), (p) => dist(p, SCRAMBLE) > 24))
+      paint(run, 0.25, YELLOW);
+  }
 }
 
 // pockets beyond the deck: the city goes on
@@ -1145,24 +1163,49 @@ for (const b of blocks.filter((b) => b.kind === 'built')) {
   }
 }
 
-// the scramble: screens on the corner buildings, crowds waiting at every corner, white light
+// the scramble: bright shop fronts round the plazas' back sides, video screens on the corner
+// buildings facing the crossing, crowds waiting at every corner, white light
 {
   const { x, y } = SCRAMBLE;
-  add({ kind: 'screen', x: x - 30, y: y - 28, w: 15, h: 6, angle: -PI / 4, seed: 1 });
-  add({ kind: 'screen', x: x + 30, y: y - 28, w: 15, h: 6, angle: PI / 4, seed: 2 });
-  add({ kind: 'screen', x: x + 30, y: y + 28, w: 13, h: 5.5, angle: -PI / 4, seed: 3 });
-  add({ kind: 'screen', x: x - 22, y: y - 46, w: 11, h: 4.5, angle: 0, seed: 4 });
-  add({
-    kind: 'sign',
-    x: x - 30,
-    y: y + 28,
-    w: 13,
-    h: 3.6,
-    angle: PI / 4,
-    color: '#ff2d95',
-    text: 'HIKARI',
-    seed: 0,
+  const LIT = ['#ffe8c4', '#ffd9a0', '#e6f0ff', '#ffb347', '#fff2d8', '#5fe6ff'];
+  PLAZA.forEach((p, k) => {
+    const [i, j] = [Math.sign(p.x + p.w / 2 - x), Math.sign(p.y + p.h / 2 - y)];
+    // back sides: from near the corner screen toward the arms, lit toward the crossing
+    const sides: [Vec, Vec, number][] = [
+      [v(x + i * 23, y + j * 24), v(x + i * 12, y + j * 24), Math.atan2(0, j)],
+      [v(x + i * 26, y + j * 21), v(x + i * 26, y + j * 12), Math.atan2(-i, 0)],
+    ];
+    for (const [a, b, h] of sides)
+      for (const u of [0, 0.5]) {
+        const [s, t] = [u, u + 0.5].map((w) => v(a.x + (b.x - a.x) * w, a.y + (b.y - a.y) * w));
+        const fwd = (t.x - s.x) * Math.cos(h) + (t.y - s.y) * Math.sin(h) > 0;
+        add({
+          kind: 'front',
+          ...(fwd ? s : t),
+          angle: h,
+          len: dist(s, t) - 0.3,
+          color: LIT[(k * 4 + (h > 0 ? 2 : 0) + u * 2) % LIT.length],
+          seed: k * 4 + u * 2,
+        });
+      }
+    const [sx, sy, a] = [x + i * 27.5, y + j * 25.5, i * j > 0 ? -PI / 4 : PI / 4];
+    if (k === 1)
+      add({
+        kind: 'sign',
+        x: sx,
+        y: sy,
+        w: 12,
+        h: 3.4,
+        angle: a,
+        color: '#ff2d95',
+        text: 'HIKARI',
+        seed: 0,
+      });
+    else add({ kind: 'screen', x: sx, y: sy, w: k ? 12 : 15, h: k ? 4 : 5, angle: a, seed: k + 1 });
+    // white light off the screens and the corner, warm off the shops
+    add({ kind: 'pool', x: x + i * 13, y: y + j * 13, r: 8, color: '#fff1d6' });
   });
+  add({ kind: 'screen', x: x - 22, y: y - 46, w: 11, h: 4.5, angle: 0, seed: 4 });
   add({ kind: 'pool', x, y, r: 22, color: '#d8e4ff' });
   for (const [i, j] of [
     [-1, -1],
@@ -1187,22 +1230,36 @@ for (const b of blocks.filter((b) => b.kind === 'built')) {
     }
   }
 }
-// plazas: lit paving, people milling about, vending machines against the buildings
-for (const p of PLAZA) {
+// plazas: warm lit paving, people milling about, street trees, vending machines against the
+// buildings; the south-west one a green with trees, the north-west one the police box
+PLAZA.forEach((p, k) => {
   const c = v(p.x + p.w / 2, p.y + p.h / 2);
-  add({ kind: 'pool', ...c, r: 12, color: '#7c7f8c' });
+  const [i, j] = [Math.sign(c.x - SCRAMBLE.x), Math.sign(c.y - SCRAMBLE.y)];
+  add({ kind: 'pool', ...c, r: 13, color: '#ffc98a' });
+  if (k === 1) {
+    paint([v(c.x - 6.5, c.y + 1), v(c.x + 5.5, c.y + 1)], 8.6, '#14261a', undefined, true);
+    paint([v(c.x - 6.2, c.y + 1), v(c.x + 5.2, c.y + 1)], 8, '#1e3a24', undefined, true);
+    for (const [dx, dy, r] of [
+      [-3.6, -1, 2.2],
+      [0.5, 2.5, 2],
+      [3.5, -1.5, 1.7],
+      [-3.8, 3.4, 1.8],
+    ])
+      add({ kind: 'tree', x: c.x + dx, y: c.y + dy, r, seed: dx * 7 + dy });
+  } else {
+    add({ kind: 'tree', x: SCRAMBLE.x + i * 13.5, y: SCRAMBLE.y + j * 22, r: 1.7, seed: k });
+    if (k !== 0)
+      add({ kind: 'tree', x: SCRAMBLE.x + i * 22, y: SCRAMBLE.y + j * 13.5, r: 1.7, seed: k + 9 });
+    else add({ kind: 'koban', x: SCRAMBLE.x - 21.5, y: SCRAMBLE.y - 14.5, angle: 0 });
+  }
   for (const [dx, dy] of [
     [-3, -2],
     [3, 2],
-  ])
-    add({
-      kind: 'crowd',
-      x: c.x + dx,
-      y: c.y + dy,
-      angle: rand() * PI * 2,
-      n: 5,
-      seed: p.x + p.y + dx,
-    });
+  ]) {
+    const angle = rand() * PI * 2;
+    if (k === 1 || (k === 0 && dx < 0)) continue; // the green, the police box
+    add({ kind: 'crowd', x: c.x + dx, y: c.y + dy, angle, n: 5, seed: p.x + p.y + dx });
+  }
   const west = p.x < SCRAMBLE.x;
   add({
     kind: 'vending',
@@ -1212,7 +1269,7 @@ for (const p of PLAZA) {
     n: 3,
     seed: p.x,
   });
-}
+});
 // taxi rank
 paint([v(186.8, 237.7), v(186.8, 234.6), v(158, 234.6), v(158, 237.7)], 0.18, YELLOW);
 add({
