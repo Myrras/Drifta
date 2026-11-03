@@ -7,6 +7,7 @@ import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
 import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
+import { settingsLayout } from './ui/menu';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -636,6 +637,7 @@ describe('main menu, garage, settings', () => {
     const { game, a, tap, mem } = rig();
     tap({ up: true });
     tap({ confirm: true });
+    tap({ down: true });
     tap({ left: true });
     expect(a.setVolumes).toHaveBeenLastCalledWith({
       master: 0.7,
@@ -652,9 +654,10 @@ describe('main menu, garage, settings', () => {
       engine: 0.8,
     });
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).music).toBe(0.7);
-    for (let i = 0; i < 3; i++) tap({ down: true });
+    tap({ tabNext: true } as Partial<InputState>);
+    tap({ up: true });
     tap({ right: true });
-    expect(game.view().hud.menu!.rows[4].value).toBe('OFF');
+    expect(game.view().hud.menu!.rows[0].value).toBe('OFF');
     game.debug.shake = 1;
     expect(game.view().render.shake).toBe(0);
     expect(game.view().render.impact).toBe(0);
@@ -668,7 +671,7 @@ describe('main menu, garage, settings', () => {
     for (let i = 0; i < 5; i++) tap({ down: true });
     tap({ right: true });
     expect(a.setTrack).toHaveBeenLastCalledWith('eurobeat');
-    expect(game.view().hud.menu!.rows[5].value).toBe('EUROBEAT');
+    expect(game.view().hud.menu!.rows[4].value).toBe('EUROBEAT');
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).track).toBe('eurobeat');
   });
 
@@ -676,23 +679,87 @@ describe('main menu, garage, settings', () => {
     const { game, tap, mem } = rig();
     tap({ up: true });
     tap({ confirm: true });
-    for (let i = 0; i < 6; i++) tap({ down: true });
-    expect(game.view().hud.menu!.rows[6]).toEqual({ label: 'CLIP QUALITY', value: 'MEDIUM' });
+    tap({ right: true }); // VIDEO tab
+    for (let i = 0; i < 2; i++) tap({ down: true });
+    expect(game.view().hud.menu!.rows[1]).toEqual({ label: 'CLIP QUALITY', value: 'MEDIUM' });
     tap({ right: true });
-    expect(game.view().hud.menu!.rows[6].value).toBe('HIGH');
+    expect(game.view().hud.menu!.rows[1].value).toBe('HIGH');
     tap({ right: true });
-    expect(game.view().hud.menu!.rows[6].value).toBe('OFF');
+    expect(game.view().hud.menu!.rows[1].value).toBe('OFF');
     tap({ right: true }); // wraps
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).clips).toBe('low');
     tap({ left: true });
-    expect(game.view().hud.menu!.rows[6].value).toBe('OFF');
+    expect(game.view().hud.menu!.rows[1].value).toBe('OFF');
+  });
+
+  it('tabs: strip left/right, Q/E from anywhere, BACK stays last', () => {
+    const { game, tap, row } = rig();
+    const menu = () => game.view().hud.menu!;
+    const Q = { tabPrev: true } as Partial<InputState>;
+    const E = { tabNext: true } as Partial<InputState>;
+    tap({ up: true });
+    tap({ confirm: true });
+    expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
+    expect(menu().rows).toHaveLength(6);
+    tap({ right: true });
+    expect(menu().tabs!.active).toBe(1);
+    expect(menu().rows.map((r) => r.label)).toEqual([
+      'CAMERA SHAKE',
+      'CLIP QUALITY',
+      'MENU THEME',
+      'BACK',
+    ]);
+    tap({ down: true });
+    tap({ left: true }); // on a row: no tab change
+    expect(menu().tabs!.active).toBe(1);
+    tap(E);
+    expect(menu().tabs!.active).toBe(2);
+    expect(row()).toBe(1);
+    tap({ up: true });
+    tap({ up: true }); // wraps to BACK
+    expect(row()).toBe(2);
+    tap(Q);
+    expect(menu().tabs!.active).toBe(1);
+    expect(menu().rows[row() - 1].label).toBe('BACK');
+  });
+
+  it('menu theme cycles, persists and reaches the view', () => {
+    const { game, tap, mem } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    tap({ right: true });
+    tap({ down: true });
+    tap({ down: true });
+    tap({ down: true });
+    expect(game.view().hud.menu!.rows[2]).toEqual({ label: 'MENU THEME', value: 'ARCADE' });
+    tap({ right: true });
+    expect(game.view().hud.menu!.rows[2].value).toBe('VHS');
+    expect(game.view().hud.ui).toEqual({ theme: 'vhs', device: 'kb', padStyle: 'xbox' });
+    expect(game.view().hud.menu!.ui.theme).toBe('vhs');
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).menuTheme).toBe('vhs');
+  });
+
+  it('settings layout fits a tall portrait window', () => {
+    for (const [w, h] of [
+      [400, 1200],
+      [1920, 1080],
+      [300, 300],
+    ]) {
+      const u = Math.min(w, h) / 100;
+      const { top, step } = settingsLayout(h, u, 6);
+      expect(top).toBeGreaterThanOrEqual(h * 0.14);
+      expect(top + 5 * step + 4 * u).toBeLessThanOrEqual(h - 5 * u);
+      expect(step).toBeLessThanOrEqual(7.8 * u + 1e-9);
+    }
   });
 
   it('reset best scores needs a second enter', () => {
     const { game, tap, stores } = rig();
     tap({ up: true });
     tap({ confirm: true });
-    for (let i = 0; i < 7; i++) tap({ down: true });
+    tap({ right: true });
+    tap({ right: true }); // GAME tab
+    tap({ down: true });
     tap({ confirm: true });
     expect(stores[0].get()).toBe(50);
     tap({ confirm: true });
