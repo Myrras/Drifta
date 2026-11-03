@@ -413,6 +413,8 @@ describe('finish awards and car pick', () => {
     step({ confirm: true });
     const cars = r().chooser!.cars.map((c) => c.model);
     expect(cars).toEqual(Object.keys(PLAYER_MODELS)); // nothing unlocked yet
+    for (const c of r().chooser!.cars)
+      for (const v of Object.values(c.stats)) expect(v >= 0 && v <= 1).toBe(true);
     step({ right: true });
     expect(r().chooser!.row).toBe(1);
     step({ confirm: true });

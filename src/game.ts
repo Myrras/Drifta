@@ -191,6 +191,11 @@ export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
   // tuning values
   return tune === 'performance' ? { ...st, power: st.power * 1.05, grip: st.grip * 1.03 } : st;
 };
+/** a stat scaled 0..1 across all models, as the garage bars show it */
+const normStat = (car: PlayerModel, tune: Tune, k: keyof CarStats) => {
+  const [lo, hi] = statRange(k);
+  return hi > lo ? Math.min(1, (tunedStats(car, tune)[k] - lo) / (hi - lo)) : 0.5;
+};
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
@@ -1157,11 +1162,7 @@ export function createGame(
       const car = first ? STARTERS[starter] : gCar;
       const ids = first ? STARTERS : MODEL_IDS;
       const m = PLAYER_MODELS[car];
-      const n = (k: keyof CarStats) => {
-        const [lo, hi] = statRange(k);
-        const v = tunedStats(car, first ? 'street' : gTune)[k];
-        return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
-      };
+      const n = (k: keyof CarStats) => normStat(car, first ? 'street' : gTune, k);
       return {
         ...base,
         screen: first ? 'starter' : 'garage',
@@ -1538,6 +1539,11 @@ export function createGame(
                         name: PLAYER_MODELS[m].name,
                         color: (look as { color?: string }).color ?? PLAYER_MODELS[m].colors[0],
                         look,
+                        stats: {
+                          power: normStat(m, 'street', 'power'),
+                          grip: normStat(m, 'street', 'grip'),
+                          weight: normStat(m, 'street', 'mass'),
+                        },
                       };
                     }),
                     row: s.chooser.row,
