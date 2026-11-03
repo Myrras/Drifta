@@ -245,6 +245,8 @@ export function createGame(
   audio.setTrack(cfg.track);
   audio.music(true); // menu music; audio.resume() on the first gesture actually starts it
   let row = 0;
+  /** lobby rows the cursor was last placed in */
+  let lobbyAt: LobbyId[] = [];
   let confirmReset = false;
   let confirmClear = false;
   let note = ''; // transient result in the IMPORT row
@@ -763,6 +765,7 @@ export function createGame(
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
     row = at;
+    lobbyAt = [];
     confirmReset = confirmClear = offerPick = false;
     tab = 0;
     if (phase === 'settings') afterChange();
@@ -823,6 +826,16 @@ export function createGame(
           ...(m.role === 'host' ? (['start'] as const) : []),
           'leave',
         ];
+  /** the cursor follows its row id as rows come and go; a vanished row hands over to the next */
+  const lobbyRow = (m: Session, ids = lobbyIds(m)) => {
+    if (lobbyAt.length > 1) {
+      const i = ids.indexOf(lobbyAt[row]);
+      if (i >= 0) return i;
+      const next = lobbyAt.slice(row + 1).find((id) => ids.includes(id));
+      if (next) return ids.indexOf(next);
+    }
+    return Math.min(row, ids.length - 1);
+  };
 
   function mpLobbyInput(m: Session, input: InputState, dir: number, dv: number, dt: number): void {
     if (mpWait >= 0) {
@@ -837,7 +850,8 @@ export function createGame(
     if (m.role === 'host' && m.phase === 'lobby' && m.map === null)
       m.pickMap(maps[0].name, hazardsOn(cfg, maps[0].name));
     const ids = lobbyIds(m);
-    row = Math.min(row, ids.length - 1);
+    row = lobbyRow(m, ids);
+    lobbyAt = ids;
     if (dv) {
       row = cycle(row, dv, ids.length);
       audio.ui('move');
@@ -1079,6 +1093,7 @@ export function createGame(
       return {
         ...base,
         screen: 'mplobby',
+        row: lobbyRow(m),
         rows,
         selected: i < 0 ? sel : i,
         note: mpWait >= 0 ? 'GET READY' : info ? PLAYER_MODELS[info.car].name : 'CONNECTING...',

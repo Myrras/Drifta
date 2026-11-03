@@ -2409,6 +2409,29 @@ describe('multiplayer entry and lobby', () => {
         expect(m.floors.some((f) => f.solids.some((s) => s.kind === 'pillar'))).toBe(false);
       }
     });
+
+    it('cursors stay on their row when the PILLARS row comes and goes', () => {
+      const { host, guest } = pair();
+      host.enter('host');
+      guest.enter('join');
+      host.tap({});
+      guest.to('READY');
+      const at = (p: typeof host) => p.menu().rows[p.menu().row].label;
+      for (const dir of [{ right: true }, { left: true }]) {
+        host.tap(dir);
+        expect(guest.menu().rows.some((r) => r.label === 'PILLARS')).toBe('left' in dir);
+        expect(at(guest)).toBe('READY');
+        guest.tap({});
+        expect(at(guest)).toBe('READY');
+        expect(at(host)).toBe('MAP');
+      }
+      guest.tap({ up: true });
+      expect(at(guest)).toBe('PILLARS');
+      host.tap({ right: true }); // the guest's row vanishes: on to the next one
+      expect(at(guest)).toBe('READY');
+      guest.tap({});
+      expect(at(guest)).toBe('READY');
+    });
   });
 });
 
