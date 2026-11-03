@@ -1,4 +1,5 @@
 import { PLAYER_MODELS } from './models';
+import { TRACKS, type Track } from './music';
 import type { PlayerModel } from './types';
 
 export interface Settings {
@@ -7,6 +8,7 @@ export interface Settings {
   sfx: number;
   engine: number;
   shake: boolean;
+  track: Track;
   car: PlayerModel;
   color: string;
 }
@@ -20,6 +22,7 @@ export const defaultSettings = (): Settings => ({
   sfx: 0.8,
   engine: 0.8,
   shake: true,
+  track: 'tokyo',
   car: 'mx5',
   color: '#d32030',
 });
@@ -45,6 +48,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     sfx: vol(raw.sfx, d.sfx),
     engine: vol(raw.engine, d.engine),
     shake: typeof raw.shake === 'boolean' ? raw.shake : d.shake,
+    track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
     car: ok ? car : d.car,
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
   };
