@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createGame, type AudioLike, type BestStore, type ClipRecorder } from './game';
+import {
+  createGame,
+  type AudioLike,
+  type BestStore,
+  type ClipRecorder,
+  type MusicHost,
+} from './game';
 import { garage, garageRoute } from './maps/garage';
 import { CAR_LENGTH, collide } from './collision';
 import { testpad } from './maps/testpad';
@@ -516,7 +522,7 @@ describe('menu', () => {
 });
 
 describe('main menu, garage, settings', () => {
-  const rig = (saved?: object) => {
+  const rig = (saved?: object, host?: MusicHost) => {
     const mem = new Map<string, string>(saved ? [[SETTINGS_KEY, JSON.stringify(saved)]] : []);
     const storage = {
       getItem: (k: string) => mem.get(k) ?? null,
@@ -528,6 +534,9 @@ describe('main menu, garage, settings', () => {
       setVolumes: vi.fn(),
       setIntensity: vi.fn(),
       setTrack: vi.fn(),
+      skipTrack: vi.fn(),
+      refreshMyMusic: vi.fn(async () => 0),
+      myMusicCount: () => 0,
     };
     const stores = [memBest(50), memBest(70)];
     const game = createGame(
@@ -535,8 +544,10 @@ describe('main menu, garage, settings', () => {
       a,
       (n) => stores[n === garage.name ? 0 : 1],
       storage,
+      undefined,
+      host,
     );
-    const tap = (input: Partial<InputState>) => {
+    const tap = (input: Partial<InputState> & { skip?: boolean }) => {
       game.update({ ...IDLE, ...input }, DT);
       game.update(IDLE, DT);
     };
@@ -708,7 +719,7 @@ describe('main menu, garage, settings', () => {
     tap({ up: true });
     tap({ confirm: true });
     expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
-    expect(menu().rows).toHaveLength(6);
+    expect(menu().rows).toHaveLength(8);
     tap({ right: true });
     expect(menu().tabs!.active).toBe(1);
     expect(menu().rows.map((r) => r.label)).toEqual([
@@ -759,6 +770,59 @@ describe('main menu, garage, settings', () => {
       expect(top + 5 * step + 4 * u).toBeLessThanOrEqual(h - 5 * u);
       expect(step).toBeLessThanOrEqual(7.8 * u + 1e-9);
     }
+  });
+
+  it('MUSIC row cycles three tracks and labels an empty library', () => {
+    const { game, a, tap } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 5; i++) tap({ down: true });
+    const value = () => game.view().hud.menu!.rows[4].value;
+    expect(value()).toBe('TOKYO');
+    tap({ right: true });
+    expect(value()).toBe('EUROBEAT');
+    tap({ right: true });
+    expect(value()).toBe('MY MUSIC (EMPTY)');
+    a.myMusicCount = () => 7;
+    expect(value()).toBe('MY MUSIC (7)');
+    tap({ right: true });
+    expect(value()).toBe('TOKYO');
+    expect(a.setTrack).toHaveBeenLastCalledWith('tokyo');
+  });
+
+  it('skip works in a run but not in settings', () => {
+    const { game, a, tap } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    tap({ skip: true });
+    expect(a.skipTrack).not.toHaveBeenCalled();
+    tap({ pause: true });
+    tap({ up: true });
+    tap({ up: true });
+    tap({ confirm: true }); // PLAY -> countdown
+    tap({ skip: true });
+    expect(a.skipTrack).toHaveBeenCalledTimes(1);
+    expect(game.view().hud.phase).not.toBe('settings');
+  });
+
+  it('clear my music needs a second enter', async () => {
+    const clear = vi.fn(async () => {});
+    const { game, a, tap } = rig(undefined, {
+      pick: vi.fn(),
+      clear,
+      size: async () => '1 / 500 MB',
+    });
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 7; i++) tap({ down: true });
+    tap({ confirm: true });
+    expect(clear).not.toHaveBeenCalled();
+    expect(game.view().hud.menu!.rows[6].value).toBe('ENTER TO CONFIRM');
+    tap({ confirm: true });
+    expect(clear).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(a.refreshMyMusic).toHaveBeenCalled();
   });
 
   it('reset best scores needs a second enter', () => {
