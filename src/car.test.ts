@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { DT } from './config';
 import { PLAYER_MODELS, type CarStats } from './models';
-import type { CarState, DriftInfo, InputState } from './types';
+import { collide } from './collision';
+import type { CarState, DriftInfo, InputState, Solid } from './types';
 
 const input = (o: Partial<InputState> = {}): InputState => ({
   steer: 0,
@@ -262,4 +263,71 @@ describe('model stats', () => {
       expect(maxAng).toBeLessThan(1.5);
     });
   }
+});
+
+const box = (cx: number, cy: number, w: number, h: number, angle: number): Solid => ({
+  x: cx - w / 2,
+  y: cy - h / 2,
+  w,
+  h,
+  angle,
+  kind: 'wall',
+});
+function runSolids(car: CarState, solids: Solid[], inp: InputState, secs: number): number {
+  let maxDepth = 0;
+  for (let i = 0; i < secs * 60; i++) {
+    stepCar(car, inp, DT);
+    const hit = collide(car, solids);
+    if (hit) bounce(car, hit);
+    maxDepth = Math.max(maxDepth, collide(car, solids)?.depth ?? 0);
+  }
+  return maxDepth;
+}
+const dist = (c: CarState, s: Solid) =>
+  Math.hypot(c.pos.x - (s.x + s.w / 2), c.pos.y - (s.y + s.h / 2));
+
+describe('stuck recovery on rotated solids', () => {
+  for (const ang of [0.3, 0.8])
+    for (const approach of [0, Math.PI / 6, Math.PI / 3])
+      for (const v of [10, 25]) {
+        it(`rot ${ang} approach ${approach.toFixed(2)} v ${v}`, () => {
+          const s = box(0, 0, 6, 2.5, ang);
+          const heading = ang + Math.PI / 2 + approach; // toward the solid's long face
+          const car = createCar({
+            pos: { x: -Math.cos(heading) * 15, y: -Math.sin(heading) * 15 },
+            angle: heading,
+          });
+          car.vel = { x: Math.cos(heading) * v, y: Math.sin(heading) * v };
+          const d = runSolids(car, [s], input({ throttle: 1 }), 3);
+          expect(d).toBeLessThan(0.2);
+          expect(collide(car, [s])?.depth ?? 0).toBeLessThan(0.2);
+          const d0 = dist(car, s);
+          runSolids(car, [s], input({ brake: 1 }), 2);
+          expect(dist(car, s) - d0).toBeGreaterThan(2);
+          runSolids(car, [s], input({ throttle: 1, steer: 1 }), 3);
+          expect(collide(car, [s])?.depth ?? 0).toBeLessThan(0.2);
+        });
+      }
+  it('wedged in a corner reverses out', () => {
+    const a = box(0, -3, 8, 2, 0.4);
+    const b = box(4, 2, 8, 2, 0.4 + Math.PI / 2);
+    for (const hd of [0.4 + 1, 0.4 + 1.4, 2.2]) {
+      const car = createCar({ pos: { x: 0, y: 0 }, angle: hd });
+      runSolids(car, [a, b], input({ throttle: 1 }), 3);
+      const p = { ...car.pos };
+      runSolids(car, [a, b], input({ brake: 1 }), 2);
+      expect(Math.hypot(car.pos.x - p.x, car.pos.y - p.y)).toBeGreaterThan(1);
+    }
+  });
+});
+
+describe('wall scrape', () => {
+  it('shallow scrape with throttle keeps sliding along the wall', () => {
+    const wall: Solid = { x: -100, y: 0, w: 200, h: 2, angle: 0.5, kind: 'wall' };
+    const hd = 0.5 + (8 * Math.PI) / 180;
+    const car = createCar({ pos: { x: 0, y: -6 }, angle: hd });
+    car.vel = { x: Math.cos(hd) * 15, y: Math.sin(hd) * 15 };
+    runSolids(car, [wall], input({ throttle: 1 }), 5);
+    expect(Math.hypot(car.vel.x, car.vel.y)).toBeGreaterThan(5);
+  });
 });
