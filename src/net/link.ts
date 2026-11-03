@@ -11,9 +11,10 @@ import {
 
 const GATHER_MS = 4000;
 const OPEN_MS = 15000;
+const GUEST_OPEN_MS = 180_000;
 const DISCONNECT_MS = 3000;
 
-function createLink(pc: RTCPeerConnection): Link {
+function createLink(pc: RTCPeerConnection): { link: Link; arm(ms: number): void } {
   const ctl = pc.createDataChannel('ctl', { negotiated: true, id: 0 });
   const pose = pc.createDataChannel('pose', {
     negotiated: true,
@@ -24,10 +25,7 @@ function createLink(pc: RTCPeerConnection): Link {
   const msgCbs: ((m: Msg) => void)[] = [];
   const stateCbs: ((s: LinkState) => void)[] = [];
   let state: LinkState = 'connecting';
-  let openTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
-    () => set('failed'),
-    OPEN_MS,
-  );
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   let dropTimer: ReturnType<typeof setTimeout> | undefined;
 
   function set(s: LinkState) {
@@ -66,7 +64,7 @@ function createLink(pc: RTCPeerConnection): Link {
     else if (c === 'disconnected') dropTimer = setTimeout(() => set('closed'), DISCONNECT_MS);
   });
 
-  return {
+  const link: Link = {
     get state() {
       return state;
     },
@@ -82,6 +80,14 @@ function createLink(pc: RTCPeerConnection): Link {
     },
     close() {
       set('closed');
+    },
+  };
+
+  return {
+    link,
+    arm(ms) {
+      clearTimeout(openTimer);
+      if (state === 'connecting') openTimer = setTimeout(() => set('failed'), ms);
     },
   };
 }
@@ -119,7 +125,7 @@ export function createConnector(
   return {
     async host() {
       const pc = make();
-      const link = createLink(pc);
+      const { link, arm } = createLink(pc);
       await pc.setLocalDescription(await pc.createOffer());
       const invite = await makeCode('invite', await gather(pc));
       return {
@@ -127,17 +133,20 @@ export function createConnector(
         invite,
         async accept(reply) {
           await remote(pc, 'answer', await readCode(reply, 'reply'));
+          arm(OPEN_MS);
         },
       };
     },
     async join(invite) {
       const sdp = await readCode(invite, 'invite');
       const pc = make();
-      const link = createLink(pc);
+      const { link, arm } = createLink(pc);
       try {
         await remote(pc, 'offer', sdp);
         await pc.setLocalDescription(await pc.createAnswer());
-        return { link, reply: await makeCode('reply', await gather(pc)) };
+        const reply = await makeCode('reply', await gather(pc));
+        arm(GUEST_OPEN_MS);
+        return { link, reply };
       } catch (e) {
         link.close();
         throw e instanceof LinkError ? e : new LinkError('failed');

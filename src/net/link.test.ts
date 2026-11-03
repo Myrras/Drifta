@@ -131,14 +131,36 @@ describe('link', () => {
     expect(b).toEqual(a);
   });
 
-  it('fails after 15 s without opening', async () => {
+  it('host waits for accept, then fails 15 s later without opening', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { pc, h, states } = await setup();
+    vi.advanceTimersByTime(60000);
+    expect(h.link.state).toBe('connecting');
+
+    const gpc = new FakePc();
+    const g = await createConnector(() => gpc as unknown as RTCPeerConnection).join(h.invite);
+    await h.accept(g.reply);
     vi.advanceTimersByTime(14999);
     expect(h.link.state).toBe('connecting');
     vi.advanceTimersByTime(1);
     expect(states).toEqual(['failed']);
     expect(pc.connectionState).toBe('closed');
+  });
+
+  it('guest fails 180 s after producing the reply without opening', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { h } = await setup();
+    const gpc = new FakePc();
+    const g = await createConnector(() => gpc as unknown as RTCPeerConnection).join(h.invite);
+    const states: LinkState[] = [];
+    g.link.onState((s) => states.push(s));
+    vi.advanceTimersByTime(15000);
+    expect(g.link.state).toBe('connecting');
+    vi.advanceTimersByTime(165000 - 1);
+    expect(g.link.state).toBe('connecting');
+    vi.advanceTimersByTime(1);
+    expect(states).toEqual(['failed']);
+    expect(gpc.connectionState).toBe('closed');
   });
 
   it('fails on pc failure', async () => {
