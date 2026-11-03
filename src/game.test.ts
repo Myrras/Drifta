@@ -2761,11 +2761,14 @@ describe('top drifts with late (not counted) drifts', () => {
       has: (id) => kept.has(id),
       save: vi.fn(),
     };
-    const game = createGame([garage], audio, () => memBest(), undefined, clips);
+    const game = createGame([garage], audio, () => memBest(), undefined, clips, undefined, {
+      ...defaultProgress(),
+      starterChosen: true,
+    });
     const step = (frames = 1, confirm = false) => {
       for (let i = 0; i < frames; i++) game.update({ ...IDLE, confirm }, DT);
     };
-    step(1, true);
+    step(2, true); // PLAY, then START on the option step
     step(Math.round(COUNTDOWN_SECONDS / DT));
     const bank = (points: number) => {
       game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
@@ -2815,11 +2818,14 @@ describe('top drifts with late (not counted) drifts', () => {
 describe('time-up edge cases', () => {
   const LIMIT = garage.parTime * 1.3;
   function rig() {
-    const game = createGame([garage], audio, () => memBest());
+    const game = createGame([garage], audio, () => memBest(), undefined, undefined, undefined, {
+      ...defaultProgress(),
+      starterChosen: true,
+    });
     const step = (input: Partial<InputState> = {}, frames = 1) => {
       for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
     };
-    step({ confirm: true });
+    step({ confirm: true }, 2); // PLAY, then START on the option step
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     return { game, step };
   }
