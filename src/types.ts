@@ -72,6 +72,7 @@ export interface InputState {
   /** 0..1 */ throttle: number;
   /** 0..1, also reverse when stopped */ brake: number;
   handbrake: boolean;
+  /** held: drive disconnected, revs climb; release at high rpm kicks the rear out */ clutch?: boolean;
   /** edge-triggered: true for one poll on press */ pause: boolean;
   restart: boolean;
   confirm: boolean;
@@ -87,6 +88,9 @@ export interface CarState {
   angle: number;
   angVel: number;
   rpm: number;
+  /** clutch state, set by stepCar */ clutchHeld?: boolean;
+  clutchKick?: number; // s of rear burst left
+  clutchPower?: number; // 0..1 burst strength from rpm at release
   stats?: CarStats;
 }
 /** slip: signed angle between heading and velocity, radians */

@@ -249,7 +249,7 @@ export function drawMenu(
       );
     hints(
       ctx,
-      '↑/↓ move · ←/→ map · ENTER select · WASD drive · SPACE handbrake · ESC pause',
+      '↑/↓ move · ←/→ map · ENTER select · WASD drive · SPACE handbrake · SHIFT clutch · ESC pause',
       width,
       height,
       u,

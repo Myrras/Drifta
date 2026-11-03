@@ -186,6 +186,39 @@ describe('car', () => {
   });
 });
 
+describe('clutch kick', () => {
+  const peakSlip = (c: CarState, revSeconds: number) => {
+    run(c, input({ throttle: 1, clutch: true, steer: 1 }), revSeconds);
+    return Math.max(...run(c, input({ throttle: 1, steer: 1 }), 0.8).map((d) => Math.abs(d.slip)));
+  };
+
+  it('holding the clutch gives no drive and revs climb', () => {
+    const c = createCar({ pos: { x: 0, y: 0 }, angle: 0 });
+    run(c, input({ throttle: 1, clutch: true }), 1);
+    expect(speed(c)).toBe(0);
+    expect(c.rpm).toBeGreaterThan(0.95);
+  });
+
+  it('releasing at high rpm kicks the rear out more than no clutch', () => {
+    const plain = movingCar(60);
+    const plainSlip = Math.max(
+      ...run(plain, input({ throttle: 1, steer: 1 }), 0.8).map((d) => Math.abs(d.slip)),
+    );
+    const clutched = movingCar(60);
+    expect(peakSlip(clutched, 0.8)).toBeGreaterThan(plainSlip + 0.1);
+  });
+
+  it('releasing at low rpm does almost nothing', () => {
+    const plain = movingCar(60);
+    run(plain, input({ throttle: 1, steer: 1 }), 0.1);
+    const c = movingCar(60);
+    c.rpm = 0.3;
+    run(c, input({ throttle: 1, clutch: true, steer: 1 }), 0.05); // rpm stays under clutchMinRpm
+    run(c, input({ throttle: 1, steer: 1 }), 0.05);
+    expect(Math.abs(c.angle - plain.angle)).toBeLessThan(0.02);
+  });
+});
+
 const kick = input({ steer: 1, handbrake: true });
 const drift = (steer = 0.5) => input({ steer, throttle: 0.7 });
 
