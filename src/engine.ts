@@ -8,9 +8,10 @@ const C_SOUND = 550; // m/s, hot exhaust gas: same as real pipe length x 0.62 at
 const POP_RPM = 3500;
 const TURBO_MIX = 4; // turbo layer level against the exhaust (profile gains are "of engine level")
 const WHOOSH = 4; // band-passed noise at the whine pitch, about as loud as the tone
-const CH_HISS = 0.0095; // surge chirp mix: >3 kHz hiss, ~4.4 kHz whistle, ~420 Hz air thump
-const CH_WHISTLE = 0.048;
-const CH_THUMP = 0.065;
+const CH_HISS = 0.0065; // surge chirp mix: 3-8 kHz hiss, whistles, 0.3-0.8 kHz air thump
+const CH_WHISTLE = 0.05;
+const CH_THUMP = 0.6;
+const SURGE_WHINE = 0.3; // whine level while the surge train runs (the recording's whine is ~7 dB under ours)
 
 export interface TurboProfile {
   /** rpm where boost starts / is full */
@@ -24,6 +25,8 @@ export interface TurboProfile {
   bov: [number, number];
   /** compressor surge on lift: pulses, Hz, chance per lift */
   flutter: [number, number, number];
+  /** street surge: first / last chirp gap ms, whistle Hz, chirps at full boost, weight (chirp length, thump depth) */
+  tu: [number, number, number, number, number];
   /** sequential twin: second turbo cuts in at this rpm (tone x1.25), boost dip at changeover */
   seq?: [number, number];
   /** parallel twin: two whines detuned +-3% */
@@ -140,6 +143,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.06,
       bov: [0.8, 350],
       flutter: [3, 9, 0.25],
+      tu: [175, 100, 3800, 15, 1.25], // sequential twin, big total
       seq: [4000, 0],
     },
     gain: 0.94,
@@ -170,6 +174,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.05,
       bov: [0.6, 250],
       flutter: [4, 12, 0.35],
+      tu: [155, 88, 4450, 15, 1], // sequential twin, small: the reference
       seq: [4500, 0.15],
     },
     gain: 3.4,
@@ -199,6 +204,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.07,
       bov: [0.9, 400],
       flutter: [4, 10, 0.35],
+      tu: [165, 95, 4150, 15, 1.15], // parallel twin
       par: true,
       wg: [18, 0.03],
     },
@@ -229,6 +235,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.07,
       bov: [0.9, 330],
       flutter: [5, 11, 0.35],
+      tu: [135, 80, 5100, 14, 0.85], // small single T25
     },
     gain: 1.11,
   },
@@ -257,6 +264,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.08,
       bov: [1, 450],
       flutter: [5, 10, 0.35],
+      tu: [170, 98, 3950, 15, 1.2], // big single GT28
       wg: [22, 0.04],
     },
     gain: 1.02,
@@ -327,6 +335,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.09,
       bov: [0.5, 300],
       flutter: [6, 14, 1],
+      tu: [140, 82, 4900, 15, 0.9], // small single TD05
     },
     gain: 0.77,
   },
@@ -355,6 +364,7 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       hiss: 0.07,
       bov: [0.8, 320],
       flutter: [4, 9, 0.35],
+      tu: [145, 85, 4700, 14, 0.9], // small single TD05/VF
     },
     gain: 0.86,
   },
@@ -513,7 +523,8 @@ export class EngineDSP {
   private chT = 1; // s since the last surge chirp
   private chAmp = 0;
   private chHold = 0;
-  private chLo = 0;
+  private chW = 1;
+  private duck = 1; // whine gain, dips during the surge train
   private wPh = 0;
   private w2Ph = 0;
   private fmPh = 0;
@@ -537,9 +548,11 @@ export class EngineDSP {
   private readonly hissBp: Biquad;
   private readonly bovBp: Biquad;
   private readonly flBp: Biquad;
-  private readonly chHp: Biquad;
+  private readonly chBand: Biquad;
   private readonly chBp: Biquad;
   private readonly ch2Bp: Biquad;
+  private readonly ch3Bp: Biquad;
+  private readonly chLoBp: Biquad;
   private readonly whooshBp: Biquad;
   private readonly wgBp: Biquad;
   private dcX = 0;
@@ -578,9 +591,11 @@ export class EngineDSP {
     this.hissBp = new Biquad(sr, 'bp', 1000, 1.5);
     this.bovBp = new Biquad(sr, 'bp', 4500, 0.7);
     this.flBp = new Biquad(sr, 'bp', 3000, 1.2);
-    this.chHp = new Biquad(sr, 'hp', 3000, 0.7);
+    this.chBand = new Biquad(sr, 'bp', 4200, 0.6);
     this.chBp = new Biquad(sr, 'bp', 4400, 30);
     this.ch2Bp = new Biquad(sr, 'bp', 8800, 30);
+    this.ch3Bp = new Biquad(sr, 'bp', 6400, 30);
+    this.chLoBp = new Biquad(sr, 'bp', 400, 2.5);
     this.whooshBp = new Biquad(sr, 'bp', 1000, 3);
     this.wgBp = new Biquad(sr, 'bp', 2200, 1.5);
   }
@@ -666,10 +681,10 @@ export class EngineDSP {
         if (thr < 0.2 && this.bovArm) {
           this.bovArm = false;
           if (this.liftT < 0.12 && S > 0.35 && t.surge) {
-            // street: an "s" burst then 8-17 "tu" chirps, more with more boost (measured recording)
+            // street: an "s" burst then half to all of the car's tu[3] chirps, more with more boost
             const b = clamp01((S - 0.35) / 0.65);
             this.flutters++;
-            this.flN = this.flN0 = 1 + Math.round(8 + 9 * b);
+            this.flN = this.flN0 = 1 + Math.round(t.tu[3] * (0.47 + 0.53 * b));
             this.flPh = 0; // s to the next chirp
             this.flAmp = 0.6 + 0.4 * S;
           } else if (this.liftT < 0.12 && S > 0.35) {
@@ -803,22 +818,26 @@ export class EngineDSP {
   private turbo(t: TurboProfile, S: number, thr: number): number {
     const sr = this.sr;
     if (this.flN > 0 && t.surge) {
-      // street surge: "s" burst, 200 ms, then chirps speeding up from 155 to 88 ms apart, shorter and 8 dB quieter by the end
+      // street surge: "s" burst, 200 ms, then chirps speeding up from tu[0] to tu[1] ms apart, shorter and 8 dB quieter by the end
       this.flPh -= 1 / sr;
       if (this.flPh <= 0) {
+        const [g0, g1, wf0, , w] = t.tu;
         const k = this.flN0 - this.flN;
         this.flN--;
         const left = this.flN / this.flN0;
         this.flEnv = this.flAmp;
         this.chirps++;
         this.chT = 0;
-        this.chHold = k ? 0.025 + 0.025 * left : 0.05;
+        this.chHold = (k ? 0.025 + 0.025 * left : 0.05) * w;
+        this.chW = w;
         this.chAmp = this.flAmp * (k ? 0.4 + 0.6 * left : 1.8) * (0.85 + 0.3 * this.rand01());
-        const wf = 4450 * 1.3 ** this.rand(); // 3.4-5.8 kHz
+        const wf = wf0 * 1.2 ** this.rand();
         this.chBp.set(wf, 30);
         this.ch2Bp.set(2 * wf, 30);
-        this.chLo = 420 * (1 + 0.08 * this.rand());
-        this.flPh = (k ? 0.088 + 0.067 * Math.exp(-(k - 1) / 2.5) : 0.2) * (1 + 0.1 * this.rand());
+        this.ch3Bp.set(wf * (1.4 + 0.1 * this.rand01()), 30);
+        this.chLoBp.set((400 / w) * (1 + 0.1 * this.rand()), 2.5); // heavier turbo: deeper "u"
+        this.flPh =
+          (k ? g1 + (g0 - g1) * Math.exp(-(k - 1) / 2.5) : 200) * 0.001 * (1 + 0.1 * this.rand());
       }
     } else if (this.flN > 0) {
       // flutter: compressor surge pulses, rate falling 25% over the burst
@@ -833,6 +852,7 @@ export class EngineDSP {
     if (!t.surge) this.flAmp *= this.kFlAmp;
 
     // whine: sine + a little 2nd harmonic + band-passed noise (airy spool), 7 Hz wobble, sags in surge
+    this.duck += this.kThr * ((t.surge && this.flN > 0 ? SURGE_WHINE : 1) - this.duck);
     this.fmPh = (this.fmPh + 7 / sr) % 1;
     const f =
       (t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8) *
@@ -844,6 +864,7 @@ export class EngineDSP {
     this.w2Ph = (this.w2Ph + f2 / sr) % 1;
     const a2 = t.par ? 1 : t.seq ? 0.6 * this.st2 : 0;
     const whine =
+      this.duck *
       t.whine[2] *
       S ** 1.5 *
       (0.7 * (tone(this.wPh) + (a2 > 0.001 ? a2 * tone(this.w2Ph) : 0)) +
@@ -881,8 +902,8 @@ export class EngineDSP {
   }
 
   /**
-   * One surge "tu": a hiss burst (15 ms rise, hold, 12 ms fall; >3 kHz plus a narrow whistle and its octave)
-   * on a hiss floor 8 dB down, then a ~420 Hz air thump as the hiss ends.
+   * One surge "tu": a hiss burst (15 ms rise, hold, 12 ms fall; 3-8 kHz plus three narrow whistles)
+   * on a hiss floor 8 dB down, then a 0.3-0.8 kHz air thump as the hiss ends.
    */
   private chirp(): number {
     const T = this.chT;
@@ -891,17 +912,14 @@ export class EngineDSP {
     const H = this.chHold;
     const burst =
       T < 0.015 ? Math.sin((Math.PI * T) / 0.03) ** 2 : T < H ? 1 : Math.exp(-(T - H) / 0.012);
-    const n = this.rand() * (burst + 0.7 * Math.exp(-T / (this.flN > 0 ? 1 : 0.06)));
+    const n = this.rand() * (burst + 0.9 * Math.exp(-T / (this.flN > 0 ? 1 : 0.06)));
     const u = T - H + 0.01;
-    const thump =
-      u > 0
-        ? Math.min(1, u / 0.004) * Math.exp(-u / 0.01) * Math.sin(2 * Math.PI * this.chLo * u)
-        : 0;
+    const thump = u > 0 ? Math.min(1, u / 0.004) * Math.exp(-u / 0.01) : 0;
     return (
       this.chAmp *
-      (CH_HISS * this.chHp.run(n) +
-        CH_WHISTLE * (this.chBp.run(n) + 0.4 * this.ch2Bp.run(n)) +
-        CH_THUMP * thump)
+      (CH_HISS * this.chBand.run(n) +
+        CH_WHISTLE * (this.chBp.run(n) + 0.6 * this.ch3Bp.run(n) + 0.4 * this.ch2Bp.run(n)) +
+        CH_THUMP * this.chW * this.chLoBp.run(this.rand() * thump))
     );
   }
 }

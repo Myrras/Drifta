@@ -281,29 +281,51 @@ describe('tunes', () => {
       expect(engineProfile(m, 'street')).toBe(engineProfile(m, 'performance'));
   });
 
-  // reference recording: "s" burst, ~200 ms, then 14-18 "tu" chirps going from 155 to ~85 ms apart
-  it.each(TURBO)('%s street: lift at boost gives an "s" then a ~10 Hz chirp train, no BOV', (m) => {
+  // "s" burst, ~200 ms, then the car's chirps going from tu[0] to tu[1] ms apart (reference: 155 -> ~85)
+  it.each(TURBO)('%s street: lift at boost gives an "s" then its own chirp train, no BOV', (m) => {
+    const [g0, g1, , n] = ENGINE_PROFILES[m].turbo!.tu;
     const dsp = new EngineDSP(SR, engineProfile(m, 'street'));
     render(dsp, 6000, 1, 1.5);
     const at: number[] = []; // ms after the lift
     for (let i = 0; i < 250; i++) {
-      const n = dsp.chirps;
+      const c = dsp.chirps;
       render(dsp, 6000, 0, 0.01);
-      if (dsp.chirps > n) at.push(i * 10);
+      if (dsp.chirps > c) at.push(i * 10);
     }
     const gaps = at.slice(1).map((t, i) => t - at[i]);
-    expect(at.length).toBeGreaterThanOrEqual(15);
-    expect(at.length).toBeLessThanOrEqual(19);
+    expect(at.length).toBeGreaterThanOrEqual(n);
+    expect(at.length).toBeLessThanOrEqual(n + 2);
     expect(gaps[0]).toBeGreaterThanOrEqual(170);
     expect(gaps[0]).toBeLessThanOrEqual(230);
-    expect(gaps[1]).toBeGreaterThanOrEqual(130);
-    expect(gaps[1]).toBeLessThanOrEqual(180);
+    expect(gaps[1]).toBeGreaterThanOrEqual(g0 * 0.85 - 10);
+    expect(gaps[1]).toBeLessThanOrEqual(g0 * 1.15 + 10);
     const last = gaps.slice(-3).reduce((a, b) => a + b, 0) / 3;
-    expect(last).toBeGreaterThanOrEqual(75);
-    expect(last).toBeLessThanOrEqual(100);
+    expect(last).toBeGreaterThanOrEqual(g1 * 0.85);
+    expect(last).toBeLessThanOrEqual(g1 * 1.15 + 10);
     expect(Math.min(...gaps)).toBeGreaterThanOrEqual(60); // never a 25 Hz burble
     expect(dsp.flutters).toBe(1);
     expect(dsp.bovs).toBe(0);
+  });
+
+  it('each turbo car has its own surge, inside the reference band, slower and lower on big turbos', () => {
+    const tu = (m: (typeof TURBO)[number]) => ENGINE_PROFILES[m].turbo!.tu;
+    expect(new Set(TURBO.map((m) => String(tu(m)))).size).toBe(TURBO.length);
+    for (const m of TURBO) {
+      const [g0, g1, wf, n] = tu(m);
+      expect(1000 / g0).toBeGreaterThan(5);
+      expect(1000 / g1).toBeGreaterThanOrEqual(8);
+      expect(1000 / g1).toBeLessThanOrEqual(13);
+      expect(wf).toBeGreaterThanOrEqual(3500);
+      expect(wf).toBeLessThanOrEqual(5500);
+      expect(n).toBeGreaterThanOrEqual(12);
+      expect(n).toBeLessThanOrEqual(20);
+    }
+    for (const big of ['supra', '180sx', 'r32'] as const)
+      for (const small of ['s13', 'evo4', 'wrx'] as const) {
+        expect(tu(big)[0]).toBeGreaterThan(tu(small)[0]);
+        expect(tu(big)[2]).toBeLessThan(tu(small)[2]);
+        expect(tu(big)[4]).toBeGreaterThan(tu(small)[4]);
+      }
   });
 
   it('street surge stops when the throttle opens again', () => {
