@@ -123,6 +123,10 @@ export type Decor = { floor: number } &
     | { kind: 'roadsign'; x: number; y: number; angle: number; sign: 'closed' | 'expwy' }
     /** paper lantern, lit */
     | { kind: 'lantern'; x: number; y: number; color: string }
+    /** street tree seen from above: round crown of radius r */
+    | { kind: 'tree'; x: number; y: number; r: number; seed: number }
+    /** police box (koban), 3.4 x 2.6 m centered at (x, y), red lamp at the front along angle */
+    | { kind: 'koban'; x: number; y: number; angle: number }
     | DockDecor
   );
 export type DecoratedMap = GameMap & { decor?: Decor[] };
@@ -1070,6 +1074,48 @@ function drawLantern(g: Ctx, d: Of<'lantern'>, layer: DecorLayer, t: number) {
   g.fillRect(d.x - 0.18, d.y + 0.37, 0.36, 0.1);
 }
 
+function drawTree(g: Ctx, d: Of<'tree'>) {
+  const rand = rng(d.seed * 131 + 7);
+  const blob = (x: number, y: number, r: number, color: string) => {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  };
+  blob(d.x + d.r * 0.3, d.y + d.r * 0.35, d.r, 'rgba(0,0,0,0.4)'); // shadow
+  blob(d.x, d.y, d.r, '#1d3a24');
+  for (let k = 0; k < 5; k++) {
+    const a = rand() * Math.PI * 2;
+    const o = d.r * (0.2 + rand() * 0.4);
+    blob(d.x + o * Math.cos(a), d.y + o * Math.sin(a), d.r * 0.45, '#28502f');
+  }
+  blob(d.x - d.r * 0.3, d.y - d.r * 0.3, d.r * 0.3, '#3a6b3e'); // lit top
+}
+
+function drawKoban(g: Ctx, d: Of<'koban'>, layer: DecorLayer) {
+  const f = { x: d.x + 1.5 * Math.cos(d.angle), y: d.y + 1.5 * Math.sin(d.angle) };
+  if (layer === 'light') return pool(g, f.x, f.y, 4, '255,255,255', 0.7);
+  if (layer === 'glow') return pool(g, f.x, f.y, 3, '255,40,30', 0.6);
+  local(g, d.x, d.y, d.angle, () => {
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    g.fillRect(-1.5, -1.1, 3.4, 2.6);
+    g.fillStyle = '#8c8a84'; // parapet
+    g.fillRect(-1.7, -1.3, 3.4, 2.6);
+    g.fillStyle = '#d6d3cb';
+    g.fillRect(-1.5, -1.1, 3, 2.2);
+    g.fillStyle = '#2a2c34'; // dark band over the door
+    g.fillRect(1.1, -1.1, 0.4, 2.2);
+    g.fillStyle = '#c9a23a'; // emblem
+    g.beginPath();
+    g.arc(-0.2, 0, 0.45, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#ff3a2a'; // red lamp
+    g.beginPath();
+    g.arc(1.5, 0, 0.32, 0, Math.PI * 2);
+    g.fill();
+  });
+}
+
 /** World rect visible on an axis-aligned canvas transform; null if unknown (no culling). */
 function viewOf(g: Ctx): Rect | null {
   const m = typeof g.getTransform === 'function' ? g.getTransform() : null;
@@ -1235,6 +1281,12 @@ export function drawDecor(
         break;
       case 'lantern':
         if (layer !== 'floor') drawLantern(g, d, layer, t);
+        break;
+      case 'tree':
+        if (layer === 'wall') drawTree(g, d);
+        break;
+      case 'koban':
+        if (layer !== 'floor' && layer !== 'over') drawKoban(g, d, layer);
         break;
       default:
         drawDock(g, d, layer, t);

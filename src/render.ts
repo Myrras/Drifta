@@ -29,6 +29,7 @@ import { drawCar, drawParkedCar } from './sprites';
 import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
+import { boomAge, boomPulse, boomShake } from './audio';
 
 // --- visual tuning ---
 const STATIC_PX = 10; // px per meter, pre-rendered floor layer
@@ -43,6 +44,7 @@ const CAM_ZOOM_RATE = 1.5;
 const ATTRACT_ZOOM = 0.64; // menu attract scene: view height factor (closer in)
 const ATTRACT_Y = 0.5; // ... and the car's screen height, fraction of the view
 const SHAKE_PX = 7; // CSS px at shake = 1
+const BOOM_SHAKE_PX = 14; // CSS px at full boom shake, on each kick
 
 const BG = '#0a0b0d';
 const CONCRETE = '#2b2c30';
@@ -80,6 +82,10 @@ const POD_Y = 0.48; // pop-up headlight pods, m off the center line
 // lighting: dark ambient layer with light cut out (half res) drawn over the world, then additive glows
 const LIGHT_PX = 4; // px per meter, static per-floor light layers
 const AMBIENT = 0.82; // darkness inside the garage
+// the floor under an elevated deck: its glow kept beneath the deck, then greyed and dimmed
+const BELOW_GLOW = 0.8;
+const BELOW_GREY = 0.45;
+const BELOW_DIM = 0.45;
 const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
@@ -523,6 +529,12 @@ function parkedPoses(f: Floor): ParkedPose[] {
     });
 }
 
+/** Paint of the i-th parked car on floor idx: its own color, else a stable pick. */
+function parkedColor(p: ParkedPose, i: number, idx: number): string {
+  const colors = p.s.model ? CAR_MODELS[p.s.model].colors : PARKED_COLORS;
+  return p.s.color ?? colors[(i * 7 + idx * 3) % colors.length];
+}
+
 type Pose = Pick<ParkedPose, 'x' | 'y' | 'facing' | 'len' | 'wid'>;
 /** Lamps of a car with headlights on: cones from the front corners, lamp and tail (brake) glows. */
 function parkedLamps(p: Pose, brake = false): Lamp[] {
@@ -660,6 +672,7 @@ function buildLights(map: GameMap, idx: number) {
     rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
     police: poses.filter((p) => p.s.police).map(policeLamps),
+    boom: poses.flatMap((p, i) => (p.s.boom ? [{ p, color: parkedColor(p, i, idx) }] : [])),
   };
 }
 
@@ -675,6 +688,63 @@ function policeLivery(g: Ctx, len: number, wid: number) {
   g.fillRect(-0.26, -wid / 2 + 0.36, 0.32, wid / 2 - 0.4);
   g.fillStyle = '#2a5cff';
   g.fillRect(-0.26, 0.04, 0.32, wid / 2 - 0.4);
+}
+
+/** Shock rings + radial flash of a boom car; drawn above the darkness (caller sets 'lighter'). */
+function drawBoomShock(g: Ctx, p: ParkedPose, k: number, age: number, a: number) {
+  g.save();
+  g.globalAlpha = a;
+  const fadeOut = Math.max(0, 1 - age / 0.5);
+  g.strokeStyle = `rgba(255,70,210,${0.8 * fadeOut * fadeOut})`;
+  for (const [r0, speed] of [
+    [1, 16],
+    [0.5, 10],
+  ]) {
+    g.lineWidth = 0.35 * fadeOut + 0.05;
+    g.beginPath();
+    g.arc(p.x, p.y, r0 + age * speed, 0, Math.PI * 2);
+    g.stroke();
+  }
+  const flash = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6);
+  flash.addColorStop(0, `rgba(255,90,220,${0.45 * k})`);
+  flash.addColorStop(1, 'rgba(255,90,220,0)');
+  g.fillStyle = flash;
+  g.fillRect(p.x - 6, p.y - 6, 12, 12);
+  g.restore();
+}
+
+/** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
+function drawBoomCar(
+  g: Ctx,
+  { p, color }: { p: ParkedPose; color: string },
+  t: number,
+  k: number,
+  a: number,
+) {
+  const c = Math.cos(p.facing);
+  const s = Math.sin(p.facing);
+  const jit = k * 0.06 * Math.sin(t * 90); // m, sideways
+  g.save();
+  g.globalAlpha = a * 0.35; // ground shadow, offset like the static layer's
+  g.translate(p.x + 0.3, p.y + 0.4);
+  g.rotate(p.facing);
+  g.fillStyle = '#000';
+  g.beginPath();
+  g.roundRect(-p.len / 2 + 0.15, -p.wid / 2 + 0.15, p.len - 0.3, p.wid - 0.3, 0.5);
+  g.fill();
+  g.restore();
+  g.save();
+  g.globalAlpha = a;
+  g.translate(p.x - s * jit, p.y + c * jit);
+  g.rotate(p.facing + k * 0.012 * Math.sin(t * 61));
+  g.strokeStyle = `rgba(255,60,200,${0.12 + 0.4 * k})`;
+  g.lineWidth = 0.08 + 0.08 * k;
+  g.beginPath();
+  g.arc(-p.len / 2, 0, 0.7 + 0.5 * k, 0, Math.PI * 2);
+  g.stroke();
+  if (p.s.model) drawParkedCar(g, p.s.model, color);
+  else parkedCar(g, p.len, p.wid, color);
+  g.restore();
 }
 
 /** Parked car in local frame, +x = nose. */
@@ -851,6 +921,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     for (let y = 10; y < f.h; y += 10) (g.moveTo(0, y), g.lineTo(f.w, y));
     g.stroke();
   }
+  if (f.below !== undefined) g.clearRect(0, 0, f.w, f.h); // an elevated deck has no ground
 
   // painted bays (tall or wide): long sides + back line, yellow wheel stop near the back
   const walls = f.solids.filter((s) => s.kind === 'wall');
@@ -936,14 +1007,20 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     );
   }
 
-  for (const h of map.helixes) {
-    if (h.from === idx) helixSurface(g, h, true, 'DOWN');
-    else if (h.from + 1 === idx) helixSurface(g, h, false, f.name);
-  }
+  // ramps up to an elevated deck go over the ground paint (TOKYO NIGHTS paints its whole floor)
+  const ramps = (up: boolean) => {
+    for (const h of map.helixes) {
+      if ((map.floors[h.from + 1].below === h.from) !== up) continue;
+      if (h.from === idx) helixSurface(g, h, true, up ? 'UP' : 'DOWN');
+      else if (h.from + 1 === idx) helixSurface(g, h, false, f.name);
+    }
+  };
+  ramps(false);
   g.globalAlpha = ARROW_ALPHA;
   g.drawImage(paintArrows(map, idx), 0, 0, f.w, f.h);
   g.globalAlpha = 1;
   drawDecor(g, decorOf(map), 'floor', idx, 0);
+  ramps(true);
 
   // walls with an inner hazard edge, pillars, parked cars (all with soft drop shadows)
   // solids go on their own layer; one blurred drawImage casts all their shadows at once
@@ -1014,7 +1091,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     });
   }
   parkedPoses(f).forEach((p, i) => {
-    const pick = (colors: string[]) => colors[(i * 7 + idx * 3) % colors.length];
+    if (p.s.boom) return; // drawn per frame, see drawBoomCar
     g.save();
     g.translate(p.x, p.y);
     g.rotate(p.facing);
@@ -1025,9 +1102,9 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       g.roundRect(-p.len / 2 + 0.15, -p.wid / 2 + 0.15, p.len - 0.3, p.wid - 0.3, 0.5);
       g.fill();
       noShadow();
-      drawParkedCar(g, p.s.model, p.s.color ?? pick(CAR_MODELS[p.s.model].colors));
+      drawParkedCar(g, p.s.model, parkedColor(p, i, idx));
       if (p.s.police) policeLivery(g, p.len, p.wid);
-    } else parkedCar(g, p.len, p.wid, p.s.color ?? pick(PARKED_COLORS));
+    } else parkedCar(g, p.len, p.wid, parkedColor(p, i, idx));
     g.restore();
   });
   // round concrete cores: hazard band at the edge, soft top highlight
@@ -1521,6 +1598,21 @@ function drawPed(g: Ctx, p: Ped, t: number) {
 }
 
 const statics = new Map<Floor, HTMLCanvasElement>();
+const silhouettes = new Map<Floor, HTMLCanvasElement>();
+
+/** Black where an elevated floor has a surface (its static layer's alpha), at light-layer scale. */
+function silhouette(map: GameMap, idx: number) {
+  const fl = map.floors[idx];
+  let s = silhouettes.get(fl);
+  if (!s) {
+    const { c, g } = makeCanvas(fl.w * LIGHT_PX, fl.h * LIGHT_PX);
+    g.drawImage(staticLayer(map, idx), 0, 0, c.width, c.height);
+    g.globalCompositeOperation = 'source-in';
+    g.fillRect(0, 0, c.width, c.height);
+    silhouettes.set(fl, (s = c));
+  }
+  return s;
+}
 const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
 
 function staticLayer(map: GameMap, idx: number) {
@@ -1826,8 +1918,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
-    const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
+    const bt = v.boomPhase ?? clock; // audio's bar phase keeps shake and rings on the thump
+    const pulse = boomPulse(bt);
+    let boomAmt = 0; // nearest boom car on the shown floor
+    if (v.shakeOn)
+      for (const b of lightLayer(v.map, v.floorIndex).boom)
+        boomAmt = Math.max(boomAmt, boomShake(Math.hypot(b.p.x - car.pos.x, b.p.y - car.pos.y)));
+    const shk = SHAKE_PX * v.shake + BOOM_SHAKE_PX * boomAmt * pulse;
+    const sx = (Math.random() * 2 - 1) * shk;
+    const sy = (Math.random() * 2 - 1) * shk;
     const ws = dpr * scale;
     // world -> device, rotated by `rot` about the screen centre
     const rc = Math.cos(rot) * ws;
@@ -1839,23 +1938,30 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     worldXf(ctx);
     drawDecor(ctx, decorOf(v.map), 'sea', v.floorIndex, clock); // harbour past the floor edge
 
-    // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
+    // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening).
+    // An elevated deck goes over the floor below it instead, by its share e of the view.
     const floors: [number, number][] = [[v.floorIndex, 1]];
     if (v.blend) floors.push([v.blend.toFloor, v.blend.t]);
-    for (const [idx, a] of floors) {
+    const deck = floors.find(([i]) => v.map.floors[i].below !== undefined)?.[0];
+    const e =
+      deck === undefined ? 0 : !v.blend ? 1 : deck === v.floorIndex ? 1 - v.blend.t : v.blend.t;
+    if (deck !== undefined) floors.splice(0, 2, [v.map.floors[deck].below!, 1], [deck, e]);
+    const age = boomAge(bt);
+    const sim = v.traffic?.sim;
+    const under = e >= 0.5; // peds and signals drawn under the deck, not above the darkness
+    floors.forEach(([idx, a], i) => {
       const fl = v.map.floors[idx];
       const layer = staticLayer(v.map, idx);
       ctx.globalAlpha = a;
       ctx.drawImage(layer, 0, 0, fl.w, fl.h);
       const skid = skids.get(fl);
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
-    }
-    ctx.globalAlpha = 1;
-
-    // traffic cars under the darkness: lit by street lights and headlights like the player
-    const sim = v.traffic?.sim;
-    if (sim) {
-      for (const c of sim.cars) {
+      ctx.globalAlpha = 1;
+      for (const b of lightLayer(v.map, idx).boom)
+        if (visible(b.p.x, b.p.y, 10)) drawBoomCar(ctx, b, clock, pulse, a);
+      if (i > 0) return;
+      // traffic cars under the darkness: lit by street lights and headlights like the player
+      for (const c of sim?.cars ?? []) {
         if (!visible(c.pos.x, c.pos.y, 4)) continue;
         const t = spritesFor(trafficModel(c), c.color);
         for (const sh of [true, false]) {
@@ -1871,7 +1977,38 @@ export function createRenderer(canvas: HTMLCanvasElement) {
           ctx.restore();
         }
       }
-    }
+      if (e > 0) {
+        // the city under the deck: its glow and neon beneath it, then greyed and dimmed
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, fl.w, fl.h);
+        ctx.clip();
+        const glows: Lamp[] = [];
+        if (v.traffic && under) {
+          for (const p of v.traffic.sim.peds)
+            if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);
+          for (const h of signalHeads(v.traffic.city))
+            if (visible(h.x, h.y, 2)) drawHead(ctx, h, v.traffic.sim, (l) => glows.push(l));
+        }
+        for (const c of sim?.cars ?? [])
+          if (visible(c.pos.x, c.pos.y, PARKED_HEAD_LEN))
+            glows.push(...parkedLamps(carPose(c), c.braking));
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = e * BELOW_GLOW;
+        ctx.drawImage(lightLayer(v.map, idx).glow, 0, 0, fl.w, fl.h);
+        drawDecor(ctx, decorOf(v.map), 'over', idx, clock);
+        for (const l of glows) drawLamp(ctx, l, false, e * BELOW_GLOW);
+        ctx.globalCompositeOperation = 'saturation';
+        ctx.globalAlpha = e * BELOW_GREY;
+        ctx.fillStyle = '#808080';
+        ctx.fillRect(0, 0, fl.w, fl.h);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = e * BELOW_DIM;
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, fl.w, fl.h);
+        ctx.restore();
+      }
+    });
 
     const spr = spritesFor(model, v.player.color, v.player.look);
     ctx.save();
@@ -1903,9 +2040,19 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const layers = floors.map(([idx, a]) => {
       const fl = v.map.floors[idx];
       const l = lightLayer(v.map, idx);
-      const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
-      return { idx, fl, l, w, amb: ambientOf(v.map) };
+      const w =
+        deck !== undefined
+          ? idx === deck
+            ? e
+            : 1 - e
+          : v.blend && idx === v.floorIndex
+            ? 1 - v.blend.t
+            : a;
+      // the floor under a deck keeps its lights cut out wherever the deck isn't
+      const cut = deck !== undefined && idx !== deck ? 1 : w;
+      return { idx, fl, l, w, cut, amb: ambientOf(v.map) };
     });
+    const street = 1 - e; // share of the view on the traffic's floor
     const dyn: [Lamp, number][] = playerLamps(car, v.brake, model).map((l) => [l, 1]);
     if (touch && v.scrape > 0) {
       const { x, y } = touch.q;
@@ -1926,14 +2073,31 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     if (sim)
       for (const c of sim.cars) {
         if (!visible(c.pos.x, c.pos.y, PARKED_HEAD_LEN)) continue;
-        for (const l of parkedLamps(carPose(c), c.braking)) dyn.push([l, 1]);
+        for (const l of parkedLamps(carPose(c), c.braking)) dyn.push([l, street]);
         if (blink && c.hazardsUntil > sim.time)
-          for (const l of hazardLamps(carPose(c))) dyn.push([l, 1]);
+          for (const l of hazardLamps(carPose(c))) dyn.push([l, street]);
       }
     if (blink)
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
+
+    for (const { l, w } of layers)
+      for (const { p } of l.boom)
+        if (visible(p.x, p.y, 5))
+          dyn.push([
+            {
+              cone: false,
+              x: p.x - Math.cos(p.facing) * (p.len / 2 + 0.4),
+              y: p.y - Math.sin(p.facing) * (p.len / 2 + 0.4),
+              ang: 0,
+              size: 3 + pulse,
+              cut: 0.4,
+              tint: 'red',
+              glow: 0.15 + 0.4 * pulse,
+            },
+            w,
+          ]);
     const wig = Math.floor(clock * POLICE_HZ * 2) % 2;
     for (const { l, w } of layers)
       for (const bar of l.police) if (visible(bar[0].x, bar[0].y, 6)) dyn.push([bar[wig], w]);
@@ -1948,8 +2112,18 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     m.fillRect(0, 0, shade.c.width, shade.c.height);
     worldXf(m, k);
     m.globalCompositeOperation = 'destination-out';
-    for (const { fl, l, w } of layers) {
-      m.globalAlpha = w;
+    for (const { idx, fl, l, cut } of layers) {
+      if (idx === deck && e > 0) {
+        // the deck's own darkness over the floor below's lights: cleared, then set back to ambient
+        const sil = silhouette(v.map, idx);
+        m.globalAlpha = e;
+        m.drawImage(sil, 0, 0, fl.w, fl.h);
+        m.globalCompositeOperation = 'source-over';
+        m.globalAlpha = e * ambientOf(v.map);
+        m.drawImage(sil, 0, 0, fl.w, fl.h);
+        m.globalCompositeOperation = 'destination-out';
+      }
+      m.globalAlpha = cut;
       m.drawImage(l.mask, 0, 0, fl.w, fl.h);
     }
     for (const [l, a] of dyn) drawLamp(m, l, true, a);
@@ -1977,11 +2151,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         g.translate(gh.x, gh.y);
         g.rotate(gh.angle);
       });
-    if (v.traffic) {
+    if (v.traffic && !under) {
       // peds above the darkness like the decor crowds: dark clothes vanish under it
       for (const p of v.traffic.sim.peds) if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);
       for (const h of signalHeads(v.traffic.city))
-        if (visible(h.x, h.y, 2)) drawHead(ctx, h, v.traffic.sim, (l) => dyn.push([l, 1]));
+        if (visible(h.x, h.y, 2)) drawHead(ctx, h, v.traffic.sim, (l) => dyn.push([l, street]));
     }
     ctx.save();
     ctx.beginPath();
@@ -1994,6 +2168,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       drawDecor(ctx, decorOf(v.map), 'over', idx, clock); // neon flicker, phone screens
     }
     for (const [l, a] of dyn) drawLamp(ctx, l, false, a);
+    for (const { l, w } of layers)
+      for (const b of l.boom) if (visible(b.p.x, b.p.y, 10)) drawBoomShock(ctx, b.p, pulse, age, w);
     ctx.restore();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';

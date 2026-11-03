@@ -26,6 +26,8 @@ export interface Solid extends Rect {
   lights?: 'on' | 'hazard';
   /** parked police car: light bar flashes, close drifts score COP SHOW */
   police?: boolean;
+  /** parked boom car: subwoofer thump + body shake */
+  boom?: boolean;
 }
 /** angle in radians, 0 = facing +x, positive = clockwise on screen (y down) */
 export interface Spawn {
@@ -45,6 +47,8 @@ export interface Floor {
   clipZones?: Rect[];
   /** bonus zones: drift through every rect sharing an id within one combo to fire its trick once */
   bonusZones?: BonusZone[];
+  /** elevated deck over floor `below`: no ground of its own (its decor paints the deck), that floor shows dimmed beneath */
+  below?: number;
 }
 export interface BonusZone extends Rect {
   id: string;

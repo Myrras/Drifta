@@ -25,6 +25,10 @@ export interface RenderView {
   impact: number;
   /** increments on every (re)start; renderer clears skid marks + smoke when it changes */
   runId: number;
+  /** seconds into the boom-car kick bar, null = follow the render clock */
+  boomPhase?: number | null;
+  /** camera shake setting is on: boom cars shake the screen */
+  shakeOn?: boolean;
   /** clipping zone the player is drifting in, lit up */
   clip: Rect | null;
   /** live traffic and its city graph (signal heads), null on maps without traffic */

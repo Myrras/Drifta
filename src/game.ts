@@ -14,7 +14,7 @@ import type {
   Trick,
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContext } from './view';
-import type { createAudio } from './audio';
+import { boomCars, type createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
@@ -125,6 +125,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
 ]);
 /** maps with live traffic */
 const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
+const AWAY = { pos: { x: 1e9, y: 1e9 }, vel: { x: 0, y: 0 } }; // a player peds never dodge
 const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
@@ -199,6 +200,8 @@ export function createGame(
   let starter = 0; // index into STARTERS on the first-launch screen
   let offerPick = false; // garage: confirm again spends a car pick on the locked car
   let toastT = 0;
+  let boomFloor: Floor | null = null; // floor whose boom cars boomList holds
+  let boomList: Vec[] = [];
   // daily / legend run in progress; a legend swaps in its car until the title
   let daily: Daily | null = null;
   let dailyDate = '';
@@ -572,6 +575,8 @@ export function createGame(
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle, cfg.car, cfg.tune);
+    if (floor !== boomFloor) boomList = boomCars((boomFloor = floor).solids);
+    if (boomList.length) audio.boom(car.pos, boomList);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const { solids, circles } = nearby(car, floor);
@@ -588,9 +593,11 @@ export function createGame(
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
     const tr = s.traffic;
+    // traffic drives the start floor; up on an elevated deck the car passes over it
+    const street = s.floorIndex === map.start.floor;
     if (tr) {
-      tr.step(dt, car);
-      for (const c of tr.cars) {
+      tr.step(dt, street ? car : AWAY);
+      for (const c of street ? tr.cars : []) {
         if ((c.pos.x - car.pos.x) ** 2 + (c.pos.y - car.pos.y) ** 2 > 49) continue;
         const box = { kind: 'car' as const, angle: c.heading, w: c.length, h: c.width };
         const th = collide(car, [{ ...box, x: c.pos.x - c.length / 2, y: c.pos.y - c.width / 2 }]);
@@ -1116,6 +1123,8 @@ export function createGame(
             scrape: s.scrape,
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
+            boomPhase: audio.boomPhase(),
+            shakeOn: cfg.shake,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
             ghost: ghostView(),

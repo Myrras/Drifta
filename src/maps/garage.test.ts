@@ -334,6 +334,19 @@ describe('garage (B2 MEET)', () => {
     );
   });
 
+  it('has exactly 2 boom cars on every floor, each near the route', () => {
+    floors.forEach((f, i) => {
+      const boom = carsOf(f).filter((c) => c.boom);
+      expect(boom.length).toBe(2);
+      for (const c of boom) {
+        const d = Math.min(
+          ...garageRoute[i].points.map((p) => Math.hypot(p.x - center(c).x, p.y - center(c).y)),
+        );
+        expect(d).toBeLessThan(15);
+      }
+    });
+  });
+
   it('lights about 1 in 5 other cars, aimed down the course at open floor', () => {
     const cars = floors.flatMap(carsOf).filter((c) => c.lights !== 'hazard');
     const lit = cars.filter((c) => c.lights === 'on');

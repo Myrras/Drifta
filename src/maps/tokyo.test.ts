@@ -4,10 +4,11 @@ import { drawDecor, type Decor, type DecorLayer } from './decor';
 import { createTraffic } from '../traffic';
 import { CAR_WIDTH, nearestDistance } from '../collision';
 import { COP_SHOW_DIST } from '../scoring';
-import type { Rect, Solid, Vec } from '../types';
+import type { Floor, Rect, Solid, Vec } from '../types';
 
 const DEG = Math.PI / 180;
-const f = tokyo.floors[0];
+const [f, deck] = tokyo.floors;
+const [helix] = tokyo.helixes;
 const MAP = { x: 0, y: 0, w: f.w, h: f.h };
 const inRect = (p: Vec, r: Rect) =>
   p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
@@ -23,7 +24,11 @@ function distToSolid(p: Vec, s: Solid) {
   const w = Math.abs(-dx * Math.sin(a) + dy * Math.cos(a)) - s.h / 2;
   return Math.hypot(Math.max(u, 0), Math.max(w, 0));
 }
-const clearance = (p: Vec) => Math.min(...f.solids.map((s) => distToSolid(p, s)));
+const clearance = (p: Vec, fl: Floor = f) =>
+  Math.min(
+    ...fl.solids.map((s) => distToSolid(p, s)),
+    ...fl.circles.map((c) => Math.hypot(p.x - c.x, p.y - c.y) - c.r),
+  );
 function cornersOf(s: Solid): Vec[] {
   const a = s.angle ?? 0;
   const c = { x: s.x + s.w / 2, y: s.y + s.h / 2 };
@@ -59,44 +64,126 @@ const polyDist = (p: Vec, pts: Vec[]) =>
   Math.min(...pts.slice(1).map((b, i) => segDist(p, pts[i], b)));
 const length = (pts: Vec[]) =>
   pts.slice(1).reduce((s, b, i) => s + Math.hypot(b.x - pts[i].x, b.y - pts[i].y), 0);
-const route = tokyoRoute[0].points;
-const routes = tokyoRoute.map((r) => r.points);
+/** City parts of route A and B (floor 0, up to the helix midpoint), then the shared deck. */
+const [cityA, cityB, deckRoute] = tokyoRoute.map((r) => r.points);
+const routes = [cityA, cityB];
 const SCRAMBLE = { x: 210, y: 125 };
-/** The city part of a route: up to the on-ramp's top. */
-const city = (pts: Vec[]) => pts.slice(0, pts.findIndex((p) => p.y < 15) + 1);
+const onRing = (p: number, r = (helix.rCore + helix.rOuter) / 2): Vec => {
+  const a = helix.enterAngle + helix.sweep * p;
+  return { x: helix.center.x + r * Math.cos(a), y: helix.center.y + r * Math.sin(a) };
+};
+const inRing = (p: Vec) => {
+  const d = Math.hypot(p.x - helix.center.x, p.y - helix.center.y);
+  return d >= helix.rCore - 1 && d <= helix.rOuter + 1;
+};
+
+/** Flood fill a 1 m grid from `from`; a cell is blocked within a car half width of a solid. */
+function reachable(fl: Floor, from: Vec, cut = (_p: Vec) => false) {
+  const blocked = new Uint8Array(fl.w * fl.h);
+  for (const s of fl.solids) {
+    const cs = cornersOf(s);
+    const [x0, x1] = [Math.min(...cs.map((p) => p.x)) - 2, Math.max(...cs.map((p) => p.x)) + 2];
+    const [y0, y1] = [Math.min(...cs.map((p) => p.y)) - 2, Math.max(...cs.map((p) => p.y)) + 2];
+    for (let y = Math.max(0, Math.floor(y0)); y < Math.min(fl.h, y1); y++)
+      for (let x = Math.max(0, Math.floor(x0)); x < Math.min(fl.w, x1); x++)
+        if (distToSolid({ x: x + 0.5, y: y + 0.5 }, s) < CAR_WIDTH / 2) blocked[y * fl.w + x] = 1;
+  }
+  for (let i = 0; i < blocked.length; i++) {
+    const p = { x: (i % fl.w) + 0.5, y: Math.floor(i / fl.w) + 0.5 };
+    if (cut(p) || fl.circles.some((c) => Math.hypot(p.x - c.x, p.y - c.y) < c.r + CAR_WIDTH / 2))
+      blocked[i] = 1;
+  }
+  const seen = new Uint8Array(fl.w * fl.h);
+  const start = Math.floor(from.y) * fl.w + Math.floor(from.x);
+  const todo = [start];
+  seen[start] = 1;
+  while (todo.length) {
+    const i = todo.pop()!;
+    const [x, y] = [i % fl.w, Math.floor(i / fl.w)];
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const [nx, ny] = [x + dx, y + dy];
+      const j = ny * fl.w + nx;
+      if (nx < 0 || ny < 0 || nx >= fl.w || ny >= fl.h || seen[j] || blocked[j]) continue;
+      seen[j] = 1;
+      todo.push(j);
+    }
+  }
+  return (p: Vec) => seen[Math.floor(p.y) * fl.w + Math.floor(p.x)] === 1;
+}
+/** The deck just past the helix exit, heading west. */
+const DECK_IN = { x: 285, y: 9 };
 
 describe('tokyo (TOKYO NIGHTS)', () => {
-  it('is one floor called TOKYO NIGHTS, no helixes', () => {
+  it('is the city with the expressway deck over it, joined by one helix up', () => {
     expect(tokyo.name).toBe('TOKYO NIGHTS');
-    expect(tokyo.floors.length).toBe(1);
-    expect(tokyo.helixes).toEqual([]);
+    expect(tokyo.floors.map((fl) => fl.name)).toEqual(['NEON CITY', 'EXPWY']);
+    expect(deck.below).toBe(0);
+    expect(f.below).toBeUndefined();
+    expect(tokyo.helixes.length).toBe(1);
+    expect(helix.from).toBe(0);
+    expect(Math.abs(helix.sweep)).toBeCloseTo(Math.PI);
+    for (const fl of tokyo.floors)
+      expect(fl.circles).toContainEqual({ ...helix.center, r: helix.rCore });
+    expect(tokyo.start.floor).toBe(0);
+    expect(tokyo.finish.floor).toBe(1);
     expect(f.w * f.h).toBeGreaterThanOrEqual(400 * 300);
+    expect([deck.w, deck.h]).toEqual([f.w, f.h]);
   });
 
   it('keeps solids, lights, clip zones and the finish inside the map', () => {
-    for (const s of f.solids) for (const p of cornersOf(s)) expect(inRect(p, MAP)).toBe(true);
-    for (const l of f.lights) expect(inRect(l, MAP)).toBe(true);
-    for (const z of [...f.clipZones!, tokyo.finish.zone]) {
-      expect(inRect(z, MAP) && inRect({ x: z.x + z.w, y: z.y + z.h }, MAP)).toBe(true);
+    for (const fl of tokyo.floors) {
+      for (const s of fl.solids) for (const p of cornersOf(s)) expect(inRect(p, MAP)).toBe(true);
+      for (const l of fl.lights) expect(inRect(l, MAP)).toBe(true);
+      for (const z of fl.clipZones!)
+        expect(inRect(z, MAP) && inRect({ x: z.x + z.w, y: z.y + z.h }, MAP)).toBe(true);
+      expect(fl.clipZones!.length).toBeGreaterThanOrEqual(3);
     }
+    const z = tokyo.finish.zone;
+    expect(inRect(z, MAP) && inRect({ x: z.x + z.w, y: z.y + z.h }, MAP)).toBe(true);
     expect(f.lights.length).toBeGreaterThan(40);
+    expect(deck.lights.length).toBeGreaterThan(15);
   });
 
   it('keeps the start and the finish clear of solids by 3 m', () => {
     expect(clearance(tokyo.start.pos)).toBeGreaterThanOrEqual(3);
     const z = tokyo.finish.zone;
-    expect(clearance({ x: z.x + z.w / 2, y: z.y + z.h / 2 })).toBeGreaterThanOrEqual(3);
+    expect(clearance({ x: z.x + z.w / 2, y: z.y + z.h / 2 }, deck)).toBeGreaterThanOrEqual(3);
     expect(inRect(tokyo.start.pos, z)).toBe(false);
   });
 
-  it('both routes run start to finish and keep 5 m off every solid (5+ car widths)', () => {
-    expect(routes.length).toBe(2);
+  it('both routes run start to helix, the deck helix to finish, 5 m off every solid (5+ car widths)', () => {
+    expect(tokyoRoute.map((r) => r.floor)).toEqual([0, 0, 1]);
     expect(2 * 5).toBeGreaterThanOrEqual(5 * CAR_WIDTH);
+    const near = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y) < 1e-6;
     for (const r of routes) {
       expect(r[0]).toEqual(tokyo.start.pos);
-      expect(inRect(r.at(-1)!, tokyo.finish.zone)).toBe(true);
-      for (const p of samples(r)) expect(clearance(p)).toBeGreaterThanOrEqual(5);
+      expect(r.some((p) => near(p, onRing(0)))).toBe(true);
+      expect(near(r.at(-1)!, onRing(0.5))).toBe(true);
     }
+    expect(near(deckRoute[0], onRing(0.5))).toBe(true);
+    expect(deckRoute.some((p) => near(p, onRing(1)))).toBe(true);
+    expect(inRect(deckRoute.at(-1)!, tokyo.finish.zone)).toBe(true);
+    for (const { floor, points } of tokyoRoute)
+      for (const p of samples(points)) {
+        // the helix arcs are drawn as chords, which dip 0.1 m toward the core
+        const min = inRing(p) ? 4.9 : 5;
+        expect(clearance(p, tokyo.floors[floor])).toBeGreaterThanOrEqual(min);
+      }
+  });
+
+  it('keeps the driven quarter of the helix free of solids on each floor', () => {
+    for (const [fl, t0, t1] of [
+      [f, 0, 0.55],
+      [deck, 0.45, 1],
+    ] as [Floor, number, number][])
+      for (let r = helix.rCore + 0.05; r < helix.rOuter; r += 0.25)
+        for (let t = t0; t <= t1; t += 0.1 / r / Math.PI)
+          expect(clearance(onRing(t, r), fl)).toBeGreaterThan(0);
   });
 
   it('forks at the start: A over the scramble, B along the canal, A a little longer', () => {
@@ -104,17 +191,13 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     expect(a.some((p) => Math.hypot(p.x - SCRAMBLE.x, p.y - SCRAMBLE.y) < 12)).toBe(true);
     expect(samples(b).some((p) => Math.hypot(p.x - SCRAMBLE.x, p.y - SCRAMBLE.y) < 40)).toBe(false);
     expect(Math.min(...b.map((p) => p.x))).toBeLessThan(70); // down the canal
-    const ratio = length(city(a)) / length(city(b));
+    const ratio = length(a) / length(b);
     expect(ratio).toBeGreaterThan(1.02);
     expect(ratio).toBeLessThan(1.12);
   });
 
-  it('both routes lap the deck; flowing corners, no radius twice per route', () => {
-    for (const r of routes) {
-      const onDeck = samples(r).filter((p) => polyDist(p, tokyoDeck.center) < tokyoDeck.half);
-      expect(onDeck.length * 0.5).toBeGreaterThan(500);
-    }
-    for (const cs of tokyoCorners) {
+  it('city routes: flowing corners, no radius twice per route, A has its hairpin', () => {
+    for (const cs of tokyoCorners.slice(0, 2)) {
       const big = cs.filter((c) => Math.abs(c.turn) > 60 * DEG);
       expect(new Set(big.map((c) => c.r)).size).toBe(big.length);
       expect(cs.filter((c) => Math.abs(c.turn) < 60 * DEG).length).toBeGreaterThanOrEqual(4);
@@ -129,9 +212,32 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     ).toBe(true);
   });
 
+  it('bends the deck: sweepers and S-bends, no right angles, one long banked curve', () => {
+    const cs = tokyoCorners[2];
+    expect(cs.length).toBeGreaterThanOrEqual(8);
+    expect(new Set(cs.map((c) => c.r)).size).toBe(cs.length); // every radius different
+    expect(Math.min(...cs.map((c) => c.r))).toBeGreaterThanOrEqual(30);
+    const flicks = cs.filter((c, i) => i > 0 && Math.sign(c.turn) !== Math.sign(cs[i - 1].turn));
+    expect(flicks.length).toBeGreaterThanOrEqual(4);
+    // nothing near 90°: corners stay under 70°, except the one long sweeper
+    const long = cs.filter((c) => Math.abs(c.turn) >= 70 * DEG);
+    expect(long.length).toBe(1);
+    expect(long[0].r).toBeGreaterThanOrEqual(50);
+    expect(Math.abs(long[0].turn) * long[0].r).toBeGreaterThan(90);
+    // longest straight under 90 m
+    const seg = deckRoute
+      .slice(1)
+      .map((b, i) => Math.hypot(b.x - deckRoute[i].x, b.y - deckRoute[i].y));
+    expect(Math.max(...seg)).toBeLessThan(90);
+    expect(length(deckRoute)).toBeGreaterThan(600);
+    // the deck floats over the city, well clear of the scramble
+    expect(polyDist(SCRAMBLE, tokyoDeck.center)).toBeGreaterThan(35);
+  });
+
   it('makes the scramble a SCRAMBLE bonus zone on route A only', () => {
     const zones = f.bonusZones!;
     expect(zones.length).toBeGreaterThanOrEqual(1);
+    expect(deck.bonusZones ?? []).toEqual([]);
     for (const z of zones) {
       expect(z).toMatchObject({ id: 'scramble', trick: 'SCRAMBLE' });
       expect(inRect(z, MAP) && inRect({ x: z.x + z.w, y: z.y + z.h }, MAP)).toBe(true);
@@ -167,40 +273,10 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     }
   });
 
-  it('closes the side streets: only the routes are reachable from the start', () => {
-    // flood fill a 1 m grid; a cell is blocked within a car half width of a solid
-    const blocked = new Uint8Array(f.w * f.h);
-    for (const s of f.solids) {
-      const cs = cornersOf(s);
-      const [x0, x1] = [Math.min(...cs.map((p) => p.x)) - 2, Math.max(...cs.map((p) => p.x)) + 2];
-      const [y0, y1] = [Math.min(...cs.map((p) => p.y)) - 2, Math.max(...cs.map((p) => p.y)) + 2];
-      for (let y = Math.max(0, Math.floor(y0)); y < Math.min(f.h, y1); y++)
-        for (let x = Math.max(0, Math.floor(x0)); x < Math.min(f.w, x1); x++)
-          if (distToSolid({ x: x + 0.5, y: y + 0.5 }, s) < CAR_WIDTH / 2) blocked[y * f.w + x] = 1;
-    }
-    const seen = new Uint8Array(f.w * f.h);
-    const start = Math.floor(tokyo.start.pos.y) * f.w + Math.floor(tokyo.start.pos.x);
-    const todo = [start];
-    seen[start] = 1;
-    while (todo.length) {
-      const i = todo.pop()!;
-      const [x, y] = [i % f.w, Math.floor(i / f.w)];
-      for (const [dx, dy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const [nx, ny] = [x + dx, y + dy];
-        const j = ny * f.w + nx;
-        if (nx < 0 || ny < 0 || nx >= f.w || ny >= f.h || seen[j] || blocked[j]) continue;
-        seen[j] = 1;
-        todo.push(j);
-      }
-    }
-    const reach = (x: number, y: number) => seen[Math.floor(y) * f.w + Math.floor(x)] === 1;
-    for (const r of routes) for (const p of samples(r)) expect(reach(p.x, p.y)).toBe(true);
-    // the scramble's closed arms and the side streets, mid way
+  it('closes the side streets and the city edge: only the routes and the helix are reachable', () => {
+    const reach = reachable(f, tokyo.start.pos);
+    for (const r of routes) for (const p of samples(r)) expect(reach(p)).toBe(true);
+    // the scramble's closed arms, the side streets mid way, the city beyond the wall
     for (const [x, y] of [
       [130, 125],
       [210, 175],
@@ -208,12 +284,38 @@ describe('tokyo (TOKYO NIGHTS)', () => {
       [140, 180],
       [262, 175],
       [250, 80],
+      [150, 10],
+      [390, 150],
+      [200, 292],
+      [DECK_IN.x, DECK_IN.y],
     ])
-      expect(reach(x, y)).toBe(false);
+      expect(reach({ x, y })).toBe(false);
+    // without the helix ring the street can't get up: the ring is the only way past the wall
+    const noRing = reachable(f, tokyo.start.pos, inRing);
+    expect(noRing({ x: 280, y: 31 })).toBe(true);
+    expect(noRing({ x: helix.center.x, y: 5 })).toBe(false);
+  });
+
+  it('keeps the deck closed: helix exit to finish, nothing off its rails', () => {
+    const reach = reachable(deck, DECK_IN);
+    const z = tokyo.finish.zone;
+    expect(reach({ x: z.x + z.w / 2, y: z.y + z.h / 2 })).toBe(true);
+    for (const p of samples(deckRoute)) expect(reach(p)).toBe(true);
+    // the city below, the frontage road, either side of the deck
+    for (const p of [
+      { x: 200, y: 150 },
+      { x: 302, y: 45 },
+      { x: 330, y: 120 },
+      { x: 380, y: 260 },
+    ])
+      expect(reach(p)).toBe(false);
+    // up here the ring only runs down to its p = 0.25 block
+    expect(reach(onRing(0.4))).toBe(true);
+    expect(reach(onRing(0.1))).toBe(false);
   });
 
   it('sets par from the route length at 17 m/s, medals scaled like B2 MEET', () => {
-    const len = length(route);
+    const len = length(cityA) + length(deckRoute);
     expect(tokyo.parTime).toBe(Math.round(len / 17));
     const [b, s, g] = tokyo.medals!;
     expect(b).toBeLessThan(s);
@@ -230,14 +332,14 @@ describe('tokyo (TOKYO NIGHTS)', () => {
       }
     }
     for (const w of tokyoCity.walkways) for (const p of w.pts) expect(inRect(p, MAP)).toBe(true);
-    expect(tokyoCity.cars).toBeGreaterThanOrEqual(25);
+    // about 30% fewer cars than the 30 of v0.9
+    expect(tokyoCity.cars).toBeGreaterThanOrEqual(18);
+    expect(tokyoCity.cars).toBeLessThanOrEqual(22);
     expect(tokyoCity.peds).toBeGreaterThanOrEqual(40);
   });
 
-  it('keeps traffic off the expressway', () => {
-    for (const l of tokyoCity.lanes)
-      for (const p of samples(l.pts))
-        expect(polyDist(p, tokyoDeck.center)).toBeGreaterThan(tokyoDeck.half + 2);
+  it('keeps traffic off the helix (the deck is a floor of its own)', () => {
+    for (const l of tokyoCity.lanes) for (const p of samples(l.pts)) expect(inRing(p)).toBe(false);
   });
 
   it('gives every lane a way on and holds the loop at the scramble signal', () => {
@@ -359,10 +461,14 @@ describe('tokyo (TOKYO NIGHTS)', () => {
                 ]
               : [{ x: d.x, y: d.y }];
     for (const d of decor) {
-      expect(d.floor).toBe(0);
+      expect([0, 1]).toContain(d.floor);
       for (const p of pts(d)) expect(inRect(p, MAP)).toBe(true);
     }
     expect(decor.filter((d) => d.kind === 'crowd').length).toBeGreaterThan(30);
+    // the deck: surface and lines, lamps, sign gantries, tire marks; no city kinds up there
+    const up = new Set(decor.filter((d) => d.floor === 1).map((d) => d.kind));
+    for (const k of ['paint', 'pool', 'sign', 'skid', 'arrow', 'text']) expect(up).toContain(k);
+    for (const k of ['asphalt', 'block', 'front', 'crowd']) expect(up).not.toContain(k);
     // the over layer (per frame) stays lean
     const over = decor.filter((d) => ['neon', 'crowd', 'screen', 'shaft'].includes(d.kind));
     expect(over.length).toBeLessThan(400);
