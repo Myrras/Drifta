@@ -24,6 +24,8 @@ export interface Solid extends Rect {
   facing?: number;
   /** parked car lights: headlights on, or hazards blinking */
   lights?: 'on' | 'hazard';
+  /** parked police car: light bar flashes, close drifts score COP SHOW */
+  police?: boolean;
 }
 /** angle in radians, 0 = facing +x, positive = clockwise on screen (y down) */
 export interface Spawn {
@@ -41,6 +43,12 @@ export interface Floor {
   circles: Circle[];
   /** clipping zones: drifting inside scores faster; first entry per combo gives a CLIP bonus */
   clipZones?: Rect[];
+  /** bonus zones: drift through every rect sharing an id within one combo to fire its trick once */
+  bonusZones?: BonusZone[];
+}
+export interface BonusZone extends Rect {
+  id: string;
+  trick: Trick;
 }
 export interface Circle {
   x: number;
@@ -117,7 +125,7 @@ export interface Hit {
   depth: number;
 }
 export type Trick =
-  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP';
+  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP' | 'NEAR MISS' | 'SCRAMBLE' | 'DRIVE-THRU' | 'COP SHOW';
 /** frozen = floor fade in progress: grace timer paused, no scoring */
 export interface ScoreFrame {
   drift: DriftInfo;
@@ -128,6 +136,12 @@ export interface ScoreFrame {
   frozen: boolean;
   /** clipping zone the car is in, if any */
   clip?: Rect | null;
+  /** bonus zones the car is inside this frame */
+  bonus?: BonusZone[];
+  /** all bonus zones of the floor (to know how many rects share an id) */
+  bonusAll?: readonly BonusZone[];
+  /** meters to the nearest police solid */
+  nearPolice?: number;
 }
 export interface Combo {
   points: number;

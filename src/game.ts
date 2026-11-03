@@ -477,11 +477,30 @@ export function createGame(
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
     const clip = (s.clip = zoneAt(car.pos, map.floors[s.floorIndex].clipZones));
+    const bonusAll = map.floors[s.floorIndex].bonusZones ?? [];
+    const bonus = bonusAll.filter((z) => inRect(car.pos, z));
+    const nearPolice = s.drift.drifting
+      ? nearestDistance(
+          car,
+          solids.filter((o) => o.police),
+        )
+      : Infinity;
 
     handle(
       stepScoring(
         s.scoring,
-        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false, clip },
+        {
+          drift: s.drift,
+          yawDelta,
+          nearDist,
+          hit: hard,
+          rampDrift,
+          frozen: false,
+          clip,
+          bonus,
+          bonusAll,
+          nearPolice,
+        },
         dt,
       ),
     );
