@@ -1143,7 +1143,7 @@ export function createGame(
                     still: clips?.still?.(d.id),
                   })),
                   driftRow: s.driftRow,
-                  carPick: s.carPick,
+                  carPick: s.carPick && !s.cheat, // cheat skips the chooser: no hint or toast
                   chooser: s.chooser && {
                     cars: s.chooser.cars.map((m) => {
                       const look = lookOf(m);
