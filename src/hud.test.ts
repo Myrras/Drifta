@@ -8,6 +8,8 @@ import {
   formatTime,
   medalText,
   multColor,
+  pauseHint,
+  resultsHint,
 } from './hud';
 
 describe('hud formatting', () => {
@@ -67,5 +69,17 @@ describe('medalText', () => {
     expect(medalText(250, m)).toBe('SILVER · 50 to GOLD');
     expect(medalText(300, m)).toBe('GOLD');
     expect(medalText(50)).toBe('');
+  });
+});
+
+describe('hint lines', () => {
+  it('shows only the active device binds', () => {
+    const kb = { theme: 'arcade', device: 'kb', padStyle: 'xbox' } as const;
+    expect(pauseHint(kb)).toContain('ENTER');
+    expect(resultsHint(kb)).toContain('ENTER');
+    const pad = { ...kb, device: 'pad', padStyle: 'ps' } as const;
+    expect(pauseHint(pad)).not.toContain('ENTER');
+    expect(pauseHint(pad)).toContain('SHARE');
+    expect(resultsHint(pad)).not.toContain('ENTER');
   });
 });
