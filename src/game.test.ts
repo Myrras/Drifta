@@ -13,6 +13,9 @@ const audio: AudioLike = {
   bank: noop,
   fail: noop,
   stop: noop,
+  music: noop,
+  setIntensity: noop,
+  setVolumes: noop,
 };
 const IDLE: InputState = {
   steer: 0,
