@@ -67,21 +67,21 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
 
 ## Controls
 
-| Action                  | Keyboard      | Gamepad |
-| ----------------------- | ------------- | ------- |
-| Steer / throttle, brake | WASD / arrows | Stick   |
-| Handbrake               | Space         | A       |
-| Clutch                  | Shift         | LB      |
-| Restart                 | R             |         |
-| Pause                   | Esc           | Start   |
-| Confirm / back          | Enter / Esc   | A / B   |
-| Skip song in a run      | N             | RB      |
-| Settings tab left/right | Q / E         | LB / RB |
-| Garage: tune            | T             |         |
-| Garage: rev             | Hold R        | RT      |
-| Results: pick a drift   | Up / Down     |         |
-| Results: save clip      | S             | X       |
-| Photo mode              | P             | R3      |
+| Action                  | Keyboard      | Gamepad             |
+| ----------------------- | ------------- | ------------------- |
+| Steer / throttle, brake | WASD / arrows | Left stick / RT, LT |
+| Handbrake               | Space         | A                   |
+| Clutch                  | Shift         | LB                  |
+| Restart                 | R             | View / Select       |
+| Pause                   | Esc           | Start               |
+| Confirm / back          | Enter / Esc   | A / B               |
+| Skip song in a run      | N             | RB                  |
+| Settings tab left/right | Q / E         | LB / RB             |
+| Garage: tune            | T             | X                   |
+| Garage: rev             | Hold R        | RT                  |
+| Results: pick a drift   | Left / Right  | D-pad               |
+| Results: save clip      | S             | X                   |
+| Photo mode              | P             | R3                  |
 
 ## Multiplayer
 
