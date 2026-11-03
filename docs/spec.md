@@ -32,3 +32,16 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 - scoring, car, collision are pure (no DOM) and covered by Vitest.
 - Checks: typecheck, format:check, test, build.
 - Repo Myrras/Drifta (public). GitHub Actions on push to main: typecheck → test → build → deploy-pages. Vite base './'.
+
+## v0.4
+
+- Main menu: Play / Garage / Settings.
+- Garage: car select (11 cars), paint colour, car stats affect physics.
+- Settings: volumes, camera shake, reset bests; persisted.
+- Procedural eurobeat-style music that reacts to the combo.
+- Maps: JAPAN GARAGE (outlined by parked cars), WANGAN DOCKS, TEST PAD.
+- Redesigned countdown and combo HUD juice.
+- World juice: body roll, smoke, sparks, speed feel.
+- Dark lighting with readable obstacle rims.
+- Auto-recover when stuck (2.5 s).
+- Gamepad B = back.
