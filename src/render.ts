@@ -104,7 +104,18 @@ const PUNCH = 0.04; // zoom-in on impact
 const DRIFT_LOOK = 3; // m extra look-ahead toward the nose while drifting
 
 const DOCKS = 'WANGAN DOCKS';
-const ASPHALT = '#1b1c1f';
+const TESTPAD = 'TEST PAD';
+/** Per-map darkness: docks and test pad are lit up so obstacles read at speed. */
+function ambientOf(map: GameMap, idx: number) {
+  return map.name === DOCKS
+    ? 0.58
+    : map.name === TESTPAD
+      ? 0.3
+      : idx === 0
+        ? AMBIENT_ROOF
+        : AMBIENT;
+}
+const ASPHALT = '#2a2b2f';
 const QUAY_YELLOW = '#d6a51f';
 const CONTAINER_COLORS = ['#7b3a2c', '#2e4a6e', '#3c5e48', '#62666a', '#a8642c'];
 
@@ -306,6 +317,8 @@ function container(g: Ctx, w: number, h: number) {
   g.fillStyle = 'rgba(0,0,0,0.3)'; // door end + corner castings
   g.fillRect(hw - 0.3, -hh + 0.1, 0.18, h - 0.2);
   for (const x of [-hw, hw - 0.22]) for (const y of [-hh, hh - 0.22]) g.fillRect(x, y, 0.22, 0.22);
+  g.fillStyle = 'rgba(255,255,255,0.14)'; // lighter roof face so stacks read as blocks
+  g.fillRect(-hw + 0.25, -hh + 0.25, w - 0.5, h - 0.5);
   g.fillStyle = 'rgba(255,255,255,0.08)'; // light from above-left
   g.fillRect(-hw + 0.1, -hh + 0.1, w - 0.2, 0.12);
   g.restore();
@@ -531,6 +544,34 @@ function hazardLamps(p: ParkedPose): Lamp[] {
   return out;
 }
 
+/** Edge highlight of every solid, drawn above the darkness (warm on docks, cool elsewhere). */
+function buildRim(map: GameMap, idx: number) {
+  const f = map.floors[idx];
+  const docks = map.name === DOCKS;
+  const { c, g } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
+  g.scale(STATIC_PX, STATIC_PX);
+  g.strokeStyle = docks ? 'rgba(255,210,150,0.32)' : 'rgba(190,220,255,0.28)';
+  g.lineWidth = 0.1;
+  for (const s of f.solids) {
+    g.save();
+    g.translate(s.x + s.w / 2, s.y + s.h / 2);
+    g.rotate(s.angle ?? 0);
+    g.strokeRect(-s.w / 2, -s.h / 2, s.w, s.h);
+    g.restore();
+  }
+  for (const k of f.circles) {
+    g.beginPath();
+    g.arc(k.x, k.y, k.r, 0, Math.PI * 2);
+    g.stroke();
+  }
+  if (docks) {
+    g.strokeStyle = 'rgba(255,215,40,0.7)'; // reflective quay edge
+    g.lineWidth = 0.22;
+    g.strokeRect(1.1, 1.1, f.w - 2.2, f.h - 2.2);
+  }
+  return c;
+}
+
 /** Static per-floor light layers: darkness cut mask (white alpha), colored glow, blinking hazard lamps. */
 function buildLights(map: GameMap, idx: number) {
   const f = map.floors[idx];
@@ -548,10 +589,10 @@ function buildLights(map: GameMap, idx: number) {
         cone: false,
         ...l,
         ang: 0,
-        size: LIGHT_R * 1.35,
-        cut: 0.7,
+        size: LIGHT_R * 1.8,
+        cut: 0.85,
         tint: 'sodium',
-        glow: 0.3,
+        glow: 0.4,
       });
   } else if (idx === 0) {
     // roof: lamp posts (its pillars) instead of ceiling lights
@@ -573,6 +614,7 @@ function buildLights(map: GameMap, idx: number) {
   return {
     mask: mask.c,
     glow: glow.c,
+    rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
   };
 }
@@ -712,6 +754,26 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       g.fillRect(-r, -r, 2 * r, 2 * r);
       g.restore();
     }
+  } else if (map.name === TESTPAD) {
+    for (let step = 10; step < f.w; step += 10) {
+      const major = step % 50 === 0;
+      g.strokeStyle = major ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.18)';
+      g.lineWidth = major ? 0.2 : 0.1;
+      g.beginPath();
+      g.moveTo(step, 0);
+      g.lineTo(step, f.h);
+      g.moveTo(0, step);
+      g.lineTo(f.w, step);
+      g.stroke();
+    }
+    g.fillStyle = 'rgba(255,140,30,0.9)'; // painted cone markers
+    for (let x = 20; x < f.w; x += 20)
+      for (let y = 20; y < f.h; y += 20) {
+        if ((x / 20 + y / 20) % 3) continue;
+        g.beginPath();
+        g.arc(x + 5, y + 5, 0.45, 0, Math.PI * 2);
+        g.fill();
+      }
   } else {
     g.strokeStyle = 'rgba(0,0,0,0.22)'; // slab joints
     g.lineWidth = 0.06;
@@ -811,7 +873,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   };
   let containers = 0;
   for (const w of walls) {
-    if (w.angle !== undefined) {
+    if (w.angle !== undefined || (docks && isContainer(w))) {
       const c = isContainer(w) ? CONTAINER_COLORS[containers++ % CONTAINER_COLORS.length] : null;
       local(w, () => {
         shadow();
@@ -1489,7 +1551,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       let l = lightLayers.get(fl);
       if (!l) lightLayers.set(fl, (l = buildLights(v.map, idx)));
       const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
-      return { fl, l, w, amb: idx === 0 ? AMBIENT_ROOF : AMBIENT };
+      return { fl, l, w, amb: ambientOf(v.map, idx) };
     });
     const dyn: [Lamp, number][] = playerLamps(car, v.brake, model).map((l) => [l, 1]);
     if (touch && v.scrape > 0) {
@@ -1530,6 +1592,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
     ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    for (const { fl, l, w } of layers) {
+      ctx.globalAlpha = w;
+      ctx.drawImage(l.rim, 0, 0, fl.w, fl.h);
+    }
+    ctx.globalAlpha = 1;
     ctx.save();
     bodyFrame(ctx);
     playerLenses(ctx, car, v.brake, model);
