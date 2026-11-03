@@ -1,5 +1,7 @@
 import type { HudView, MenuRow, MenuView, UiContext } from '../view';
 import { drawCar } from '../sprites';
+import { cacheSet, lookKey, type Look } from '../cosmetics';
+import { drawSlot } from './garage';
 import { PLAYER_MODELS } from '../models';
 import { cachedGrad, DISPLAY, drawBackdrop, drawOverlayFx, MASTHEAD, OSD, THEMES } from './theme';
 import { drawLogo } from './logo';
@@ -10,8 +12,12 @@ const CAR_PX = 96; // px per m in the cache
 const carCache = new Map<string, HTMLCanvasElement>();
 
 /** Car with its warm rim glow, rendered once per model|color (blur is costly per frame). */
-function carImage(model: Parameters<typeof drawCar>[1], color: string): HTMLCanvasElement {
-  const key = `${model}|${color}`;
+export function carImage(
+  model: Parameters<typeof drawCar>[1],
+  color: string,
+  look: Look,
+): HTMLCanvasElement {
+  const key = `${model}|${color}|${lookKey(look)}`;
   let c = carCache.get(key);
   if (!c) {
     c = document.createElement('canvas');
@@ -21,8 +27,8 @@ function carImage(model: Parameters<typeof drawCar>[1], color: string): HTMLCanv
     g.scale(CAR_PX, CAR_PX);
     g.shadowColor = 'rgba(255,225,170,0.9)';
     g.shadowBlur = (1.1 / 13) * CAR_PX; // same glow as 1.1 u at scale 13 u/m
-    drawCar(g, model, color);
-    carCache.set(key, c);
+    drawCar(g, model, color, look);
+    cacheSet(carCache, key, c);
   }
   return c;
 }
@@ -106,14 +112,24 @@ const SETTINGS_HINTS: [Action, string][] = [
   ['back', 'back'],
 ];
 const GARAGE_HINTS: [Action, string][] = [
-  ['adjust', 'car'],
-  ['navigate', 'paint'],
+  ['navigate', 'slot'],
+  ['adjust', 'change'],
   ['tune', 'tune'],
   ['rev', 'rev'],
   ['confirm', 'select'],
   ['back', 'back'],
 ];
+const STARTER_HINTS: [Action, string][] = [
+  ['adjust', 'car'],
+  ['confirm', 'choose'],
+];
+const PICK_HINTS: [Action, string][] = [
+  ['confirm', 'use car pick'],
+  ['back', 'cancel'],
+];
 const H = {
+  starter: '',
+  pick: '',
   device: '',
   pad: '',
   title: '',
@@ -132,6 +148,8 @@ function hintsFor(ui: UiContext): typeof H {
     H.drive = hintLine(DRIVE_HINTS, ui.device, ui.padStyle);
     H.settings = hintLine(SETTINGS_HINTS, ui.device, ui.padStyle);
     H.garage = hintLine(GARAGE_HINTS, ui.device, ui.padStyle);
+    H.starter = hintLine(STARTER_HINTS, ui.device, ui.padStyle);
+    H.pick = hintLine(PICK_HINTS, ui.device, ui.padStyle);
     [H.tabL, H.tabR] = glyph('tabs', ui.device, ui.padStyle).split('/');
   }
   return H;
@@ -485,14 +503,17 @@ function bar(
 function drawGarage(
   g: CanvasRenderingContext2D,
   m: NonNullable<MenuView['garage']>,
+  title: string,
   hint: string,
+  row: number,
+  hint2: string,
 ): void {
   const { th, u, w, h, now } = F;
   const arcade = th.id === 'arcade';
   const bottom = h - 8 * u;
   const wide = w >= h * 1.05;
   const cw = wide ? Math.min(72 * u, w * 0.46) : Math.min(76 * u, w - 8 * u);
-  const ch = 43 * u;
+  const ch = 68 * u;
   let cardX: number, cardY: number, carX: number, carY: number, carR: number;
   if (wide) {
     cardX = w - 5 * u - cw;
@@ -537,15 +558,29 @@ function drawGarage(
   g.shadowBlur = 0;
   g.restore();
   // car, slowly rotating, grows in on open
-  const car = carImage(m.model, m.color);
+  const car = carImage(m.model, m.color, m.look);
   g.save();
   g.translate(carX, carY);
   g.rotate(now * 0.5);
   const s = scale * (0.85 + 0.15 * open);
   g.scale(s, s);
   g.globalAlpha = open;
+  if (m.lock) g.filter = 'grayscale(1) brightness(0.45)';
   g.drawImage(car, -CAR_HALF, -CAR_HALF, 2 * CAR_HALF, 2 * CAR_HALF);
   g.restore();
+  if (m.lock) {
+    padlock(g, carX, carY, scale * 0.9);
+    const n = m.lock.picks;
+    const note = m.lock.offer
+      ? `USE CAR PICK?  ${n} LEFT`
+      : n > 0
+        ? `LOCKED · ${n} CAR PICK${n > 1 ? 'S' : ''}`
+        : 'WIN 1ST ON A MAP OR CLEAR 3 DAILIES';
+    const f = th.font(800, 2.6 * u);
+    const px = fitPx(g, note, f, 2.6 * u, wide ? cardX - 6 * u : w - 8 * u);
+    const y = carY + R * 0.62 + 3 * u;
+    text(g, note, carX, y, th.font(800, px), m.lock.offer ? HAZARD : th.text, 'center');
+  }
 
   // spec card
   const e = enter(2, A.open);
@@ -588,26 +623,22 @@ function drawGarage(
   g.fillRect(x0, y + 10.6 * u, x1 - x0, Math.max(1, 0.18 * u));
   const acc = arcade ? th.accent2 : th.accent;
   const sf = th.font(700, 2.6 * u);
-  text(g, `◀  ${m.index + 1} / ${m.count}  ▶`, x0, y + 13.8 * u, sf, acc);
-  text(g, 'TUNE', x0, y + 19 * u, th.font(700, 2.4 * u), th.dim);
-  text(g, `◀ ${m.tune.toUpperCase()} ▶`, x1, y + 19 * u, sf, th.text, 'right');
-  text(g, 'PAINT', x0, y + 24.6 * u, th.font(700, 2.4 * u), th.dim);
-  const sw = 3.6 * u;
-  for (let i = 0; i < m.colors.length; i++) {
-    const c = m.colors[i];
-    const sx = x1 - sw - (m.colors.length - 1 - i) * (sw + 1.2 * u);
-    const sy = y + 24.6 * u - sw / 2;
-    if (c === m.color) {
-      g.strokeStyle = acc;
-      g.lineWidth = 0.5 * u;
-      g.strokeRect(sx - 0.6 * u, sy - 0.6 * u, sw + 1.2 * u, sw + 1.2 * u);
-    }
-    g.fillStyle = c;
-    g.fillRect(sx, sy, sw, sw);
+  if (row === 0) {
+    g.globalAlpha = e * 0.2;
+    g.fillStyle = acc;
+    g.fillRect(x0 - 1.2 * u, y + 11.8 * u, x1 - x0 + 2.4 * u, 4 * u);
+    g.globalAlpha = e;
   }
-  bar(g, 'POWER', m.stats.power, x0, x1, y + 30.4 * u);
-  bar(g, 'GRIP', m.stats.grip, x0, x1, y + 34.6 * u);
-  bar(g, 'WEIGHT', m.stats.weight, x0, x1, y + 38.8 * u);
+  text(g, `◀  ${m.index + 1} / ${m.count}  ▶`, x0, y + 13.8 * u, sf, acc);
+  text(g, 'TUNE', x0, y + 18.4 * u, th.font(700, 2.4 * u), th.dim);
+  text(g, `◀ ${m.tune.toUpperCase()} ▶`, x1, y + 18.4 * u, sf, th.text, 'right');
+  m.slots.forEach((r, i) =>
+    drawSlot(g, th, u, r, row === i + 1, x0, x1, y + (22.8 + i * 4.2) * u, acc),
+  );
+  if (m.slotLock) text(g, `LOCKED: ${m.slotLock}`, x0, y + 52.4 * u, th.font(700, 2.2 * u), acc);
+  bar(g, 'POWER', m.stats.power, x0, x1, y + 57 * u);
+  bar(g, 'GRIP', m.stats.grip, x0, x1, y + 60.8 * u);
+  bar(g, 'WEIGHT', m.stats.weight, x0, x1, y + 64.6 * u);
   const tag = PLAYER_MODELS[m.model].tag;
   if (tag) hazardBadge(g, tag, x1 + 1.5 * u, y - 0.4 * u);
   g.restore();
@@ -615,18 +646,51 @@ function drawGarage(
   // page heading: over the card when side by side, over the car when stacked
   heading(
     g,
-    'GARAGE',
+    title,
     wide ? cardX + cw / 2 : w / 2,
     wide ? cardY - 9 * u : 19 * u,
     wide ? 0 : 40 * u,
   );
-  hints(g, hint, '');
+  hints(g, hint, hint2);
+}
+
+/** Padlock centred on (x, y); s = body width in px. */
+function padlock(g: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  g.save();
+  g.translate(x, y);
+  g.fillStyle = g.strokeStyle = HAZARD;
+  g.lineWidth = s * 0.18;
+  g.beginPath();
+  g.moveTo(-s * 0.3, s * 0.05);
+  g.arc(0, -s * 0.15, s * 0.3, Math.PI, 0);
+  g.lineTo(s * 0.3, s * 0.05);
+  g.stroke();
+  g.fillRect(-s * 0.5, 0, s, s * 0.75);
+  g.fillStyle = INK;
+  g.beginPath();
+  g.arc(0, s * 0.3, s * 0.1, 0, Math.PI * 2);
+  g.fill();
+  g.fillRect(-s * 0.04, s * 0.3, s * 0.08, s * 0.25);
+  g.restore();
+}
+
+/** Short notice at the top of the screen. */
+function toast(g: CanvasRenderingContext2D, s: string): void {
+  const { th, u, w } = F;
+  const y = 8 * u;
+  const f = th.font(800, 3 * u);
+  g.font = f;
+  const tw = g.measureText(s).width + 6 * u;
+  g.fillStyle = HAZARD;
+  g.fillRect(w / 2 - tw / 2, y - 2.8 * u, tw, 5.6 * u);
+  text(g, s, w / 2, y, f, INK, 'center');
 }
 
 // ---------- title ----------
 
 let bestVal = -1;
 let bestStr = '';
+let bestNote: string | undefined;
 
 function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typeof H): void {
   const { th, u, w, h, now } = F;
@@ -637,10 +701,11 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   const top = 12 * u;
   const Sw = Math.min((w * 0.9) / 5.4, 24 * u);
   // tall windows: center logo + rows as one block; short ones: rows sit low, logo shrinks
-  const block = 2.5 * Sw + 4 * u + ph + 2 * step + 7.6 * u;
+  const n = m.rows.length - 1;
+  const block = 2.5 * Sw + 4 * u + ph + n * step + 7.6 * u;
   const rowsTop = Math.min(
     h * 0.5 + 10 * u,
-    hintTop - 9 * u - ph / 2 - 2 * step,
+    hintTop - 9 * u - ph / 2 - n * step,
     top + Math.max(0, hintTop - top - block) * 0.42 + 2.5 * Sw + 4 * u + ph / 2,
   );
   const S = Math.max(4 * u, Math.min(Sw, (rowsTop - ph / 2 - 4 * u - top) / 2.5));
@@ -662,16 +727,17 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   }
   rows(g, m.rows, m.row, rowsTop, step, 0, A.rowsOpen, selPos(now));
   if (v.par > 0) {
-    if (v.best !== bestVal) {
+    if (v.best !== bestVal || m.note !== bestNote) {
       bestVal = v.best;
-      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}`;
+      bestNote = m.note;
+      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}${m.note ? `  ·  ${m.note}` : ''}`;
     }
     g.globalAlpha = enter(3, A.open);
     text(
       g,
       bestStr,
       w / 2,
-      rowsTop + 2 * step + ph / 2 + 3.6 * u,
+      rowsTop + n * step + ph / 2 + 3.6 * u,
       th.font(700, 3 * u, th.id === 'vhs'),
       th.id === 'vhs' ? th.accent : th.accent2,
       'center',
@@ -699,9 +765,12 @@ export function drawMenu(
   const { th, u } = F;
   track(m, now);
   const hk = hintsFor(m.ui);
-  drawBackdrop(ctx, width, height, now, th, m.screen !== 'garage'); // attract scene behind
-  if (m.screen === 'garage') {
-    if (m.garage) drawGarage(ctx, m.garage, hk.garage);
+  const carScreen = m.screen === 'garage' || m.screen === 'starter';
+  drawBackdrop(ctx, width, height, now, th, !carScreen); // attract scene behind
+  if (carScreen) {
+    const gm = m.garage;
+    if (gm && m.screen === 'starter') drawGarage(ctx, gm, 'PICK YOUR STARTER', hk.starter, -1, '');
+    else if (gm) drawGarage(ctx, gm, 'GARAGE', hk.garage, m.row, gm.lock?.offer ? hk.pick : '');
   } else if (m.screen === 'title') {
     drawTitle(ctx, v, m, hk);
   } else {
@@ -718,6 +787,7 @@ export function drawMenu(
     if (m.tabs) tabStrip(ctx, m.tabs.names, m.tabs.active, m.row === 0, top, ph, hk);
     hints(ctx, hk.settings, '');
   }
+  if (m.toast) toast(ctx, m.toast);
   drawOverlayFx(ctx, width, height, now, th);
   return true;
 }

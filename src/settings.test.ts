@@ -28,8 +28,9 @@ describe('settings', () => {
     );
   });
   it('validates the track', () => {
-    expect(loadSettings(fake(JSON.stringify({ track: 'eurobeat' }))).track).toBe('eurobeat');
-    expect(loadSettings(fake(JSON.stringify({ track: 'polka' }))).track).toBe('tokyo');
+    expect(loadSettings(fake(JSON.stringify({ track: 'eurobeat' }))).track).toBe('phonk');
+    expect(loadSettings(fake(JSON.stringify({ track: 'tokyo' }))).track).toBe('phonk');
+    expect(loadSettings(fake(JSON.stringify({ track: 'polka' }))).track).toBe('phonk');
   });
   it('validates the menu theme and accepts the mine track', () => {
     expect(loadSettings(fake()).menuTheme).toBe('arcade');

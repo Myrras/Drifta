@@ -8,7 +8,7 @@ import type { Tune } from './settings';
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
-export type UiSound = 'move' | 'adjust' | 'confirm' | 'back' | 'tab';
+export type UiSound = 'move' | 'adjust' | 'confirm' | 'back' | 'tab' | 'count' | 'go';
 /** menu blips: wave, start Hz, end Hz, seconds, peak gain */
 const UI_BLIPS: Record<UiSound, [OscillatorType, number, number, number, number]> = {
   move: ['square', 880, 880, 0.035, 0.05],
@@ -16,6 +16,8 @@ const UI_BLIPS: Record<UiSound, [OscillatorType, number, number, number, number]
   confirm: ['square', 660, 1320, 0.1, 0.07],
   back: ['square', 880, 440, 0.09, 0.06],
   tab: ['triangle', 520, 780, 0.06, 0.12],
+  count: ['square', 440, 440, 0.12, 0.07],
+  go: ['square', 880, 880, 0.45, 0.08],
 };
 
 /** Loop window [startSec, endSec] of `seconds` with high, steady RMS (50 ms blocks). */
@@ -67,7 +69,7 @@ export function createAudio() {
   let mus: ReturnType<typeof createMusic> | null = null;
   let musicOn = false;
   let intensity = 0.15;
-  let track: Track = 'tokyo';
+  let track: Track = 'phonk';
   let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
   let tap: MediaStreamAudioDestinationNode | null = null;
 

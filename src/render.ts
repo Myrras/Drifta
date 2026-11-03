@@ -14,6 +14,7 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { testpad } from './maps/testpad';
 import { tokyo, tokyoRoute } from './maps/tokyo';
+import { drivethru, drivethruRoute } from './maps/drivethru';
 import type { CityGraph, Ped, Traffic, TrafficCar } from './traffic';
 import { CAR_MODELS, PLAYER_MODELS } from './models';
 import {
@@ -24,7 +25,8 @@ import {
   updateSmoke,
   updateSparks,
 } from './particles';
-import { drawParkedCar } from './sprites';
+import { drawCar, drawParkedCar } from './sprites';
+import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
 
@@ -82,11 +84,13 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
   [tokyo, tokyoRoute],
+  [drivethru, drivethruRoute],
 ]);
 const LIGHT_R = 7; // ceiling pool radius
 const HEAD_LEN = 25; // player headlight cones
 const PARKED_HEAD_LEN = 18;
 const HAZARD_HZ = 1.5;
+const POLICE_HZ = 2.5; // light bar: red, blue, red...
 
 const SKID_W = 0.25;
 const SKID_MIN_KMH = 15;
@@ -215,7 +219,7 @@ interface Lamp {
   tint: Tint;
   glow: number;
 }
-type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium' | 'green';
+type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium' | 'green' | 'blue';
 const TINTS: Record<Tint, string> = {
   cool: '205,230,255',
   sodium: '255,150,45',
@@ -224,6 +228,7 @@ const TINTS: Record<Tint, string> = {
   amber: '255,150,20',
   white: '255,255,255',
   green: '60,255,150',
+  blue: '50,110,255',
 };
 
 let lightSprites: {
@@ -571,6 +576,21 @@ function hazardLamps(p: Pose): Lamp[] {
   return out;
 }
 
+/** A parked police car's light bar: its red and its blue half. */
+function policeLamps(p: Pose): [Lamp, Lamp] {
+  const lamp = (w: number, tint: Tint): Lamp => ({
+    cone: false,
+    x: p.x - 0.1 * Math.cos(p.facing) - w * Math.sin(p.facing),
+    y: p.y - 0.1 * Math.sin(p.facing) + w * Math.cos(p.facing),
+    ang: 0,
+    size: 4,
+    cut: 0.5,
+    tint,
+    glow: 0.95,
+  });
+  return [lamp(-0.3, 'red'), lamp(0.3, 'blue')];
+}
+
 /** Edge highlight of every solid, drawn above the darkness (warm on docks, cool elsewhere). */
 function buildRim(map: GameMap, idx: number) {
   const f = map.floors[idx];
@@ -580,6 +600,7 @@ function buildRim(map: GameMap, idx: number) {
   g.strokeStyle = docks ? 'rgba(255,210,150,0.32)' : 'rgba(190,220,255,0.28)';
   g.lineWidth = 0.1;
   for (const s of f.solids) {
+    if (s.kind === 'car') continue; // cars have their own sprite
     g.save();
     g.translate(s.x + s.w / 2, s.y + s.h / 2);
     g.rotate(s.angle ?? 0);
@@ -638,7 +659,22 @@ function buildLights(map: GameMap, idx: number) {
     glow: glow.c,
     rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
+    police: poses.filter((p) => p.s.police).map(policeLamps),
   };
+}
+
+/** Police livery over a black parked car, local frame +x = nose: white cabin, light bar. */
+function policeLivery(g: Ctx, len: number, wid: number) {
+  g.fillStyle = '#f2f2ee';
+  g.beginPath();
+  g.roundRect(-len * 0.2, -wid / 2 + 0.14, len * 0.26, wid - 0.28, 0.2);
+  g.fill();
+  g.fillStyle = '#111';
+  g.fillRect(-0.32, -wid / 2 + 0.3, 0.44, wid - 0.6);
+  g.fillStyle = '#e8262a';
+  g.fillRect(-0.26, -wid / 2 + 0.36, 0.32, wid / 2 - 0.4);
+  g.fillStyle = '#2a5cff';
+  g.fillRect(-0.26, 0.04, 0.32, wid / 2 - 0.4);
 }
 
 /** Parked car in local frame, +x = nose. */
@@ -686,7 +722,7 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
   g.lineJoin = 'round';
   g.lineCap = 'round';
 
-  const route = (ROUTES.get(map) ?? []).find((r) => r.floor === idx)?.points ?? [];
+  const routes = (ROUTES.get(map) ?? []).filter((r) => r.floor === idx).map((r) => r.points);
   const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const blocked = (p: Vec) =>
     p.x < 1 ||
@@ -701,25 +737,26 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
       return d > h.rCore - 0.3 && d < h.rOuter + 0.3;
     });
   const placed: Vec[] = [];
-  for (let i = 1; i + 1 < route.length; i++) {
-    const [a, b, n] = [route[i - 1], route[i], route[i + 1]];
-    const dirIn = Math.atan2(b.y - a.y, b.x - a.x);
-    let turn = Math.atan2(n.y - b.y, n.x - b.x) - dirIn;
-    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-    if (Math.abs(turn) <= Math.PI / 6) continue;
-    turn = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, turn));
-    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-    for (const back of [10, 8, 12, 6]) {
-      if (back > segLen) continue;
-      const x = b.x - back * Math.cos(dirIn);
-      const y = b.y - back * Math.sin(dirIn);
-      if (placed.some((q) => Math.hypot(q.x - x, q.y - y) < 10)) continue;
-      if (turnFootprint(x, y, dirIn, turn).some(blocked)) continue;
-      placed.push({ x, y });
-      turnArrow(g, x, y, dirIn, turn);
-      break;
+  for (const route of routes)
+    for (let i = 1; i + 1 < route.length; i++) {
+      const [a, b, n] = [route[i - 1], route[i], route[i + 1]];
+      const dirIn = Math.atan2(b.y - a.y, b.x - a.x);
+      let turn = Math.atan2(n.y - b.y, n.x - b.x) - dirIn;
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      if (Math.abs(turn) <= Math.PI / 6) continue;
+      turn = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, turn));
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      for (const back of [10, 8, 12, 6]) {
+        if (back > segLen) continue;
+        const x = b.x - back * Math.cos(dirIn);
+        const y = b.y - back * Math.sin(dirIn);
+        if (placed.some((q) => Math.hypot(q.x - x, q.y - y) < 10)) continue;
+        if (turnFootprint(x, y, dirIn, turn).some(blocked)) continue;
+        placed.push({ x, y });
+        turnArrow(g, x, y, dirIn, turn);
+        break;
+      }
     }
-  }
   for (const h of map.helixes) if (h.from === idx) helixArrow(g, h);
 
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -989,6 +1026,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       g.fill();
       noShadow();
       drawParkedCar(g, p.s.model, p.s.color ?? pick(CAR_MODELS[p.s.model].colors));
+      if (p.s.police) policeLivery(g, p.len, p.wid);
     } else parkedCar(g, p.len, p.wid, p.s.color ?? pick(PARKED_COLORS));
     g.restore();
   });
@@ -1073,7 +1111,7 @@ function bodyPath(g: Ctx, hl: number, bh: number) {
 }
 
 /** Player car sprite (roadster or a JDM model in its paint) + its blurred shadow, local frame +x = nose. */
-function playerSprites(model: PlayerModel, color: string) {
+function playerSprites(model: PlayerModel, color: string, look?: Look) {
   const { hl, hw } = playerDims(model);
   const bh = hw - 0.1; // body half width; tires peek out 0.1 m
   const w = 2 * hl + 2 * SPRITE_M;
@@ -1092,11 +1130,17 @@ function playerSprites(model: PlayerModel, color: string) {
   sh.g.fill();
 
   const { c, g } = mk();
-  if (model === 'mx5') roadster(g, hl, bh, color);
+  // the roadster has its own drawing; with cosmetics it goes through the shared sprite code
+  const custom = look && Object.entries(look).some(([k, v]) => v && k !== 'color');
+  if (custom)
+    color =
+      itemById(look.skin === 'fortune-orange' && model === 'rx7' ? look.skin : look.paint)?.color ??
+      color;
+  if (model === 'mx5' && !custom) roadster(g, hl, bh, color);
   else {
     const m = PLAYER_MODELS[model];
     g.scale(CAR_LENGTH / m.length, CAR_WIDTH / m.width); // fill exactly the hitbox
-    drawParkedCar(g, model, color);
+    drawCar(g, model, color, custom ? look : undefined);
     g.scale(m.length / CAR_LENGTH, m.width / CAR_WIDTH);
   }
   const py = POPUP_Y[model];
@@ -1241,6 +1285,24 @@ function playerLamps(car: CarState, brake: number, model: PlayerModel): Lamp[] {
       glow: 0.15,
     });
   return out;
+}
+
+/** Underglow as a light above the darkness, so it still glows at night. */
+function glowLight(ctx: Ctx, look: Look | undefined, alpha: number, frame: (g: Ctx) => void): void {
+  const c = itemById(look?.underglow)?.color;
+  if (!c) return;
+  const { hl, hw } = playerDims('mx5');
+  ctx.save();
+  frame(ctx);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = c;
+  ctx.globalAlpha = 0.12 * alpha;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hl + 0.35 - i * 0.12, hw - 0.1 + 0.35 - i * 0.1, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 /** Lit lamp lenses on top of the darkness, in the body frame (caller sets the transform). */
@@ -1482,7 +1544,7 @@ export function prewarm(map: GameMap) {
 
 /** Prewarms all maps in the background, one floor per idle slice. */
 function prewarmAll() {
-  const jobs = [garage, docks, tokyo, testpad].flatMap((m) =>
+  const jobs = [garage, docks, tokyo, drivethru, testpad].flatMap((m) =>
     m.floors.map((_, i) => () => (staticLayer(m, i), lightLayer(m, i))),
   );
   const idle: (cb: () => void) => void =
@@ -1507,7 +1569,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   let shade = makeCanvas(1, 1); // half-res darkness mask
   let clock = 0;
   const carSprites = new Map<string, ReturnType<typeof playerSprites>>();
-  const puffs = puffSprites();
+  let puffs = puffSprites();
+  let puffRgb = smokeColor();
   const smoke = createPool(SMOKE_CAP);
   const sparks = createPool(SPARK_CAP);
   let smokeAcc = 0;
@@ -1550,10 +1613,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     return s;
   }
 
-  function spritesFor(model: PlayerModel, color: string) {
-    const key = `${model}|${color}`;
+  function spritesFor(model: PlayerModel, color: string, look?: Look) {
+    const key = `${model}|${color}|${lookKey(look)}`;
     let s = carSprites.get(key);
-    if (!s) carSprites.set(key, (s = playerSprites(model, color)));
+    if (!s) s = cacheSet(carSprites, key, playerSprites(model, color, look));
     return s;
   }
 
@@ -1647,14 +1710,17 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const kl = 1 - Math.exp(-2 * step);
     look.x += (lx - look.x) * kl;
     look.y += (ly - look.y) * kl;
-    const tx = car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
-    const ty = car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
+    const ph = v.photo;
+    const rot = ph?.rot ?? 0;
+    const tx = ph ? ph.x : car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
+    const ty = ph ? ph.y : car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
     // game.ts gives the menu attract scene negative run ids
     const attract = v.runId < 0;
-    const tvh =
-      (VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1)) *
-      (attract ? ATTRACT_ZOOM : 1);
-    if (snap) {
+    const tvh = ph
+      ? VIEW_H_REST * ph.zoom
+      : (VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1)) *
+        (attract ? ATTRACT_ZOOM : 1);
+    if (snap || ph) {
       cam.x = tx;
       cam.y = ty;
       cam.viewH = tvh;
@@ -1668,8 +1734,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const dip = v.blend ? 1 - DIP * Math.sin(Math.PI * v.blend.t) : 1;
     const punch = punchT < 0.05 ? punchT / 0.05 : Math.exp(-(punchT - 0.05) * 7);
     const scale = (cssH / cam.viewH) * dip * (1 + PUNCH * punch); // CSS px per meter
-    const halfW = cssW / 2 / scale;
-    const halfH = cssH / 2 / scale;
+    // rotated view: cull against the bounding circle of the screen
+    const halfW = (rot ? Math.hypot(cssW, cssH) / 2 : cssW / 2) / scale;
+    const halfH = (rot ? Math.hypot(cssW, cssH) / 2 : cssH / 2) / scale;
     // attract: pin the car in the clear band right of the menu column (min(72u, 0.94w) wide)
     const u = Math.min(cssW, cssH) / 100;
     const ax = attract ? (cssW * 1.5 + Math.min(36 * u, 0.47 * cssW)) / 2 : cssW / 2;
@@ -1762,9 +1829,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const ws = dpr * scale;
-    const ox = dpr * (cssW / 2 + sx - vx * scale);
-    const oy = dpr * (cssH / 2 + sy - vy * scale);
-    ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    // world -> device, rotated by `rot` about the screen centre
+    const rc = Math.cos(rot) * ws;
+    const rs = Math.sin(rot) * ws;
+    const ox = dpr * (cssW / 2 + sx) - (rc * vx - rs * vy);
+    const oy = dpr * (cssH / 2 + sy) - (rs * vx + rc * vy);
+    const worldXf = (g: Ctx, k = 1) =>
+      g.setTransform(rc * k, rs * k, -rs * k, rc * k, ox * k, oy * k);
+    worldXf(ctx);
+    drawDecor(ctx, decorOf(v.map), 'sea', v.floorIndex, clock); // harbour past the floor edge
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
     const floors: [number, number][] = [[v.floorIndex, 1]];
@@ -1800,7 +1873,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       }
     }
 
-    const spr = spritesFor(model, v.player.color);
+    const spr = spritesFor(model, v.player.color, v.player.look);
     ctx.save();
     ctx.globalAlpha = CAR_SHADOW_ALPHA;
     ctx.translate(car.pos.x + CAR_SHADOW_OFFSET.x, car.pos.y + CAR_SHADOW_OFFSET.y);
@@ -1812,6 +1885,18 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.drawImage(spr.car, -spr.w / 2, -spr.h / 2, spr.w, spr.h);
     ctx.restore();
 
+    if (v.ghost) {
+      const gs = spritesFor(v.ghost.model, v.ghost.color, v.ghost.look);
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.translate(v.ghost.x, v.ghost.y);
+      ctx.rotate(v.ghost.angle);
+      ctx.drawImage(gs.car, -gs.w / 2, -gs.h / 2, gs.w, gs.h);
+      ctx.restore();
+    }
+
+    const rgb = smokeColor(v.player.look);
+    if (rgb !== puffRgb) puffs = puffSprites(3, (puffRgb = rgb));
     drawSmoke(ctx, smoke, puffs, visible); // under the darkness: lit by the same lights
 
     // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t
@@ -1849,6 +1934,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
+    const wig = Math.floor(clock * POLICE_HZ * 2) % 2;
+    for (const { l, w } of layers)
+      for (const bar of l.police) if (visible(bar[0].x, bar[0].y, 6)) dyn.push([bar[wig], w]);
 
     const m = shade.g;
     const k = shade.c.width / canvas.width;
@@ -1858,7 +1946,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     m.clearRect(0, 0, shade.c.width, shade.c.height);
     m.fillStyle = `rgba(0,0,0,${layers.reduce((s, x) => s + x.w * x.amb, 0)})`;
     m.fillRect(0, 0, shade.c.width, shade.c.height);
-    m.setTransform(ws * k, 0, 0, ws * k, ox * k, oy * k);
+    worldXf(m, k);
     m.globalCompositeOperation = 'destination-out';
     for (const { fl, l, w } of layers) {
       m.globalAlpha = w;
@@ -1872,7 +1960,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
-    ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    worldXf(ctx);
     for (const { fl, l, w } of layers) {
       ctx.globalAlpha = w;
       ctx.drawImage(l.rim, 0, 0, fl.w, fl.h);
@@ -1882,6 +1970,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     bodyFrame(ctx);
     playerLenses(ctx, car, v.brake, model);
     ctx.restore();
+    glowLight(ctx, v.player.look, 1, bodyFrame);
+    const gh = v.ghost;
+    if (gh)
+      glowLight(ctx, gh.look, 0.35, (g) => {
+        g.translate(gh.x, gh.y);
+        g.rotate(gh.angle);
+      });
     if (v.traffic) {
       // peds above the darkness like the decor crowds: dark clothes vanish under it
       for (const p of v.traffic.sim.peds) if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);

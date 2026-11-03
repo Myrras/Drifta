@@ -1,3 +1,5 @@
+import type { Look } from './cosmetics';
+import type { DailyResult } from './daily';
 import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
@@ -16,7 +18,7 @@ export interface RenderView {
   /** 0..1 camera shake intensity, decays after a wall hit */
   shake: number;
   /** player's car model + paint */
-  player: { model: PlayerModel; color: string };
+  player: { model: PlayerModel; color: string; look?: Look };
   /** 0..1 wall-scrape intensity this frame (for sparks) */
   scrape: number;
   /** 0..1 hard-impact pulse, decays (for hit flash / hit-stop feel) */
@@ -27,6 +29,17 @@ export interface RenderView {
   clip: Rect | null;
   /** live traffic and its city graph (signal heads), null on maps without traffic */
   traffic: { sim: Traffic; city: CityGraph } | null;
+  /** best-run ghost pose, only set when on the shown floor */
+  ghost?: {
+    x: number;
+    y: number;
+    angle: number;
+    model: PlayerModel;
+    color: string;
+    look?: Look;
+  } | null;
+  /** photo camera: world centre, view-height multiplier, rotation (rad) */
+  photo?: { x: number; y: number; zoom: number; rot: number };
 }
 
 export interface Popup {
@@ -44,6 +57,8 @@ export interface TopDrift {
   /** a video clip exists and can be saved */
   clip: boolean;
   saved: boolean;
+  /** still frame from the middle of the drift, if captured */
+  still?: HTMLCanvasElement;
 }
 
 export interface Results {
@@ -53,8 +68,21 @@ export interface Results {
   time: number;
   best: number;
   newBest: boolean;
-  /** thresholds [bronze, silver, gold] of the map, if any */
+  /** score thresholds [3rd, 2nd, 1st] of the map, if any */
   medals?: [number, number, number];
+  /** finishing position on maps with positions, null = none reached */
+  position: 1 | 2 | 3 | null;
+  /** daily / legend verdict when this run was one */
+  daily?: DailyResult;
+  /** paint ids unlocked by this finish */
+  newPaints: string[];
+  /** a car pick was earned and is not yet chosen or deferred */
+  carPick: boolean;
+  /** car pick overlay: locked cars, then LATER at index cars.length */
+  chooser: {
+    cars: { model: PlayerModel; name: string; color: string; look: Look }[];
+    row: number;
+  } | null;
   /** best banked combos, highest first (max 3) */
   drifts: TopDrift[];
   /** selected index in drifts */
@@ -77,8 +105,12 @@ export interface MenuRow {
 
 /** Title, garage and settings screens. */
 export interface MenuView {
-  screen: 'title' | 'garage' | 'settings';
+  screen: 'starter' | 'title' | 'garage' | 'settings';
+  /** short notice over the menu, e.g. the cheat */
+  toast?: string;
   rows: MenuRow[];
+  /** title only: small line next to BEST, e.g. the daily streak */
+  note?: string;
   /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
   tabs?: { names: string[]; active: number };
   ui: UiContext;
@@ -94,9 +126,17 @@ export interface MenuView {
     color: string;
     colors: string[];
     tune: 'performance' | 'street';
+    /** equipped cosmetics, drawn on the preview */
+    look: Look;
+    /** customise slots; `row` 0 is the car, row n is slots[n - 1] */
+    slots: { label: string; name: string; color?: string; locked: boolean }[];
+    /** how to earn the highlighted option, '' when it is owned */
+    slotLock: string;
     index: number;
     count: number;
     stats: { power: number; grip: number; weight: number };
+    /** locked car: null when drivable; offer = confirm again spends a car pick */
+    lock?: { offer: boolean; picks: number } | null;
   } | null;
 }
 
@@ -125,6 +165,8 @@ export interface HudView {
   redline: number;
   /** 'N', 'R', '1'..'4' */
   gear: string;
+  /** photo mode: this frame is being saved, draw no hint */
+  photoShot?: boolean;
 }
 
 export interface FrameView {

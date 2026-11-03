@@ -24,6 +24,8 @@ export interface Solid extends Rect {
   facing?: number;
   /** parked car lights: headlights on, or hazards blinking */
   lights?: 'on' | 'hazard';
+  /** parked police car: light bar flashes, close drifts score COP SHOW */
+  police?: boolean;
 }
 /** angle in radians, 0 = facing +x, positive = clockwise on screen (y down) */
 export interface Spawn {
@@ -41,6 +43,12 @@ export interface Floor {
   circles: Circle[];
   /** clipping zones: drifting inside scores faster; first entry per combo gives a CLIP bonus */
   clipZones?: Rect[];
+  /** bonus zones: drift through every rect sharing an id within one combo to fire its trick once */
+  bonusZones?: BonusZone[];
+}
+export interface BonusZone extends Rect {
+  id: string;
+  trick: Trick;
 }
 export interface Circle {
   x: number;
@@ -90,6 +98,11 @@ export interface InputState {
   /** edge-triggered: save the selected drift clip on results (S / pad X) */ save?: boolean;
   /** edge-triggered: settings tab prev / next (Q / E, pad LB / RB) */ tabPrev?: boolean;
   tabNext?: boolean;
+  /** edge-triggered: photo mode (P / pad R3); levels: pan, rotate, zoom-in */ photo?: boolean;
+  photoPan?: Vec;
+  photoRot?: number;
+  photoZoom?: number;
+  /** edge-triggered: Konami code finished on the pad (never from the keyboard) */ cheat?: boolean;
   /** last-used device, for button prompts */ device?: 'kb' | 'pad';
   padStyle?: 'ps' | 'xbox';
 }
@@ -117,7 +130,7 @@ export interface Hit {
   depth: number;
 }
 export type Trick =
-  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP';
+  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP' | 'NEAR MISS' | 'SCRAMBLE' | 'DRIVE-THRU' | 'COP SHOW';
 /** frozen = floor fade in progress: grace timer paused, no scoring */
 export interface ScoreFrame {
   drift: DriftInfo;
@@ -128,6 +141,12 @@ export interface ScoreFrame {
   frozen: boolean;
   /** clipping zone the car is in, if any */
   clip?: Rect | null;
+  /** bonus zones the car is inside this frame */
+  bonus?: BonusZone[];
+  /** all bonus zones of the floor (to know how many rects share an id) */
+  bonusAll?: readonly BonusZone[];
+  /** meters to the nearest police solid */
+  nearPolice?: number;
 }
 export interface Combo {
   points: number;
@@ -143,4 +162,13 @@ export type ScoreEvent =
   | { type: 'trick'; trick: Trick }
   | { type: 'bank'; amount: number }
   | { type: 'fail'; lost: number };
-export type Phase = 'title' | 'garage' | 'settings' | 'countdown' | 'run' | 'paused' | 'results';
+export type Phase =
+  | 'starter'
+  | 'title'
+  | 'garage'
+  | 'settings'
+  | 'countdown'
+  | 'run'
+  | 'paused'
+  | 'photo'
+  | 'results';

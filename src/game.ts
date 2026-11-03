@@ -17,16 +17,41 @@ import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContex
 import type { createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
+import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
+import { getLook, setLook } from './progress';
+import type { Look } from './cosmetics';
+import {
+  currentIndex,
+  equip,
+  ownedLook,
+  SLOT_LABELS,
+  SLOTS,
+  slotOptions,
+  type Slot,
+} from './ui/garage';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
+import { newPhotoCam, PHOTO_VIEW_H, stepPhoto } from './photo';
 import { createAttractDriver } from './attract';
 import { engineProfile, engineRpm } from './engine';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
+import { drivethru, drivethruRoute } from './maps/drivethru';
+import { dailyFor, finishDaily, liveStreak, localDate, type Daily } from './daily';
 import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
+import {
+  awardFinish,
+  chooseStarter,
+  defaultProgress,
+  isCarUnlocked,
+  saveProgress,
+  spendCarPick,
+  STARTERS,
+  type Progress,
+} from './progress';
 import {
   CLIP_QUALITIES,
   loadSettings,
@@ -39,8 +64,6 @@ import {
   comboValue,
   createScoring,
   forceBank,
-  MEDAL_NAMES,
-  medalFor,
   stepScoring,
   timeBonus,
   zoneAt,
@@ -75,6 +98,7 @@ export interface ClipRecorder {
   /** drop everything */
   clear(): void;
   has(id: number): boolean;
+  still?(id: number): HTMLCanvasElement | undefined;
   /** download the clip */
   save(id: number, filename: string): void;
 }
@@ -97,6 +121,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
   [tokyo, tokyoRoute],
+  [drivethru, drivethruRoute],
 ]);
 /** maps with live traffic */
 const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
@@ -110,11 +135,12 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-const TITLE_ROWS = 3;
+const TITLE_ROWS = 4;
+const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
-  { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
+  { name: 'VIDEO', ids: ['shake', 'clips', 'theme', 'ghost'] },
   { name: 'GAME', ids: ['reset'] },
 ] as const;
 const REDLINE_BELOW_LIMIT = 200; // rpm; profiles only store the limiter (Celica 7200 -> 7000)
@@ -154,8 +180,29 @@ export function createGame(
   storage?: SettingsStorage,
   clips?: ClipRecorder,
   host?: MusicHost,
+  /** progression store; omitted = progression off (no starter pick, every car unlocked) */
+  prog: Progress = { ...defaultProgress(), starterChosen: true, unlocked: [...MODEL_IDS] },
+  /** local date, YYYY-MM-DD; injectable for tests */
+  today: () => string = localDate,
 ) {
   const cfg = loadSettings(storage);
+  const pStore = storage ?? {
+    getItem: (k: string) => localStorage.getItem(k),
+    setItem: (k: string, v: string) => localStorage.setItem(k, v),
+  };
+  const persist = () => saveProgress(prog, pStore);
+  // never drive a locked car, e.g. one picked during a cheat session
+  if (!isCarUnlocked(prog, cfg.car, false)) {
+    cfg.car = prog.unlocked[0] ?? STARTERS[0];
+    cfg.color = PLAYER_MODELS[cfg.car].colors[0];
+  }
+  let starter = 0; // index into STARTERS on the first-launch screen
+  let offerPick = false; // garage: confirm again spends a car pick on the locked car
+  let toastT = 0;
+  // daily / legend run in progress; a legend swaps in its car until the title
+  let daily: Daily | null = null;
+  let dailyDate = '';
+  let carBackup: { car: PlayerModel; color: string } | null = null;
   const applyVolumes = () => {
     const { master, music, sfx, engine } = cfg;
     audio.setVolumes({ master, music, sfx, engine });
@@ -171,7 +218,7 @@ export function createGame(
   let usage = '';
   const afterChange = () => {
     void audio.refreshMyMusic();
-    if (cfg.track === 'mine') audio.setTrack('mine'); // leave a TOKYO fallback once the library changes
+    if (cfg.track === 'mine') audio.setTrack('mine'); // leave a PHONK fallback once the library changes
     void host?.size().then((v) => (usage = v));
   };
   let tab = 0;
@@ -179,12 +226,39 @@ export function createGame(
   let gColor = cfg.color;
   let gTune = cfg.tune;
   const gCarState = createCar(maps[0].start); // garage engine preview; only rpm is used
+  // customise: look per car lives in progress; the garage edits a draft until ENTER
+  let savedLooks = structuredClone(prog.looks);
+  let gLook: Look = {};
+  let gCur: number[] = []; // option cursor per slot (may rest on a locked option)
+  const gOpts = (sl: Slot) => slotOptions(sl, gCar, PLAYER_MODELS[gCar].colors, prog, s.cheat);
+  // the explicit cheat arg is for the initial call, which runs before `s` exists
+  const lookOf = (car: PlayerModel, cheat = s.cheat): Look =>
+    ownedLook(getLook(prog, car) as Look, car, PLAYER_MODELS[car].colors, prog, cheat);
+  let raceLook = lookOf(cfg.car, false);
+  function gLoad(car: PlayerModel, color?: string): void {
+    gCar = car;
+    gLook = lookOf(car);
+    const cs = PLAYER_MODELS[car].colors;
+    gColor = color ?? cs.find((c) => c === (gLook as { color?: string }).color) ?? cs[0];
+    gCur = SLOTS.map((s) => currentIndex(s, gOpts(s), gLook, gColor));
+  }
+  // never store cheat-only items: filter against real ownership (cheat = false)
+  const gDraft = () =>
+    setLook(
+      prog,
+      gCar,
+      ownedLook({ ...gLook, color: gColor } as Look, gCar, PLAYER_MODELS[gCar].colors, prog, false) as Parameters<
+        typeof setLook
+      >[2],
+    );
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   let comboIds = 0;
+  let rec = createRecorder();
+  let ghost: Ghost | null = null;
   const ui: Pick<UiContext, 'device' | 'padStyle'> = { device: 'kb', padStyle: 'xbox' };
 
   /** menu background: an AI car drifting the docks. Silent, own state, never touches the run. */
@@ -234,7 +308,12 @@ export function createGame(
     helix: null as Helix | null,
     p: 0,
     drifted: 0,
-    results: null as Omit<Results, 'drifts' | 'driftRow'> | null,
+    wallHits: 0,
+    results: null as Omit<Results, 'drifts' | 'driftRow' | 'carPick' | 'chooser'> | null,
+    /** progress loaded at finish (null: no storage), pending car pick, open chooser */
+    prog: null as Progress | null,
+    carPick: false,
+    chooser: null as { cars: PlayerModel[]; row: number } | null,
     resultsAge: 0,
     stuck: 0,
     clip: null as Rect | null,
@@ -243,7 +322,36 @@ export function createGame(
     drifts: [] as Drift[],
     driftRow: 0,
   });
-  const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
+  const s = {
+    phase: (prog.starterChosen ? 'title' : 'starter') as Phase,
+    runId: 0,
+    handbrake: false,
+    brake: 0,
+    /** Konami cheat: every car and cosmetic usable this session; never saved */
+    cheat: false,
+    ...fresh(),
+  };
+
+  // photo mode: frozen car, free camera. Enter from run or paused; leave back to the same one.
+  let photoCam = newPhotoCam();
+  let photoFrom: 'run' | 'paused' = 'run';
+  let shot = false; // a save was requested; main.ts takes it after drawing the HUD-less frame
+  const enterPhoto = () => {
+    photoFrom = s.phase === 'paused' ? 'paused' : 'run';
+    photoCam = newPhotoCam();
+    if (s.phase === 'run') {
+      audio.stop();
+      clips?.pause(true);
+    }
+    s.phase = 'photo';
+  };
+  const leavePhoto = () => {
+    s.phase = photoFrom;
+    if (photoFrom === 'run') {
+      Object.assign(s.car, { clutchHeld: false, clutchKick: 0 });
+      clips?.pause(false);
+    }
+  };
 
   const newRun = () => {
     attract = null;
@@ -251,8 +359,23 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+    rec = createRecorder();
+    ghost = loadGhost(map.name);
     clips?.begin(cfg.clips);
   };
+  function startDaily(): void {
+    dailyDate = today();
+    daily = dailyFor(dailyDate, maps);
+    sel = maps.indexOf(daily.map);
+    map = daily.map;
+    if (daily.car && !carBackup) {
+      carBackup = { car: cfg.car, color: cfg.color };
+      cfg.car = daily.car;
+      cfg.color = PLAYER_MODELS[daily.car].colors[0];
+      raceLook = { skin: daily.skin };
+    }
+    newRun();
+  }
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
     s.popups.push({ kind, text, amount, age: 0 });
 
@@ -350,7 +473,19 @@ export function createGame(
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
-    if (newBest) stores[sel].set((bests[sel] = total));
+    if (newBest) {
+      stores[sel].set((bests[sel] = total));
+      saveGhost(map.name, {
+        car: cfg.car,
+        look: { ...raceLook, color: cfg.color },
+        frames: rec.frames,
+      });
+    }
+    s.prog = prog;
+    const award = awardFinish(prog, map, total, s.time);
+    const dr = daily ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
+    persist();
+    s.carPick = award.carPick || !!dr?.carPick;
     s.results = {
       comboPoints,
       timeBonus: bonus,
@@ -359,6 +494,9 @@ export function createGame(
       best: bests[sel],
       newBest,
       medals: map.medals,
+      position: award.position,
+      newPaints: award.newPaints,
+      daily: dr,
     };
     s.phase = 'results';
     audio.stop();
@@ -373,22 +511,28 @@ export function createGame(
     const clear = () => !collide(car, floor.solids, floor.circles);
     const place = (pos: Vec, angle: number) =>
       Object.assign(car, { pos: { ...pos }, angle, vel: { x: 0, y: 0 }, angVel: 0 });
-    const pts = ROUTES.get(map)?.find((r) => r.floor === s.floorIndex)?.points;
+    // a floor may carry several routes (TOKYO NIGHTS): recover onto the nearest
+    const routes = (ROUTES.get(map) ?? []).filter((r) => r.floor === s.floorIndex);
+    let pts = routes[0]?.points;
     if (pts && pts.length > 1) {
       let best = Infinity;
       let seg = 0;
       let t = 0;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i];
-        const dx = pts[i + 1].x - a.x;
-        const dy = pts[i + 1].y - a.y;
-        const u = Math.max(
-          0,
-          Math.min(1, ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1)),
-        );
-        const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
-        if (d < best) [best, seg, t] = [d, i, u];
-      }
+      for (const r of routes)
+        for (let i = 0; i < r.points.length - 1; i++) {
+          const a = r.points[i];
+          const dx = r.points[i + 1].x - a.x;
+          const dy = r.points[i + 1].y - a.y;
+          const u = Math.max(
+            0,
+            Math.min(
+              1,
+              ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1),
+            ),
+          );
+          const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
+          if (d < best) [best, seg, t, pts] = [d, i, u, r.points];
+        }
       // step forward along the route until clear
       search: for (let i = seg; i < pts.length - 1; i++, t = 0) {
         const a = pts[i];
@@ -422,6 +566,7 @@ export function createGame(
   function run(input: InputState, dt: number): void {
     track();
     s.time += dt;
+    rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
     const floor = map.floors[s.floorIndex];
@@ -437,6 +582,7 @@ export function createGame(
       bounce(car, hit);
       if (impact > HARD_HIT_SPEED) {
         hard = true;
+        s.wallHits++;
         audio.hit();
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
@@ -477,11 +623,30 @@ export function createGame(
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
     const clip = (s.clip = zoneAt(car.pos, map.floors[s.floorIndex].clipZones));
+    const bonusAll = map.floors[s.floorIndex].bonusZones ?? [];
+    const bonus = bonusAll.filter((z) => inRect(car.pos, z));
+    const nearPolice = s.drift.drifting
+      ? nearestDistance(
+          car,
+          solids.filter((o) => o.police),
+        )
+      : Infinity;
 
     handle(
       stepScoring(
         s.scoring,
-        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false, clip },
+        {
+          drift: s.drift,
+          yawDelta,
+          nearDist,
+          hit: hard,
+          rampDrift,
+          frozen: false,
+          clip,
+          bonus,
+          bonusAll,
+          nearPolice,
+        },
         dt,
       ),
     );
@@ -495,13 +660,20 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     clips?.clear();
+    if (carBackup) {
+      cfg.car = carBackup.car;
+      cfg.color = carBackup.color;
+      carBackup = null;
+      raceLook = lookOf(cfg.car);
+    }
+    daily = null;
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
     row = at;
-    confirmReset = confirmClear = false;
+    confirmReset = confirmClear = offerPick = false;
     tab = 0;
     if (phase === 'settings') afterChange();
     s.phase = phase;
@@ -512,27 +684,53 @@ export function createGame(
     gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
     audio.update(gCarState, IDLE, input.rev ? 1 : 0, gCar, gTune);
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-    if (dir || dv || input.tune) audio.ui('adjust');
-    if (dir) {
-      gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
-      gColor = PLAYER_MODELS[gCar].colors[0];
+    if (dv) row = cycle(row, dv, SLOTS.length + 1); // 0 = car, n = SLOTS[n - 1]
+    if (dir || dv || input.tune) audio.ui(dv ? 'move' : 'adjust');
+    if (dir && row === 0) {
+      gDraft();
+      gLoad(MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)]);
+      offerPick = false;
+    } else if (dir) {
+      const slot = SLOTS[row - 1];
+      const opts = gOpts(slot);
+      gCur[row - 1] = cycle(gCur[row - 1], dir, opts.length);
+      ({ look: gLook, color: gColor } = equip(slot, opts[gCur[row - 1]], gLook, gColor));
     }
-    if (dv) {
-      const cs = PLAYER_MODELS[gCar].colors;
-      gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
-    }
-    if (input.confirm) {
+    const locked = !isCarUnlocked(prog, gCar, s.cheat);
+    if (locked && input.confirm) {
+      if (offerPick && spendCarPick(prog, gCar)) {
+        // persist without the open look draft
+        const draft = prog.looks;
+        prog.looks = savedLooks;
+        persist();
+        prog.looks = draft;
+        offerPick = false;
+        audio.ui('confirm');
+      } else if (prog.carPicks > 0) {
+        offerPick = true;
+        audio.ui('move');
+      } else audio.ui('back'); // refused
+    } else if (offerPick && input.pause) {
+      offerPick = false;
+      audio.ui('back');
+    } else if (input.confirm) {
       Object.assign(cfg, { car: gCar, color: gColor, tune: gTune });
       save();
+      gDraft();
+      persist();
+      savedLooks = structuredClone(prog.looks);
+      raceLook = lookOf(cfg.car);
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
-      go('title', 1);
+      go('title', 2);
     } else if (input.pause) {
-      [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+      prog.looks = structuredClone(savedLooks); // drop the draft
+      gTune = cfg.tune;
+      gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
-      go('title', 1);
+      go('title', 2);
     }
   }
 
@@ -582,6 +780,9 @@ export function createGame(
     } else if (id === 'shake' && act) {
       cfg.shake = !cfg.shake;
       save();
+    } else if (id === 'ghost' && act) {
+      cfg.ghost = !cfg.ghost;
+      save();
     } else if (id === 'clips' && act) {
       const n = CLIP_QUALITIES.length;
       cfg.clips = CLIP_QUALITIES[cycle(CLIP_QUALITIES.indexOf(cfg.clips), dir || 1, n)];
@@ -596,11 +797,14 @@ export function createGame(
       } else confirmReset = true;
     } else if ((row === back && input.confirm) || input.pause) {
       audio.ui('back');
-      go('title', 2);
+      go('title', 3);
     }
   }
 
-  const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
+  const posTag = (name: string) => {
+    const n = prog.results[name]?.position;
+    return n ? ` ${ORD[n]}` : '';
+  };
 
   function menuView(): MenuView | null {
     const base = {
@@ -612,18 +816,33 @@ export function createGame(
     };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     if (s.phase === 'title') {
+      const date = today();
+      const dl = dailyFor(date, maps);
+      const done = prog.daily.lastClear === date;
       const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶${medalTag(medalFor(bests[sel], map.medals))}` },
+        { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` },
+        {
+          label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
+          value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
+        },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
       ];
-      return { ...base, screen: 'title', rows };
+      return {
+        ...base,
+        screen: 'title',
+        rows,
+        note: `STREAK ${liveStreak(prog, date)}${done ? ' · CLEARED' : ''}`,
+        toast: toastT > 0 ? 'ALL CARS UNLOCKED' : undefined,
+      };
     }
     if (s.phase === 'settings') {
       const item = (id: string): MenuRow => {
         switch (id) {
           case 'shake':
             return { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' };
+          case 'ghost':
+            return { label: 'GHOST', value: cfg.ghost ? 'ON' : 'OFF' };
           case 'track':
             return {
               label: 'MUSIC',
@@ -658,26 +877,42 @@ export function createGame(
       const tabs = { names: TABS.map((t) => t.name), active: tab };
       return { ...base, screen: 'settings', rows, tabs };
     }
-    if (s.phase === 'garage') {
-      const m = PLAYER_MODELS[gCar];
+    if (s.phase === 'garage' || s.phase === 'starter') {
+      const first = s.phase === 'starter';
+      const car = first ? STARTERS[starter] : gCar;
+      const ids = first ? STARTERS : MODEL_IDS;
+      const m = PLAYER_MODELS[car];
       const n = (k: keyof CarStats) => {
         const [lo, hi] = statRange(k);
-        const v = tunedStats(gCar, gTune)[k];
+        const v = tunedStats(car, first ? 'street' : gTune)[k];
         return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
       };
       return {
         ...base,
-        screen: 'garage',
+        screen: first ? 'starter' : 'garage',
         rows: [],
         garage: {
-          model: gCar,
+          model: car,
           name: m.name,
-          color: gColor,
-          tune: gTune,
+          color: first ? m.colors[0] : gColor,
+          tune: first ? 'street' : gTune,
+          look: first ? {} : gLook,
+          // the starter pick has no customise rows
+          slots: first
+            ? []
+            : SLOTS.map((sl, i) => {
+                const o = gOpts(sl)[gCur[i]];
+                return { label: SLOT_LABELS[sl], name: o.name, color: o.color, locked: !!o.lock };
+              }),
+          slotLock: (!first && row > 0 && gOpts(SLOTS[row - 1])[gCur[row - 1]].lock) || '',
           colors: m.colors,
-          index: MODEL_IDS.indexOf(gCar),
-          count: MODEL_IDS.length,
+          index: ids.indexOf(car),
+          count: ids.length,
           stats: { power: n('power'), grip: n('grip'), weight: n('mass') },
+          lock:
+            first || isCarUnlocked(prog, car, s.cheat)
+              ? null
+              : { offer: offerPick, picks: prog.carPicks },
         },
       };
     }
@@ -687,6 +922,7 @@ export function createGame(
   return {
     update(input: InputState & { skip?: boolean }, dt: number): void {
       noteT = Math.max(0, noteT - dt);
+      toastT = Math.max(0, toastT - dt);
       if (input.device) ui.device = input.device;
       if (input.padStyle) ui.padStyle = input.padStyle;
       s.handbrake = input.handbrake;
@@ -697,15 +933,43 @@ export function createGame(
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-      const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
+      const inMenu =
+        s.phase === 'title' ||
+        s.phase === 'garage' ||
+        s.phase === 'settings' ||
+        s.phase === 'starter';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
-      if (input.restart && !inMenu) {
+      if (input.restart && !inMenu && s.phase !== 'photo') {
         newRun();
         return;
       }
       if (s.phase === 'title' || s.phase === 'settings') stepAttract(dt);
       switch (s.phase) {
+        case 'starter':
+          if (dir) {
+            audio.ui('adjust');
+            starter = cycle(starter, dir, STARTERS.length);
+          }
+          if (input.confirm) {
+            audio.resume();
+            audio.ui('confirm');
+            chooseStarter(prog, STARTERS[starter]);
+            persist();
+            cfg.car = STARTERS[starter];
+            cfg.color = PLAYER_MODELS[cfg.car].colors[0];
+            save();
+            Object.assign(s, fresh());
+            go('title');
+          }
+          break;
         case 'title':
+          if (input.cheat) {
+            // pad Konami code; its final A must not also pick the row
+            s.cheat = true;
+            toastT = 2.5;
+            audio.ui('confirm');
+            break;
+          }
           if (dv) audio.ui('move');
           row = cycle(row, dv, TITLE_ROWS);
           if (dir && row === 0) {
@@ -718,10 +982,12 @@ export function createGame(
             audio.resume();
             audio.ui('confirm');
             if (row === 0) newRun();
+            else if (row === 1) startDaily();
             else {
-              [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+              gTune = cfg.tune;
+              gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
-              go(row === 1 ? 'garage' : 'settings');
+              go(row === 2 ? 'garage' : 'settings');
             }
           }
           break;
@@ -736,19 +1002,32 @@ export function createGame(
             toTitle();
             break;
           }
-          s.countdown -= dt;
+          {
+            const was = s.countdown;
+            s.countdown -= dt;
+            const n = Math.ceil(s.countdown - 1e-6); // displayed number, as in hud
+            if (was === COUNTDOWN_SECONDS) audio.ui('count');
+            if (n < Math.ceil(was - 1e-6)) audio.ui(n > 0 && s.countdown > EPS ? 'count' : 'go');
+          }
           s.traffic?.step(dt, s.car);
           if (s.countdown <= EPS) s.phase = 'run';
           break;
         case 'run':
-          if (input.pause) {
+          if (input.photo) enterPhoto();
+          else if (input.pause) {
             s.phase = 'paused';
             audio.stop();
             clips?.pause(true);
           } else run(input, dt);
           break;
+        case 'photo':
+          if (input.pause) leavePhoto();
+          else if (input.confirm) shot = true;
+          else photoCam = stepPhoto(photoCam, input, dt, PHOTO_VIEW_H);
+          break;
         case 'paused':
-          if (input.confirm) {
+          if (input.photo) enterPhoto();
+          else if (input.confirm) {
             s.phase = 'run';
             Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
             clips?.pause(false);
@@ -757,17 +1036,41 @@ export function createGame(
         case 'results': {
           s.resultsAge += dt;
           const ready = s.resultsAge >= RESULTS_LOCKOUT;
-          if (input.pause) toTitle();
-          else if (input.confirm && ready) newRun();
+          const ch = s.chooser;
+          if (ch) {
+            // car pick overlay: LATER or ESC / B keep the pick for the garage
+            if (dir) ch.row = cycle(ch.row, dir, ch.cars.length + 1);
+            if (input.confirm || input.pause) {
+              const car = input.confirm ? ch.cars[ch.row] : undefined;
+              if (car && s.prog && spendCarPick(s.prog, car)) persist();
+              s.chooser = null;
+              s.carPick = false;
+            }
+          } else if (input.pause) toTitle();
+          else if (input.confirm && ready && s.carPick && s.prog && !s.cheat) {
+            const p = s.prog;
+            const cars = MODEL_IDS.filter((m) => !isCarUnlocked(p, m, s.cheat));
+            if (cars.length) s.chooser = { cars, row: 0 };
+            else s.carPick = false; // everything owned: the pick stays banked
+            // cheat on: no chooser (everything reads unlocked), the pick is kept; confirm retries
+          } else if (input.confirm && ready) newRun();
           else if (input.save) {
-            if (ready) saveDrift(); // S also sets down: don't move
-          } else if (dv && s.drifts.length) s.driftRow = cycle(s.driftRow, dv, s.drifts.length);
+            if (ready) saveDrift();
+          } else if (dir && s.drifts.length) s.driftRow = cycle(s.driftRow, dir, s.drifts.length);
           break;
         }
       }
     },
 
     view(): FrameView {
+      const ghostView = () => {
+        const g = cfg.ghost && ghost && sample(ghost, s.time);
+        if (!g || !ghost || g.floor !== s.floorIndex) return null;
+        const model = Object.hasOwn(PLAYER_MODELS, ghost.car) ? ghost.car : cfg.car;
+        const c = ghost.look?.color;
+        const color = typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0];
+        return { ...g, model, color, look: ghost.look as Look | undefined };
+      };
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
       const drift =
@@ -809,12 +1112,22 @@ export function createGame(
             fade: 0,
             blend,
             shake: cfg.shake ? s.shake : 0,
-            player: { model: cfg.car, color: cfg.color },
+            player: { model: cfg.car, color: cfg.color, look: raceLook },
             scrape: s.scrape,
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
+            ghost: ghostView(),
+            photo:
+              s.phase === 'photo'
+                ? {
+                    x: car.pos.x + photoCam.x,
+                    y: car.pos.y + photoCam.y,
+                    zoom: photoCam.zoom,
+                    rot: photoCam.rot,
+                  }
+                : undefined,
           };
       return {
         render,
@@ -834,6 +1147,7 @@ export function createGame(
           ui: { theme: cfg.menuTheme, ...ui },
           rpm: engineRpm(car.rpm, prof),
           redline: prof.limit - REDLINE_BELOW_LIMIT,
+          photoShot: shot,
           gear: gearOf(car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle)),
           results:
             s.phase === 'results' && s.results
@@ -844,13 +1158,37 @@ export function createGame(
                     tricks: d.tricks,
                     clip: clips?.has(d.id) ?? false,
                     saved: d.saved,
+                    still: clips?.still?.(d.id),
                   })),
                   driftRow: s.driftRow,
+                  carPick: s.carPick && !s.cheat, // cheat skips the chooser: no hint or toast
+                  chooser: s.chooser && {
+                    cars: s.chooser.cars.map((m) => {
+                      const look = lookOf(m);
+                      return {
+                        model: m,
+                        name: PLAYER_MODELS[m].name,
+                        color: (look as { color?: string }).color ?? PLAYER_MODELS[m].colors[0],
+                        look,
+                      };
+                    }),
+                    row: s.chooser.row,
+                  },
                 }
               : null,
         },
       };
     },
+
+    /** true once per save request; the caller then saves the HUD-less frame (see main.ts) */
+    takeShot(): boolean {
+      const r = shot;
+      shot = false;
+      return r;
+    },
+
+    /** current map name, for the photo file name */
+    mapName: () => map.name,
 
     pause(): void {
       if (s.phase === 'countdown') return toTitle();

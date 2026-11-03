@@ -55,7 +55,7 @@ const SMOKE_GROW = 3; // radius grows to size * (1 + GROW)
 const WIND = { x: 0.35, y: -0.2 }; // m/s slow drift
 
 /** Lumpy soft puffs (a few overlapping blobs), drawn once. */
-export function puffSprites(n = 3): HTMLCanvasElement[] {
+export function puffSprites(n = 3, rgb = SMOKE_RGB): HTMLCanvasElement[] {
   let seed = 99;
   const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
   return Array.from({ length: n }, () => {
@@ -69,9 +69,9 @@ export function puffSprites(n = 3): HTMLCanvasElement[] {
       const y = 64 + Math.sin(a) * d;
       const r = i === 0 ? 60 : 26 + rand() * 18;
       const grad = g.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, `rgba(${SMOKE_RGB},${i === 0 ? 0.75 : 0.45})`);
-      grad.addColorStop(0.55, `rgba(${SMOKE_RGB},${i === 0 ? 0.35 : 0.2})`);
-      grad.addColorStop(1, `rgba(${SMOKE_RGB},0)`);
+      grad.addColorStop(0, `rgba(${rgb},${i === 0 ? 0.75 : 0.45})`);
+      grad.addColorStop(0.55, `rgba(${rgb},${i === 0 ? 0.35 : 0.2})`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
       g.fillStyle = grad;
       g.fillRect(0, 0, 128, 128);
     }

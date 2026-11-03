@@ -54,7 +54,7 @@ export type Decor = { floor: number } &
      * City block over its solids: rooftops split into lots, a sidewalk band `walk` m wide inside
      * the edge (the curb), `open` rects paved instead of built (plazas, alleys). `round` rounds
      * one corner (0 nw, 1 ne, 2 se, 3 sw) with radius r; concave = a bite of radius r centered on
-     * that corner instead.
+     * that corner instead. `pts`: any clockwise outline instead, inside the x, y, w, h box.
      */
     | {
         kind: 'block';
@@ -66,6 +66,7 @@ export type Decor = { floor: number } &
         seed: number;
         round?: { corner: number; r: number; concave?: boolean };
         open?: Rect[];
+        pts?: Vec[];
       }
     /** lit shop front from (x, y), len m along angle; light spills to the left of angle */
     | {
@@ -94,14 +95,44 @@ export type Decor = { floor: number } &
     /** row of n vending machines centered at (x, y), lit fronts facing angle */
     | { kind: 'vending'; x: number; y: number; angle: number; n: number; seed: number }
     | { kind: 'manhole'; x: number; y: number }
+    // --- drive-thru kinds ---
+    /** dry lot tarmac over a rect: worn patches and sealed cracks */
+    | { kind: 'tarmac'; x: number; y: number; w: number; h: number; seed: number }
+    /** opened hood on a parked car len x wid centered at (x, y), nose along angle */
+    | {
+        kind: 'hood';
+        x: number;
+        y: number;
+        angle: number;
+        len: number;
+        wid: number;
+        color: string;
+        seed: number;
+      }
+    /** glowing crescent-moon logo, radius r */
+    | { kind: 'moon'; x: number; y: number; r: number }
+    /** food truck over its solid: w x h centered at (x, y), long side along angle, hatch on +y */
+    | { kind: 'truck'; x: number; y: number; w: number; h: number; angle: number }
+    /** string of warm bulbs along a polyline from (x, y) through `to` */
+    | { kind: 'bulbs'; x: number; y: number; to: Vec[] }
+    /** flat restaurant roof over its solid: parapet, plant, a fascia band in color */
+    | { kind: 'roof'; x: number; y: number; w: number; h: number; color: string; seed: number }
+    /** traffic cone */
+    | { kind: 'cone'; x: number; y: number }
+    /** sign board: 'closed' = no entry (bar across angle), 'expwy' = green, arrow along angle */
+    | { kind: 'roadsign'; x: number; y: number; angle: number; sign: 'closed' | 'expwy' }
+    /** paper lantern, lit */
+    | { kind: 'lantern'; x: number; y: number; color: string }
+    | DockDecor
   );
 export type DecoratedMap = GameMap & { decor?: Decor[] };
 /**
  * floor: static ground paint (under solids). wall: static, over solids.
  * light: static darkness cut (white alpha). glow: static colored light (additive).
  * over: per frame, additive (neon flicker, shimmer, phone screens).
+ * sea: per frame, under the floor, outside its bounds (harbour water).
  */
-export type DecorLayer = 'floor' | 'wall' | 'light' | 'glow' | 'over';
+export type DecorLayer = 'floor' | 'wall' | 'light' | 'glow' | 'over' | 'sea';
 
 type Ctx = CanvasRenderingContext2D;
 type Of<K extends Decor['kind']> = Extract<Decor, { kind: K }>;
@@ -508,7 +539,7 @@ export function blockOutline(b: Pick<Of<'block'>, 'x' | 'y' | 'w' | 'h' | 'round
 
 function drawBlock(g: Ctx, d: Of<'block'>) {
   const rand = rng(d.seed * 733 + 11);
-  const pts = blockOutline(d);
+  const pts = d.pts ?? blockOutline(d);
   const path = () => {
     g.beginPath();
     pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
@@ -725,6 +756,320 @@ function drawManhole(g: Ctx, d: Of<'manhole'>) {
   g.stroke();
 }
 
+// --- drive-thru kinds ---
+
+const WARM = '255,196,120';
+
+function drawTarmac(g: Ctx, d: Of<'tarmac'>) {
+  const rand = rng(d.seed * 211 + 5);
+  g.fillStyle = '#2a292b';
+  g.fillRect(d.x, d.y, d.w, d.h);
+  // worn mottling, then darker resurfaced patches
+  for (let i = 0; i < (d.w * d.h) / 35; i++) {
+    const x = d.x + rand() * d.w;
+    const y = d.y + rand() * d.h;
+    const r = 2 + rand() * 6;
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    const tone = rand() < 0.5 ? '0,0,0' : '255,240,220';
+    grad.addColorStop(0, `rgba(${tone},${0.025 + rand() * 0.035})`);
+    grad.addColorStop(1, `rgba(${tone},0)`);
+    g.fillStyle = grad;
+    g.fillRect(x - r, y - r, 2 * r, 2 * r);
+  }
+  g.fillStyle = 'rgba(0,0,0,0.12)';
+  for (let i = 0; i < (d.w * d.h) / 900; i++)
+    g.fillRect(d.x + rand() * d.w, d.y + rand() * d.h, 3 + rand() * 7, 2 + rand() * 5);
+  // tar-sealed cracks: thin glossy black wanderers
+  g.strokeStyle = 'rgba(8,8,10,0.45)';
+  g.lineWidth = 0.08;
+  g.lineJoin = 'round';
+  for (let i = 0; i < (d.w * d.h) / 500; i++) {
+    let x = d.x + rand() * d.w;
+    let y = d.y + rand() * d.h;
+    let a = rand() * Math.PI * 2;
+    g.beginPath();
+    g.moveTo(x, y);
+    for (let k = 0; k < 8; k++) {
+      a += (rand() - 0.5) * 1.2;
+      x += Math.cos(a) * 1.2;
+      y += Math.sin(a) * 1.2;
+      g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+}
+
+/** Raised hood, car local frame (+x = nose): engine bay in front of the hinge, panel propped up. */
+function drawHood(g: Ctx, d: Of<'hood'>) {
+  const rand = rng(d.seed * 61 + 9);
+  const hl = d.len / 2;
+  const hw = d.wid / 2 - 0.16;
+  const hinge = hl - d.len * 0.3;
+  local(g, d.x, d.y, d.angle, () => {
+    g.fillStyle = '#121316'; // engine bay
+    g.beginPath();
+    g.roundRect(hinge + 0.42, -hw, hl - 0.14 - hinge - 0.42, 2 * hw, 0.12);
+    g.fill();
+    g.fillStyle = '#5a5d63'; // radiator
+    g.fillRect(hl - 0.3, -hw + 0.1, 0.12, 2 * hw - 0.2);
+    const cover = ['#a8231c', '#1b1b1d', '#7c8088', '#2a4f9a'][Math.floor(rand() * 4)];
+    g.fillStyle = '#3b3d42'; // block
+    g.fillRect(hinge + 0.55, -0.35, 0.55, 0.7);
+    g.fillStyle = cover; // cam cover
+    g.fillRect(hinge + 0.62, -0.25, 0.42, 0.5);
+    g.fillStyle = '#8a8d93'; // strut tops, battery
+    for (const s of [-1, 1]) {
+      g.beginPath();
+      g.arc(hinge + 0.6, s * (hw - 0.17), 0.09, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = '#26282c';
+    g.fillRect(hl - 0.62, hw - 0.42, 0.26, 0.3);
+    // the panel stands up near vertical: a short foreshortened strip over the cowl
+    g.fillStyle = 'rgba(0,0,0,0.35)';
+    g.fillRect(hinge - 0.12, -hw, 0.24, 2 * hw); // shadow on the windscreen
+    g.fillStyle = d.color;
+    g.beginPath();
+    g.roundRect(hinge, -hw - 0.04, 0.4, 2 * hw + 0.08, 0.08);
+    g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.28)'; // lit leading edge
+    g.fillRect(hinge + 0.33, -hw, 0.07, 2 * hw);
+    g.strokeStyle = '#9a9ca2'; // prop rod
+    g.lineWidth = 0.03;
+    g.beginPath();
+    g.moveTo(hl - 0.3, hw - 0.12);
+    g.lineTo(hinge + 0.38, hw - 0.3);
+    g.stroke();
+  });
+}
+
+function drawMoon(g: Ctx, d: Of<'moon'>, layer: DecorLayer, t: number) {
+  const { x, y, r } = d;
+  if (layer === 'light') return pool(g, x, y, r * 2.4, '255,255,255', 0.9);
+  if (layer === 'glow') {
+    pool(g, x, y, r * 4, '255,60,170', 0.32);
+    pool(g, x, y, r * 2.2, '255,220,140', 0.4);
+    return;
+  }
+  if (layer === 'over') {
+    const k = 0.75 + 0.25 * Math.sin(t * 1.6);
+    g.globalAlpha *= k;
+    pool(g, x, y, r * 1.8, '255,70,180', 0.35);
+    return;
+  }
+  g.fillStyle = '#0d0b1a'; // backplate
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = '#ff3fb0'; // neon ring, blue inner tube
+  g.lineWidth = r * 0.09;
+  g.stroke();
+  g.strokeStyle = '#3ad7ff';
+  g.lineWidth = r * 0.04;
+  g.beginPath();
+  g.arc(x, y, r * 0.84, 0, Math.PI * 2);
+  g.stroke();
+  g.fillStyle = '#ffe7a3'; // crescent: a disc bitten by the backplate
+  g.beginPath();
+  g.arc(x - r * 0.08, y, r * 0.6, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#0d0b1a';
+  g.beginPath();
+  g.arc(x + r * 0.2, y - r * 0.14, r * 0.5, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#fff6d8';
+  for (const [u, w] of [
+    [0.42, 0.32],
+    [0.3, 0.55],
+    [0.55, 0.05],
+  ]) {
+    g.beginPath();
+    g.arc(x + u * r, y + w * r, r * 0.05, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+/** Food truck from above: cab at +x, roof vents, serving hatch with a striped awning on +y. */
+function drawTruck(g: Ctx, d: Of<'truck'>, layer: DecorLayer) {
+  const hw = d.w / 2;
+  const hh = d.h / 2;
+  const hatch = {
+    x: d.x - Math.sin(d.angle) * (hh + 1.2),
+    y: d.y + Math.cos(d.angle) * (hh + 1.2),
+  };
+  if (layer === 'light') return pool(g, hatch.x, hatch.y, 5, '255,255,255', 0.9);
+  if (layer === 'glow') return pool(g, hatch.x, hatch.y, 6, WARM, 0.45);
+  local(g, d.x, d.y, d.angle, () => {
+    g.fillStyle = '#d9d2c0'; // cream box
+    g.beginPath();
+    g.roundRect(-hw, -hh, d.w, d.h, 0.25);
+    g.fill();
+    g.fillStyle = '#2f7f7a'; // teal cab
+    g.beginPath();
+    g.roundRect(hw - 1.6, -hh + 0.05, 1.55, d.h - 0.1, [0.1, 0.4, 0.4, 0.1]);
+    g.fill();
+    g.fillStyle = '#121519';
+    g.fillRect(hw - 0.9, -hh + 0.2, 0.35, d.h - 0.4); // windscreen
+    g.fillStyle = 'rgba(0,0,0,0.18)';
+    g.fillRect(-hw + 0.3, -hh + 0.3, d.w - 2.2, d.h - 0.6);
+    g.fillStyle = '#9ea2a8'; // roof vents
+    for (const u of [-1.6, 0.2]) g.fillRect(u, -0.35, 0.7, 0.7);
+    g.fillStyle = '#2f7f7a'; // teal waist stripe
+    g.fillRect(-hw, hh - 0.25, d.w - 1.6, 0.25);
+    for (let u = -hw + 0.5, k = 0; u < hw - 2.2; u += 0.5, k++) {
+      g.fillStyle = k % 2 ? '#f4efe4' : '#c8324a'; // awning stripes
+      g.fillRect(u, hh, 0.5, 1);
+    }
+    g.fillStyle = '#1a1a1c'; // chalkboard
+    g.fillRect(-hw + 0.6, hh + 1.6, 0.9, 0.12);
+  });
+}
+
+function drawBulbs(g: Ctx, d: Of<'bulbs'>, layer: DecorLayer) {
+  const p = [{ x: d.x, y: d.y }, ...d.to];
+  if (layer === 'wall') {
+    g.strokeStyle = 'rgba(20,18,16,0.8)';
+    g.lineWidth = 0.04;
+    g.beginPath();
+    p.forEach((q, i) => (i ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y)));
+    g.stroke();
+  }
+  let n = 0;
+  for (let i = 1; i < p.length; i++) {
+    const len = Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
+    for (let s = 0; s < len; s += 0.9, n++) {
+      const x = p[i - 1].x + ((p[i].x - p[i - 1].x) * s) / len;
+      const y = p[i - 1].y + ((p[i].y - p[i - 1].y) * s) / len;
+      if (layer === 'light') pool(g, x, y, 1.4, '255,255,255', 0.5);
+      else if (layer === 'glow') pool(g, x, y, 1.8, WARM, 0.35);
+      else {
+        g.fillStyle = n % 3 ? '#ffe2a8' : '#ffb35c';
+        g.beginPath();
+        g.arc(x, y, 0.09, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+  }
+}
+
+function drawDinerRoof(g: Ctx, d: Of<'roof'>) {
+  const rand = rng(d.seed * 17 + 3);
+  g.fillStyle = '#3a3739';
+  g.fillRect(d.x, d.y, d.w, d.h);
+  g.fillStyle = '#4a4648'; // membrane
+  g.fillRect(d.x + 0.6, d.y + 0.6, d.w - 1.2, d.h - 1.2);
+  g.strokeStyle = 'rgba(0,0,0,0.18)';
+  g.lineWidth = 0.05;
+  g.beginPath();
+  for (let x = d.x + 2; x < d.x + d.w - 1; x += 2)
+    (g.moveTo(x, d.y + 0.6), g.lineTo(x, d.y + d.h - 0.6));
+  g.stroke();
+  g.strokeStyle = d.color; // fascia band
+  g.lineWidth = 0.35;
+  g.strokeRect(d.x + 0.2, d.y + 0.2, d.w - 0.4, d.h - 0.4);
+  for (let k = 0; k < 4; k++) {
+    const x = d.x + 3 + rand() * (d.w - 9);
+    const y = d.y + 3 + rand() * (d.h - 8);
+    g.fillStyle = 'rgba(0,0,0,0.35)';
+    g.fillRect(x + 0.3, y + 0.4, 3, 2);
+    g.fillStyle = '#6a6d72'; // AC unit with fan
+    g.fillRect(x, y, 3, 2);
+    g.fillStyle = '#2b2c30';
+    g.beginPath();
+    g.arc(x + 1.5, y + 1, 0.7, 0, Math.PI * 2);
+    g.fill();
+  }
+  const ex = d.x + d.w * 0.7; // kitchen exhaust
+  const ey = d.y + d.h * 0.7;
+  g.fillStyle = '#8a8c90';
+  g.beginPath();
+  g.arc(ex, ey, 0.9, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#2b2c30';
+  g.beginPath();
+  g.arc(ex, ey, 0.5, 0, Math.PI * 2);
+  g.fill();
+}
+
+// --- road works and canal kinds ---
+
+function drawCone(g: Ctx, d: Of<'cone'>, layer: DecorLayer) {
+  if (layer === 'light') return pool(g, d.x, d.y, 0.9, '255,255,255', 0.35);
+  if (layer === 'glow') return pool(g, d.x, d.y, 1.1, '255,120,30', 0.3);
+  g.fillStyle = '#1a1a1e'; // base
+  g.fillRect(d.x - 0.3, d.y - 0.3, 0.6, 0.6);
+  for (const [r, c] of [
+    [0.26, '#ff6a1a'],
+    [0.17, '#f4f4ee'],
+    [0.1, '#ff6a1a'],
+  ] as const) {
+    g.fillStyle = c;
+    g.beginPath();
+    g.arc(d.x, d.y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+function drawRoadsign(g: Ctx, d: Of<'roadsign'>, layer: DecorLayer) {
+  const closed = d.sign === 'closed';
+  if (layer === 'light') return pool(g, d.x, d.y, 2.2, '255,255,255', 0.5);
+  if (layer === 'glow') return pool(g, d.x, d.y, 2.8, closed ? '255,60,50' : '60,220,130', 0.3);
+  if (closed) {
+    local(g, d.x, d.y, d.angle, () => {
+      g.fillStyle = '#f4f4ee';
+      g.beginPath();
+      g.arc(0, 0, 0.85, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#d42a22';
+      g.beginPath();
+      g.arc(0, 0, 0.75, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#f4f4ee';
+      g.fillRect(-0.12, -0.5, 0.24, 1); // the bar runs across the street
+    });
+    return;
+  }
+  // green board, upright on screen, its arrow pointing the way
+  g.fillStyle = '#0d0e12';
+  g.fillRect(d.x - 1.75, d.y - 1.05, 3.5, 2.1);
+  g.fillStyle = '#1f8a52';
+  g.fillRect(d.x - 1.6, d.y - 0.9, 3.2, 1.8);
+  g.fillStyle = g.strokeStyle = '#f4f4ee';
+  local(g, d.x, d.y - 0.25, d.angle, () => {
+    g.fillRect(-0.55, -0.09, 0.7, 0.18);
+    g.beginPath();
+    g.moveTo(0.55, 0);
+    g.lineTo(0.2, -0.32);
+    g.lineTo(0.2, 0.32);
+    g.closePath();
+    g.fill();
+  });
+  local(g, d.x, d.y + 0.5, 0, () => text(g, 'EXPWY', 0.55, true));
+}
+
+function drawLantern(g: Ctx, d: Of<'lantern'>, layer: DecorLayer, t: number) {
+  const c = rgb(d.color);
+  if (layer === 'over') {
+    // per frame, like neon: the static glow alone reads too faint on dark asphalt
+    g.globalAlpha *= 0.85 + 0.15 * Math.sin(t * 2.3 + d.x * 1.7 + d.y);
+    pool(g, d.x, d.y, 3, c, 0.45);
+    return pool(g, d.x, d.y, 0.7, '255,225,180', 0.7);
+  }
+  if (layer === 'light') return pool(g, d.x, d.y, 4.5, '255,255,255', 0.8);
+  if (layer === 'glow') return pool(g, d.x, d.y, 6, c, 0.55);
+  g.fillStyle = d.color;
+  g.beginPath();
+  g.ellipse(d.x, d.y, 0.32, 0.42, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = 'rgba(255,240,200,0.55)'; // lit core
+  g.beginPath();
+  g.ellipse(d.x, d.y, 0.16, 0.24, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#141416'; // caps
+  g.fillRect(d.x - 0.18, d.y - 0.47, 0.36, 0.1);
+  g.fillRect(d.x - 0.18, d.y + 0.37, 0.36, 0.1);
+}
+
 /** World rect visible on an axis-aligned canvas transform; null if unknown (no culling). */
 function viewOf(g: Ctx): Rect | null {
   const m = typeof g.getTransform === 'function' ? g.getTransform() : null;
@@ -744,9 +1089,15 @@ function reach(d: Decor): [number, number, number] | null {
       ];
     case 'crowd':
       return [d.x, d.y, d.n * 0.4 + 2];
+    case 'lantern':
+      return [d.x, d.y, 3];
     case 'shaft':
     case 'screen':
       return [d.x, d.y, Math.max(d.w, d.h)];
+    case 'moon':
+      return [d.x, d.y, d.r * 2];
+    case 'crane':
+      return [d.x, d.y, (d.len + d.span) / 2 + d.boom + 3];
     default:
       return null;
   }
@@ -766,7 +1117,7 @@ export function drawDecor(
   const base = g.globalAlpha;
   const view = layer === 'over' ? viewOf(g) : null; // the over layer runs per frame: cull
   for (const d of decor) {
-    if (d.floor !== floorIndex) continue;
+    if (d.floor !== floorIndex || (layer === 'sea') !== (d.kind === 'sea')) continue;
     if (view) {
       const r = reach(d);
       if (!r) continue;
@@ -799,6 +1150,24 @@ export function drawDecor(
         break;
       case 'manhole':
         if (layer === 'floor') drawManhole(g, d);
+        break;
+      case 'tarmac':
+        if (layer === 'floor') drawTarmac(g, d);
+        break;
+      case 'hood':
+        if (layer === 'wall') drawHood(g, d);
+        break;
+      case 'moon':
+        if (layer !== 'floor') drawMoon(g, d, layer, t);
+        break;
+      case 'truck':
+        if (layer !== 'floor' && layer !== 'over') drawTruck(g, d, layer);
+        break;
+      case 'bulbs':
+        if (layer !== 'floor' && layer !== 'over') drawBulbs(g, d, layer);
+        break;
+      case 'roof':
+        if (layer === 'wall') drawDinerRoof(g, d);
         break;
       case 'text':
         if (layer === 'floor') drawText(g, d);
@@ -858,7 +1227,499 @@ export function drawDecor(
         else if (layer === 'over')
           shaft(g, d, '255,240,215', 0.03 + 0.02 * Math.sin(t * 0.7 + d.x));
         break;
+      case 'cone':
+        if (layer !== 'floor' && layer !== 'over') drawCone(g, d, layer);
+        break;
+      case 'roadsign':
+        if (layer !== 'floor' && layer !== 'over') drawRoadsign(g, d, layer);
+        break;
+      case 'lantern':
+        if (layer !== 'floor') drawLantern(g, d, layer, t);
+        break;
+      default:
+        drawDock(g, d, layer, t);
     }
   }
   g.globalAlpha = base;
+}
+
+// --- dock kinds (WANGAN DOCKS) ---
+
+/** Port scenery: containers and trucks over their solids, cranes, quay furniture, the harbour. */
+export type DockDecor =
+  /**
+   * Shipping container over its solid (rect rotated by angle about its center): ribbed roof,
+   * door end at +x of the long side, stencilled code, optional line name. tone -1..1 reads as
+   * the stack tier (lighter = higher). part: 'trailer' = 40 ft box on a chassis, front at +x;
+   * 'cab' = truck cab, nose at +x.
+   */
+  | {
+      kind: 'container';
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      angle: number;
+      color: string;
+      code?: string;
+      brand?: string;
+      tone?: number;
+      part?: 'trailer' | 'cab';
+    }
+  /**
+   * Gantry crane centered at (x, y), +x along its travel: legs at (±len/2, ±span/2), overhead
+   * girders as open truss, a boom reaching `boom` m past the +y legs (0: none, no rails).
+   * Red warning lamps on the legs and boom tip blink on the over layer.
+   */
+  | {
+      kind: 'crane';
+      x: number;
+      y: number;
+      angle: number;
+      len: number;
+      span: number;
+      boom: number;
+      seed: number;
+    }
+  /** mooring bollard over a 0.8 m pillar */
+  | { kind: 'bollard'; x: number; y: number }
+  /** coiled mooring rope */
+  | { kind: 'coil'; x: number; y: number; seed: number }
+  /** sodium lamp streaking down the wet asphalt below (x, y) */
+  | { kind: 'reflection'; x: number; y: number }
+  /** puddle catching the lamps */
+  | { kind: 'puddle'; x: number; y: number; r: number; seed: number }
+  /**
+   * The harbour round the floor rect (x, y, w, h), on the sea layer: water shimmer, quay fenders, a moored
+   * ship (bow at +x, quay side at +y) and mooring ropes from a (quay) to b (ship).
+   */
+  | { kind: 'sea'; x: number; y: number; w: number; h: number; ship: Rect; ropes: [Vec, Vec][] };
+
+/** Container line colors, bright enough to read under the sodium light. */
+export const DOCK_BOXES = [
+  '#b8382c',
+  '#2f6db0',
+  '#2f8a5a',
+  '#e07a24',
+  '#d8b02a',
+  '#1f8f8f',
+  '#8a3a7a',
+  '#e8e4dc',
+  '#6b7480',
+  '#8e3b22',
+  '#3a4fa0',
+];
+const STEEL = '#e3a72a'; // crane paint
+const LAMP_RED = '255,45,30';
+
+/** True for pale paint that wants dark stencils. */
+const pale = (hex: string) => {
+  const [r, g, b] = rgb(hex).split(',').map(Number);
+  return 0.3 * r + 0.59 * g + 0.11 * b > 150;
+};
+
+function drawContainer(g: Ctx, d: Of<'container'>) {
+  local(g, d.x, d.y, d.angle, () => {
+    let [w, h] = [d.w, d.h];
+    let turn = d.angle;
+    if (h > w) {
+      g.rotate(Math.PI / 2);
+      [w, h] = [h, w];
+      turn += Math.PI / 2;
+    }
+    if (d.part === 'cab') return drawCab(g, w, h, d.color);
+    if (d.part === 'trailer') {
+      g.fillStyle = '#1a1b1f'; // chassis and gooseneck ahead of the box
+      g.fillRect(-w / 2, -h / 2 + 0.15, w, h - 0.3);
+      g.fillStyle = '#34353a';
+      g.fillRect(w / 2 - 1.5, -0.3, 1.5, 0.6);
+      g.translate(-(w - 12.2) / 2, 0);
+      [w, h] = [12.2, 2.44];
+    }
+    const [hw, hh] = [w / 2, h / 2];
+    g.fillStyle = d.color;
+    g.fillRect(-hw, -hh, w, h);
+    const tone = d.tone ?? 0;
+    g.fillStyle = tone > 0 ? `rgba(255,255,255,${0.14 * tone})` : `rgba(0,0,0,${-0.35 * tone})`;
+    g.fillRect(-hw, -hh, w, h);
+    // corrugated roof: dark grooves with a lit crest beside each
+    g.fillStyle = 'rgba(0,0,0,0.24)';
+    for (let x = -hw + 0.3; x < hw - 0.4; x += 0.28) g.fillRect(x, -hh + 0.12, 0.1, h - 0.24);
+    g.fillStyle = 'rgba(255,255,255,0.1)';
+    for (let x = -hw + 0.4; x < hw - 0.4; x += 0.28) g.fillRect(x, -hh + 0.12, 0.06, h - 0.24);
+    // top rails (lit from the north like the render's light), door end at +x, corner castings
+    g.fillStyle = 'rgba(255,255,255,0.18)';
+    g.fillRect(-hw, -hh, w, 0.1);
+    g.fillStyle = 'rgba(0,0,0,0.4)';
+    g.fillRect(-hw, hh - 0.12, w, 0.12);
+    g.fillRect(hw - 0.3, -hh, 0.3, h);
+    g.fillRect(-hw, -hh, 0.14, h);
+    g.fillStyle = 'rgba(225,220,205,0.55)';
+    for (const x of [-hw, hw - 0.22])
+      for (const y of [-hh, hh - 0.22]) g.fillRect(x, y, 0.22, 0.22);
+    // stencils, upright on screen
+    if (Math.cos(turn) < -1e-6) g.rotate(Math.PI);
+    g.fillStyle = pale(d.color) ? 'rgba(25,25,30,0.7)' : 'rgba(242,240,232,0.72)';
+    if (d.brand) {
+      g.save();
+      g.translate(0, -0.2);
+      text(g, d.brand, Math.min(1.05, ((w - 2) / d.brand.length) * 1.6), true);
+      g.restore();
+    }
+    if (d.code) {
+      g.save();
+      g.translate(d.brand ? hw * 0.45 : 0, d.brand ? 0.78 : 0);
+      text(g, d.code, d.brand ? 0.4 : Math.min(0.8, ((w - 1.4) / d.code.length) * 1.7), true);
+      g.restore();
+    }
+  });
+}
+
+/** Truck cab in its local frame, nose at +x. */
+function drawCab(g: Ctx, w: number, h: number, color: string) {
+  const [hw, hh] = [w / 2, h / 2];
+  g.fillStyle = color;
+  g.beginPath();
+  g.roundRect(-hw, -hh, w, h, [0.15, 0.45, 0.45, 0.15]);
+  g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.14)'; // roof fairing
+  g.fillRect(-hw + 0.25, -hh + 0.3, w - 1, h - 0.6);
+  g.fillStyle = '#111418'; // windshield
+  g.fillRect(hw - 0.6, -hh + 0.15, 0.3, h - 0.3);
+  g.fillStyle = 'rgba(0,0,0,0.45)';
+  g.fillRect(-hw, -hh + 0.1, 0.16, h - 0.2);
+  g.fillStyle = '#1a1b1f'; // mirrors
+  g.fillRect(hw - 0.75, -hh - 0.22, 0.14, 0.22);
+  g.fillRect(hw - 0.75, hh, 0.14, 0.22);
+}
+
+/** Open truss girder from a to b, `w` wide: two chords and zigzag lacing. */
+function truss(g: Ctx, a: Vec, b: Vec, w: number, color: string, alpha: number) {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  local(g, a.x, a.y, Math.atan2(b.y - a.y, b.x - a.x), () => {
+    g.fillStyle = `rgba(${color},${alpha * 0.18})`;
+    g.fillRect(0, -w / 2, len, w);
+    g.strokeStyle = `rgba(${color},${alpha})`;
+    g.lineCap = 'butt';
+    g.lineWidth = 0.18;
+    g.beginPath();
+    g.moveTo(0, -w / 2);
+    g.lineTo(len, -w / 2);
+    g.moveTo(0, w / 2);
+    g.lineTo(len, w / 2);
+    g.stroke();
+    g.lineWidth = 0.08;
+    g.beginPath();
+    for (let x = 0, s = 1; x < len; x += w, s = -s) {
+      g.moveTo(x, (-s * w) / 2);
+      g.lineTo(Math.min(len, x + w), (s * w) / 2);
+    }
+    g.stroke();
+  });
+}
+
+function drawCrane(g: Ctx, d: Of<'crane'>, layer: DecorLayer, t: number) {
+  const [hl, hs] = [d.len / 2, d.span / 2];
+  const legs = [-hl, hl].flatMap((x) => [-hs, hs].map((y) => ({ x, y })));
+  const tip = { x: 0, y: hs + d.boom };
+  const lamps = d.boom > 0 ? [...legs, tip] : legs;
+  const girders: [Vec, Vec, number][] = [
+    [{ x: -hl - 1, y: -hs }, { x: hl + 1, y: -hs }, 1],
+    [{ x: -hl - 1, y: hs }, { x: hl + 1, y: hs }, 1],
+    [{ x: -hl, y: -hs }, { x: -hl, y: hs }, 1.4],
+    [{ x: hl, y: -hs }, { x: hl, y: hs }, 1.4],
+  ];
+  if (d.boom > 0) girders.push([{ x: 0, y: -hs }, tip, 2]);
+  local(g, d.x, d.y, d.angle, () => {
+    if (layer === 'floor') {
+      if (d.boom > 0) {
+        g.strokeStyle = 'rgba(160,160,155,0.45)'; // crane rails
+        g.lineWidth = 0.1;
+        g.beginPath();
+        for (const y of [-hs, hs])
+          for (const o of [-0.35, 0.35]) (g.moveTo(-hl - 30, y + o), g.lineTo(hl + 30, y + o));
+        g.stroke();
+      }
+      g.strokeStyle = 'rgba(0,0,0,0.28)'; // the girders' shadow on the ground
+      g.lineCap = 'butt';
+      for (const [a, b, w] of girders) {
+        g.lineWidth = w;
+        g.beginPath();
+        g.moveTo(a.x + 1, a.y + 1.4);
+        g.lineTo(b.x + 1, b.y + 1.4);
+        g.stroke();
+      }
+    } else if (layer === 'wall') {
+      for (const [a, b, w] of girders) truss(g, a, b, w, rgb(STEEL), 0.9);
+      const trolley = d.boom > 0 ? { x: 0, y: hs + d.boom * 0.7 } : { x: hl, y: 0 };
+      g.fillStyle = '#2a2b30';
+      g.fillRect(trolley.x - 1.1, trolley.y - 1.4, 2.2, 2.8);
+      g.fillStyle = 'rgba(160,200,230,0.5)'; // operator cab glass
+      g.fillRect(trolley.x - 0.8, trolley.y + 0.6, 1.6, 0.5);
+      for (const p of legs) {
+        g.fillStyle = STEEL;
+        g.fillRect(p.x - 1, p.y - 1, 2, 2);
+        g.strokeStyle = 'rgba(0,0,0,0.45)';
+        g.lineWidth = 0.12;
+        g.strokeRect(p.x - 0.9, p.y - 0.9, 1.8, 1.8);
+        g.beginPath();
+        g.moveTo(p.x - 0.9, p.y - 0.9);
+        g.lineTo(p.x + 0.9, p.y + 0.9);
+        g.moveTo(p.x + 0.9, p.y - 0.9);
+        g.lineTo(p.x - 0.9, p.y + 0.9);
+        g.stroke();
+      }
+      g.fillStyle = '#5a1410'; // unlit lamp housings
+      for (const p of lamps) {
+        g.beginPath();
+        g.arc(p.x, p.y, 0.25, 0, Math.PI * 2);
+        g.fill();
+      }
+    } else if (layer === 'over' && (t * 0.8 + d.seed * 0.29) % 1 < 0.4) {
+      for (const p of lamps) {
+        pool(g, p.x, p.y, 2.2, LAMP_RED, 0.5);
+        pool(g, p.x, p.y, 0.45, '255,190,170', 1);
+      }
+    }
+  });
+}
+
+function drawBollard(g: Ctx, d: Of<'bollard'>) {
+  g.fillStyle = '#26272b'; // base plate over the pillar
+  g.fillRect(d.x - 0.4, d.y - 0.4, 0.8, 0.8);
+  const disc = (r: number, color: string, dx = 0) => {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(d.x + dx, d.y + dx, r, 0, Math.PI * 2);
+    g.fill();
+  };
+  disc(0.31, '#d6a51f');
+  disc(0.2, '#1c1d21');
+  disc(0.07, 'rgba(255,255,255,0.3)', -0.07);
+}
+
+function drawCoil(g: Ctx, d: Of<'coil'>) {
+  const rand = rng(d.seed * 31 + 9);
+  const color = ['#c9a46a', '#d0662a', '#2f6db0'][Math.floor(rand() * 3)];
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  g.beginPath();
+  g.arc(d.x + 0.08, d.y + 0.1, 0.55, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = color;
+  g.lineWidth = 0.07;
+  for (let r = 0.14; r < 0.52; r += 0.085) {
+    g.beginPath();
+    g.arc(d.x, d.y, r, rand() * 6, rand() * 6 + 6);
+    g.stroke();
+  }
+  const a = rand() * Math.PI * 2; // loose end
+  g.beginPath();
+  g.moveTo(d.x + 0.5 * Math.cos(a), d.y + 0.5 * Math.sin(a));
+  g.quadraticCurveTo(
+    d.x + 1.1 * Math.cos(a + 0.4),
+    d.y + 1.1 * Math.sin(a + 0.4),
+    d.x + 1.5 * Math.cos(a),
+    d.y + 1.5 * Math.sin(a),
+  );
+  g.stroke();
+}
+
+function drawPuddle(g: Ctx, d: Of<'puddle'>, layer: DecorLayer) {
+  const rand = rng(d.seed * 59 + 4);
+  for (let i = 0; i < 3; i++) {
+    const x = d.x + (rand() - 0.5) * d.r;
+    const y = d.y + (rand() - 0.5) * d.r * 0.6;
+    g.save();
+    g.translate(x, y);
+    g.scale(1 + rand(), 0.6 + rand() * 0.3);
+    if (layer === 'floor') {
+      const grad = g.createRadialGradient(0, 0, 0, 0, 0, d.r);
+      grad.addColorStop(0, 'rgba(6,8,14,0.3)');
+      grad.addColorStop(0.7, 'rgba(10,14,24,0.2)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad;
+      g.fillRect(-d.r, -d.r, 2 * d.r, 2 * d.r);
+    } else pool(g, 0, 0, d.r, SODIUM, 0.16); // the mirror catches the lamps
+    g.restore();
+  }
+}
+
+const ships = new WeakMap<object, HTMLCanvasElement>();
+const SHIP_PX = 10;
+
+/** Moored container ship, bow at +x, prerendered once. */
+function shipCanvas(L: number, B: number) {
+  const c = document.createElement('canvas');
+  c.width = L * SHIP_PX;
+  c.height = B * SHIP_PX;
+  const g = c.getContext('2d')!;
+  g.scale(SHIP_PX, SHIP_PX);
+  const rand = rng(1957);
+  const hull = new Path2D();
+  hull.moveTo(3, 0.3);
+  hull.lineTo(L - 32, 0.3);
+  hull.quadraticCurveTo(L - 5, 0.3, L, B / 2);
+  hull.quadraticCurveTo(L - 5, B - 0.3, L - 32, B - 0.3);
+  hull.lineTo(3, B - 0.3);
+  hull.quadraticCurveTo(0, B / 2, 3, 0.3);
+  g.fillStyle = '#7a2620'; // red hull flare seen past the deck edge
+  g.fill(hull);
+  g.save();
+  g.clip(hull);
+  g.fillStyle = '#3a3f46';
+  g.fillRect(1, 1.1, L - 2.2, B - 2.2);
+  g.restore();
+  g.strokeStyle = '#d8d4c8'; // white bulwark rail
+  g.lineWidth = 0.15;
+  g.stroke(hull);
+  // container bays between the bridge and the forecastle
+  for (let x = 28; x + 12.2 < L - 34; x += 12.8) {
+    g.fillStyle = '#2b3036'; // hatch cover
+    g.fillRect(x - 0.2, 1.6, 12.6, B - 3.2);
+    for (let y = 2; y + 2.44 <= B - 2; y += 2.5) {
+      if (rand() < 0.08) continue;
+      g.fillStyle = DOCK_BOXES[Math.floor(rand() * DOCK_BOXES.length)];
+      g.fillRect(x, y, 12.2, 2.4);
+      g.fillStyle = rand() < 0.5 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.08)';
+      g.fillRect(x, y, 12.2, 2.4);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let k = x + 0.4; k < x + 12; k += 0.5) g.fillRect(k, y + 0.1, 0.12, 2.2);
+    }
+  }
+  // accommodation block and bridge wings near the stern, funnel aft of it
+  g.fillStyle = 'rgba(0,0,0,0.35)';
+  g.fillRect(9.5, 3.5, 13, B - 6);
+  g.fillStyle = '#dcd8cc';
+  g.fillRect(8, 3, 13, B - 6);
+  g.fillStyle = '#cbc7bb';
+  g.fillRect(18, 0.6, 3, B - 1.2);
+  g.fillStyle = '#ffd890'; // lit bridge windows
+  for (let y = 1; y < B - 1; y += 0.9) g.fillRect(20.7, y, 0.3, 0.5);
+  g.fillStyle = '#1c1c1e';
+  g.fillRect(4, B / 2 - 2.2, 4, 4.4);
+  g.fillStyle = '#b5302a';
+  g.fillRect(4, B / 2 - 2.2, 4, 1);
+  g.fillRect(4, B / 2 + 1.2, 4, 1);
+  // forecastle: winches, anchor chains, mast
+  g.fillStyle = '#2b2e33';
+  for (const y of [B / 2 - 4, B / 2 + 4]) {
+    g.beginPath();
+    g.arc(L - 22, y, 1.2, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.strokeStyle = '#55585e';
+  g.lineWidth = 0.25;
+  g.beginPath();
+  g.moveTo(L - 22, B / 2 - 4);
+  g.lineTo(L - 8, B / 2 - 1.5);
+  g.moveTo(L - 22, B / 2 + 4);
+  g.lineTo(L - 8, B / 2 + 1.5);
+  g.stroke();
+  g.fillStyle = '#e8e4d8';
+  g.fillRect(L - 16, B / 2 - 0.4, 0.8, 0.8);
+  // deck lights and running lights (red port, green starboard = quay side)
+  for (let x = 30; x < L - 36; x += 26) pool(g, x, B - 1.2, 5, '255,190,110', 0.25);
+  pool(g, 19.5, 0.8, 1.4, '255,40,30', 0.9);
+  pool(g, 19.5, B - 0.8, 1.4, '40,255,120', 0.9);
+  pool(g, L - 15.6, B / 2, 1.2, '255,255,240', 0.9);
+  return c;
+}
+
+/** Water past the floor edge: shimmer on a 3 m grid, fenders on the quay face, ship, ropes. */
+function drawSea(g: Ctx, d: Of<'sea'>, t: number) {
+  const [fx0, fy0, fx1, fy1] = [d.x, d.y, d.x + d.w, d.y + d.h];
+  const view = viewOf(g) ?? { x: fx0 - 60, y: fy0 - 60, w: d.w + 120, h: d.h + 120 };
+  const [x0, y0, x1, y1] = [view.x, view.y, view.x + view.w, view.y + view.h];
+  if (x0 >= fx0 && y0 >= fy0 && x1 <= fx1 && y1 <= fy1) return;
+  g.save();
+  g.beginPath();
+  g.rect(x0, y0, view.w, view.h);
+  g.rect(d.x, d.y, d.w, d.h);
+  g.clip('evenodd');
+  g.fillStyle = '#0b1a22';
+  g.fillRect(x0, y0, view.w, view.h);
+  const S = 3;
+  const glints: number[][] = [[], [], []];
+  for (let i = Math.floor(x0 / S); i * S < x1; i++)
+    for (let j = Math.floor(y0 / S); j * S < y1; j++) {
+      if (i * S >= fx0 && j * S >= fy0 && (i + 1) * S <= fx1 && (j + 1) * S <= fy1) continue;
+      const h = Math.abs(Math.sin(i * 127.1 + j * 311.7) * 43758.5453) % 1;
+      const k = 0.5 + 0.5 * Math.sin(t * (0.6 + h) + h * 40);
+      glints[Math.min(2, Math.floor(k * 3))].push(
+        i * S + ((h * 13) % 1) * S,
+        j * S + ((h * 7) % 1) * S,
+        0.6 + ((h * 3) % 1) * 1.8,
+      );
+    }
+  g.lineWidth = 0.12;
+  glints.forEach((gs, b) => {
+    g.strokeStyle = `rgba(140,185,225,${[0.03, 0.09, 0.2][b]})`;
+    g.beginPath();
+    for (let n = 0; n < gs.length; n += 3)
+      (g.moveTo(gs[n], gs[n + 1]), g.lineTo(gs[n] + gs[n + 2], gs[n + 1]));
+    g.stroke();
+  });
+  // rubber fenders hung on the quay face every 8 m
+  g.fillStyle = '#141416';
+  for (let x = fx0 + 4; x < fx1; x += 8) {
+    if (x < x0 - 2 || x > x1 + 2) continue;
+    g.fillRect(x - 0.9, fy0 - 0.7, 1.8, 0.7);
+    g.fillRect(x - 0.9, fy1, 1.8, 0.7);
+  }
+  for (let y = fy0 + 4; y < fy1; y += 8) {
+    if (y < y0 - 2 || y > y1 + 2) continue;
+    g.fillRect(fx0 - 0.7, y - 0.9, 0.7, 1.8);
+    g.fillRect(fx1, y - 0.9, 0.7, 1.8);
+  }
+  const s = d.ship;
+  const seen = s.x < x1 && s.x + s.w > x0 && s.y < y1 && s.y + s.h > y0;
+  if (seen && typeof document !== 'undefined') {
+    const along = s.h > s.w; // lying north-south: bow south, quay side west
+    let c = ships.get(d);
+    if (!c) ships.set(d, (c = along ? shipCanvas(s.h, s.w) : shipCanvas(s.w, s.h)));
+    g.save();
+    g.translate(along ? s.x + s.w : s.x, s.y);
+    if (along) g.rotate(Math.PI / 2);
+    g.drawImage(c, 0, 0, Math.max(s.w, s.h), Math.min(s.w, s.h));
+    g.restore();
+  }
+  g.strokeStyle = '#b39468';
+  g.lineWidth = 0.12;
+  g.beginPath();
+  for (const [a, b] of d.ropes) (g.moveTo(a.x, a.y), g.lineTo(b.x, b.y));
+  g.stroke();
+  g.restore();
+}
+
+function drawDock(g: Ctx, d: Of<DockDecor['kind']>, layer: DecorLayer, t: number) {
+  switch (d.kind) {
+    case 'container':
+      if (layer === 'wall') drawContainer(g, d);
+      break;
+    case 'crane':
+      drawCrane(g, d, layer, t);
+      break;
+    case 'bollard':
+      if (layer === 'wall') drawBollard(g, d);
+      break;
+    case 'coil':
+      if (layer === 'floor') drawCoil(g, d);
+      break;
+    case 'puddle':
+      if (layer === 'floor' || layer === 'glow') drawPuddle(g, d, layer);
+      break;
+    case 'reflection': {
+      if (layer !== 'light' && layer !== 'glow') break;
+      const glow = layer === 'glow';
+      g.save();
+      g.translate(d.x, d.y + 3);
+      g.scale(0.8, 4.5);
+      pool(g, 0, 0, 1, glow ? SODIUM : '255,255,255', glow ? 0.3 : 0.25);
+      g.restore();
+      break;
+    }
+    case 'sea':
+      if (layer === 'sea') drawSea(g, d, t);
+      break;
+  }
 }

@@ -18,6 +18,9 @@ import {
 
 const SWITCHBACK_WINDOW = 0.5; // s of non-drift gap that still counts as a switchback
 const DRIFT_REENTRY_GAP = 0.3; // s; shorter gaps are slip flicker, not a new drift
+const BONUS_POINTS: Partial<Record<Trick, number>> = { SCRAMBLE: 1500, 'DRIVE-THRU': 2500 };
+export const COP_SHOW_DIST = 4.5; // m, car hull to police rect; Tokyo routes pass 5 m off, so a slide is needed
+const COP_SHOW_BONUS = 1000;
 const TWO_PI = Math.PI * 2;
 
 export interface Scoring extends ScoringState {
@@ -28,6 +31,9 @@ export interface Scoring extends ScoringState {
   closeCooldown: number;
   yawAccum: number;
   clipped: Rect[]; // zones already clipped this combo
+  visited: Rect[]; // bonus rects drifted through this combo
+  fired: string[]; // bonus ids / 'COP' already fired this combo
+  nearMisses: number; // consecutive close calls this combo
 }
 
 export function createScoring(): Scoring {
@@ -41,6 +47,9 @@ export function createScoring(): Scoring {
     closeCooldown: 0,
     yawAccum: 0,
     clipped: [],
+    visited: [],
+    fired: [],
+    nearMisses: 0,
   };
 }
 
@@ -67,6 +76,9 @@ function resetBook(s: Scoring): void {
   s.closeCooldown = 0;
   s.yawAccum = 0;
   s.clipped = [];
+  s.visited = [];
+  s.fired = [];
+  s.nearMisses = 0;
 }
 
 /** Clipping zone containing p, or null. */
@@ -144,6 +156,27 @@ export function stepScoring(s: Scoring, f: ScoreFrame, dt: number): ScoreEvent[]
     if (f.nearDist < CLOSE_CALL_DIST && s.closeCooldown <= 0) {
       addTrick(s, ev, 'CLOSE CALL', CLOSE_CALL_BONUS);
       s.closeCooldown = CLOSE_CALL_COOLDOWN;
+      s.nearMisses++;
+      c.multiplier = Math.round((c.multiplier + Math.min(s.nearMisses, 10) * 0.1) * 10) / 10;
+      c.tricks.push('NEAR MISS');
+      ev.push({ type: 'trick', trick: 'NEAR MISS' });
+    }
+
+    for (const z of f.bonus ?? []) {
+      if (!s.visited.includes(z)) s.visited.push(z);
+      const all = (f.bonusAll ?? f.bonus!).filter((b) => b.id === z.id);
+      if (!s.fired.includes(z.id) && all.every((b) => s.visited.includes(b))) {
+        s.fired.push(z.id);
+        c.points += BONUS_POINTS[z.trick] ?? 0;
+        c.tricks.push(z.trick);
+        ev.push({ type: 'trick', trick: z.trick });
+      }
+    }
+    if ((f.nearPolice ?? Infinity) < COP_SHOW_DIST && !s.fired.includes('COP')) {
+      s.fired.push('COP');
+      c.points += COP_SHOW_BONUS;
+      c.tricks.push('COP SHOW');
+      ev.push({ type: 'trick', trick: 'COP SHOW' });
     }
     s.gap = 0;
   }

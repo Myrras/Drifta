@@ -39,7 +39,7 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 - Main menu: Play / Garage / Settings.
 - Garage: car select (11 cars), paint colour, car stats affect physics.
 - Settings: volumes, camera shake, reset bests; persisted.
-- Procedural eurobeat-style music that reacts to the combo.
+- Procedural PHONK music (original) that reacts to the combo.
 - Maps: JAPAN GARAGE (outlined by parked cars), WANGAN DOCKS, TEST PAD.
 
 ## v0.7 and v0.8

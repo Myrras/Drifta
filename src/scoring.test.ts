@@ -29,6 +29,9 @@ const F = (o: Opts = {}): ScoreFrame => {
     rampDrift: o.rampDrift ?? false,
     frozen: o.frozen ?? false,
     clip: o.clip ?? null,
+    bonus: o.bonus,
+    bonusAll: o.bonusAll,
+    nearPolice: o.nearPolice,
   };
 };
 const run = (s: ReturnType<typeof createScoring>, f: ScoreFrame, secs: number, dt = 0.1) => {
@@ -223,5 +226,55 @@ describe('medalFor', () => {
     const m = [100, 200, 300];
     expect([0, 99, 100, 250, 300, 999].map((t) => medalFor(t, m))).toEqual([0, 0, 1, 2, 3, 3]);
     expect(medalFor(500)).toBe(0);
+  });
+});
+
+describe('v0.9 bonus tricks', () => {
+  const z = (x: number) => ({ x, y: 0, w: 1, h: 1, id: 'a', trick: 'SCRAMBLE' as const });
+  const [z1, z2] = [z(0), z(5)];
+  it('fires a bonus zone once after every rect of its id', () => {
+    const s = createScoring();
+    const at = (b: (typeof z1)[]) => F({ drifting: true, bonus: b, bonusAll: [z1, z2] });
+    expect(tricks(stepScoring(s, at([z1]), 0.1))).not.toContain('SCRAMBLE');
+    const p = s.combo!.points;
+    const ev = stepScoring(s, at([z2]), 0.1);
+    expect(tricks(ev)).toContain('SCRAMBLE');
+    expect(s.combo!.points - p).toBeGreaterThan(1500);
+    expect(tricks(run(s, at([z1, z2]), 0.5))).not.toContain('SCRAMBLE');
+  });
+  it('COP SHOW once per combo under 4.5 m', () => {
+    const s = createScoring();
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 5 }), 0.1))).not.toContain(
+      'COP SHOW',
+    );
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 4 }), 0.1))).toContain('COP SHOW');
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 4 }), 0.1))).not.toContain(
+      'COP SHOW',
+    );
+  });
+  it('NEAR MISS chain adds n*0.1 and resets on a hit', () => {
+    const s = createScoring();
+    const cc = F({ drifting: true, nearDist: 0.1 });
+    stepScoring(s, cc, 0.1);
+    expect(s.combo!.multiplier).toBeCloseTo(1 + 1 + 0.1);
+    run(s, F({ drifting: true }), CLOSE_CALL_COOLDOWN);
+    stepScoring(s, cc, 0.1);
+    expect(s.combo!.multiplier).toBeCloseTo(1 + 2 + 0.3);
+    stepScoring(s, F({ hit: true }), 0.1);
+    stepScoring(s, cc, 0.1);
+    expect(s.combo!.multiplier).toBeCloseTo(1 + 1 + 0.1);
+  });
+  it('NEAR MISS chain is capped at 0.1*10 per step and has no float noise', () => {
+    const s = createScoring();
+    const cc = F({ drifting: true, nearDist: 0.1 });
+    for (let i = 0; i < 14; i++) {
+      stepScoring(s, cc, 0.1);
+      run(s, F({ drifting: true }), CLOSE_CALL_COOLDOWN);
+      const m = s.combo!.multiplier;
+      expect(m).toBe(Math.round(m * 10) / 10);
+    }
+    const before = s.combo!.multiplier;
+    stepScoring(s, cc, 0.1);
+    expect(s.combo!.multiplier).toBe(Math.round((before + 1 + 1) * 10) / 10); // CLOSE CALL +1, near miss +1.0
   });
 });

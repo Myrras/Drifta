@@ -185,6 +185,22 @@ describe('garage (B2 MEET)', () => {
     expect(inside(garage.finish.zone, floors[1])).toBe(true);
   });
 
+  it('centres and aligns every car that touches a bay, fully inside it', () => {
+    for (const f of floors) {
+      for (const c of carsOf(f)) {
+        const pts = cornersOf(c);
+        const m = { x: c.x + c.w / 2, y: c.y + c.h / 2 };
+        for (const b of f.bays) {
+          if (!pts.some((p) => inRect(p, b)) && !inRect(m, b)) continue;
+          expect(m.x).toBeCloseTo(b.x + b.w / 2, 5);
+          expect(m.y).toBeCloseTo(b.y + b.h / 2, 5);
+          expect(Math.abs(Math.sin(c.facing!)) > 0.5).toBe(b.h > b.w);
+          expect(pts.every((p) => inRect(p, b))).toBe(true);
+        }
+      }
+    }
+  });
+
   it('keeps the driven half of every helix ring free of solids on both floors', () => {
     for (const h of helixes) {
       for (const f of [floors[h.from], floors[h.from + 1]]) {
