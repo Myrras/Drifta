@@ -527,6 +527,13 @@ const b1 = floor(
 // line-up on both faces, the pocket's east wall, the spectator deck on the north wall.
 const north = meetRow(60, 116, 41, -1, 3);
 const south = meetRow(60, 116, 45, 1, 8);
+/** Boom cars: the meet car nearest x (west end, where the route leaves the helix; the only spot within 15 m of the route). */
+const boomAt = (cars: Solid[], x: number) => {
+  const c = cars.reduce((a, b) => (Math.abs(b.x - x) < Math.abs(a.x - x) ? b : a));
+  c.boom = true;
+};
+boomAt(north.cars, 60);
+boomAt(south.cars, 62);
 const b2 = floor(
   'B2',
   1,
