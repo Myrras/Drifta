@@ -2280,3 +2280,109 @@ describe('multiplayer entry and lobby', () => {
     });
   });
 });
+
+describe('time limit', () => {
+  const LIMIT = garage.parTime * 1.3;
+  function rig(map: GameMap = garage) {
+    const mem = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+    };
+    const ghosts = vi.fn();
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: ghosts, removeItem: noop });
+    const set = vi.fn();
+    const ui = vi.fn();
+    const prog0: Progress = { ...defaultProgress(), starterChosen: true };
+    const game = createGame(
+      [map],
+      { ...audio, ui },
+      () => ({ get: () => 0, set }),
+      storage,
+      undefined,
+      undefined,
+      prog0,
+    );
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    const finishNow = () => {
+      game.debug.scoring.banked = 1e6;
+      game.debug.floorIndex = map.finish.floor;
+      game.debug.car.pos = { x: map.finish.zone.x + 1, y: map.finish.zone.y + 1 };
+      step();
+    };
+    return { game, step, ui, set, ghosts, mem, finishNow, prog: () => loadProgress(storage) };
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('the HUD carries par x1.3 on maps with positions, nothing on TEST PAD', () => {
+    expect(rig().game.view().hud.limit).toBeCloseTo(LIMIT);
+    expect(rig(testpad).game.view().hud.limit).toBe(0);
+  });
+
+  it('time up: TIME UP results, nothing awarded or saved', () => {
+    const { game, step, set, ghosts, prog } = rig();
+    game.debug.scoring.banked = 5000;
+    game.debug.time = LIMIT - DT / 2;
+    step();
+    const r = game.view().hud.results!;
+    expect(game.view().hud.phase).toBe('results');
+    expect(r.timeUp).toBe(true);
+    expect(r.total).toBeGreaterThanOrEqual(5000);
+    expect(r.position).toBeNull();
+    expect(r.newBest).toBe(false);
+    expect(r.newPaints).toEqual([]);
+    expect(r.carPick).toBe(false);
+    expect(set).not.toHaveBeenCalled();
+    expect(ghosts).not.toHaveBeenCalled();
+    expect(prog().results).toEqual({});
+    expect(prog().carPicks).toBe(0);
+    step({ confirm: true }, 3); // locked out at first, then retry works
+    step({ confirm: true }, Math.ceil(1 / DT));
+    expect(game.view().hud.phase).toBe('countdown');
+  });
+
+  it('finishing just under the limit still counts', () => {
+    const { game, finishNow, set, prog } = rig();
+    game.debug.time = LIMIT - 1;
+    finishNow();
+    const r = game.view().hud.results!;
+    expect(r.timeUp).toBeFalsy();
+    expect(r.position).toBe(3); // par x1.3 is the 3rd-place time
+    expect(set).toHaveBeenCalled();
+    expect(prog().results[garage.name].position).toBe(3);
+  });
+
+  it('TEST PAD has no limit', () => {
+    const { game, step } = rig(testpad);
+    game.debug.time = 1e5;
+    step({}, 5);
+    expect(game.view().hud.phase).toBe('run');
+  });
+
+  it('pause and photo mode freeze the timer', () => {
+    const { game, step } = rig();
+    game.debug.time = LIMIT - 1;
+    step({ pause: true });
+    step({}, Math.ceil(3 / DT));
+    expect(game.view().hud.phase).toBe('paused');
+    step({ photo: true });
+    step({}, Math.ceil(3 / DT));
+    step({ pause: true }); // leave photo
+    step({ confirm: true }); // resume
+    expect(game.view().hud.phase).toBe('run');
+    expect(game.debug.time).toBeCloseTo(LIMIT - 1, 1);
+  });
+
+  it('beeps once per second for the last 5 seconds', () => {
+    const { game, step, ui } = rig();
+    game.debug.time = LIMIT - 8;
+    ui.mockClear();
+    step({}, Math.ceil(9 / DT)); // past the limit
+    expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'count', 'count']);
+    expect(game.view().hud.phase).toBe('results');
+  });
+});

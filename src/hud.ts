@@ -25,6 +25,22 @@ export function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
 }
 
+/** time-limit readout: seconds left, its colour, and the latest place cutoff already missed */
+export function limitState(
+  time: number,
+  par: number,
+  limit: number,
+): { left: number; color: string; pulse: boolean; missed: string } {
+  const left = Math.max(0, limit - time);
+  const n = [1, 2].filter((p) => time > par * POS_TIME[p] + 1e-6).pop();
+  return {
+    left,
+    color: left < 5 ? RED : left < 15 ? AMBER : WHITE,
+    pulse: left < 5,
+    missed: n ? `${ORD[n]} ✗` : '',
+  };
+}
+
 export function formatScore(n: number): string {
   return Math.round(n)
     .toString()
@@ -626,6 +642,24 @@ export function drawHud(
         stroke: null,
       });
 
+    // ---- under the timer: time left before TIME UP
+    if (v.limit > 0) {
+      const ls = limitState(v.time, v.par, v.limit);
+      const ly = pad + 12.5 * u;
+      plate(ctx, pad, ly, 27 * u, 6.5 * u, INK, ls.color);
+      text(ctx, formatTime(ls.left), pad + 6 * u, ly + 3.3 * u, 4.2 * u, ls.color, {
+        alpha: ls.pulse ? 0.65 + 0.35 * Math.sin(nowS * 12) : 1,
+      });
+      const mw = measure(ctx, ls.missed, 2.2 * u, 'label');
+      const lw = measure(ctx, formatTime(ls.left), 4.2 * u);
+      if (ls.missed && 6 * u + lw + 2 * u + mw < 26 * u)
+        text(ctx, ls.missed, pad + 25 * u, ly + 3.3 * u, 2.2 * u, STEEL, {
+          align: 'right',
+          font: 'label',
+          stroke: null,
+        });
+    }
+
     // ---- top-center: floor
     // hidden while the start gantry is still on screen
     if (!(v.phase === 'run' && v.time < 0.8)) {
@@ -963,13 +997,15 @@ function drawResults(
   const cw = Math.min(width - 6 * u, 150 * u);
   const x0 = cx - cw / 2;
 
-  // ---- headline: FINISHED, big total
+  // ---- headline: FINISHED (or TIME UP), big total
   const dl = r.daily;
-  const head = dl
-    ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
-    : 'FINISHED';
+  const head = r.timeUp
+    ? 'TIME UP'
+    : dl
+      ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
+      : 'FINISHED';
   const headPx = fitPx(ctx, head, (p) => th.font(700, p, true), 3.2 * u, cw);
-  text(ctx, head, cx, 6 * u, headPx, dl ? (dl.cleared ? GREEN : RED) : th.dim, {
+  text(ctx, head, cx, 6 * u, headPx, r.timeUp ? RED : dl ? (dl.cleared ? GREEN : RED) : th.dim, {
     align: 'center',
     css: th.font(700, headPx, true),
     stroke: null,
@@ -1045,7 +1081,7 @@ function drawResults(
   const bh = 6 * u;
   const flash = r.newBest && Math.floor(now * 3) % 2 === 0;
   const nbFont = th.font(800, 3.4 * u, true);
-  if (r.medals) {
+  if (r.medals && !r.timeUp) {
     const label = positionLabel(r.position);
     const col = r.position ? POS_COL[r.position] : th.dim;
     const font = th.font(800, 4.2 * u, true);

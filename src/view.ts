@@ -84,6 +84,8 @@ export interface Results {
   time: number;
   best: number;
   newBest: boolean;
+  /** the run hit the time limit: the score is shown but does not count */
+  timeUp?: boolean;
   /** score thresholds [3rd, 2nd, 1st] of the map, if any */
   medals?: [number, number, number];
   /** finishing position on maps with positions, null = none reached */
@@ -177,6 +179,8 @@ export interface HudView {
   phase: Phase;
   time: number;
   par: number;
+  /** run time limit in seconds, 0 = none */
+  limit: number;
   floorName: string;
   /** banked points so far */
   score: number;
