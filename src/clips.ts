@@ -20,6 +20,20 @@ interface Take {
   discard: boolean;
   kept: boolean;
   tail?: ReturnType<typeof setTimeout>;
+  start: number;
+  still?: HTMLCanvasElement;
+}
+
+const STILL_MS = 200;
+const STILL_MAX = 25; // ring cap: ~5 s of history, 25 small canvases
+const STILL_W = 320;
+
+/** index of the time nearest to target, -1 if none */
+export function nearestIndex(times: number[], target: number): number {
+  let best = -1;
+  for (let i = 0; i < times.length; i++)
+    if (best < 0 || Math.abs(times[i] - target) < Math.abs(times[best] - target)) best = i;
+  return best;
 }
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
@@ -28,7 +42,7 @@ const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 export function createClipRecorder(
   canvas: HTMLCanvasElement,
   audio: () => MediaStream | null,
-): ClipRecorder & { frame(): void } {
+): ClipRecorder & { frame(): void; still(id: number): HTMLCanvasElement | undefined } {
   const out = document.createElement('canvas');
   const octx = out.getContext('2d');
   const ok = typeof MediaRecorder !== 'undefined' && 'captureStream' in out && !!octx;
@@ -39,6 +53,35 @@ export function createClipRecorder(
   let rolling: Take[] = [];
   let [maxLong, maxShort, fps, bitrate] = PRESETS.medium;
   const clips = new Map<number, Take>();
+  const ring: { t: number; c: HTMLCanvasElement }[] = [];
+  let ringHead = 0;
+  let lastStill = 0;
+
+  function snap(): void {
+    const now = performance.now();
+    if (now - lastStill < STILL_MS) return;
+    lastStill = now;
+    let e = ring[ringHead];
+    if (ring.length < STILL_MAX) ring.push((e = { t: now, c: document.createElement('canvas') }));
+    else ringHead = (ringHead + 1) % STILL_MAX; // overwrite the oldest, reusing its canvas
+    e.t = now;
+    e.c.width = STILL_W;
+    e.c.height = Math.max(1, Math.round((out.height * STILL_W) / out.width));
+    e.c.getContext('2d')!.drawImage(out, 0, 0, e.c.width, e.c.height);
+  }
+
+  function pickStill(t: Take): void {
+    const i = nearestIndex(
+      ring.map((e) => e.t),
+      (t.start + performance.now()) / 2,
+    );
+    if (i < 0) return;
+    const c = document.createElement('canvas');
+    c.width = ring[i].c.width;
+    c.height = ring[i].c.height;
+    c.getContext('2d')!.drawImage(ring[i].c, 0, 0);
+    t.still = c;
+  }
 
   function release(): void {
     stream?.getVideoTracks().forEach((v) => v.stop());
@@ -56,7 +99,7 @@ export function createClipRecorder(
     if (!stream) return null;
     try {
       const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: bitrate });
-      const t: Take = { rec, chunks: [], done: null!, discard: false, kept: false };
+      const t: Take = { rec, chunks: [], done: null!, discard: false, kept: false, start: 0 };
       t.done = new Promise((resolve) => {
         rec.ondataavailable = (e) => !t.discard && e.data.size && t.chunks.push(e.data);
         rec.onstop = () => resolve(new Blob(t.chunks, { type: rec.mimeType || 'video/webm' }));
@@ -104,10 +147,14 @@ export function createClipRecorder(
   return {
     /** call after each rendered frame */
     frame() {
-      if (stream) draw();
+      if (stream) {
+        draw();
+        snap();
+      }
     },
     begin(quality) {
       this.clear();
+      ring.length = ringHead = lastStill = 0;
       if (!mimeType || quality === 'off') return;
       [maxLong, maxShort, fps, bitrate] = PRESETS[quality];
       try {
@@ -125,13 +172,17 @@ export function createClipRecorder(
     },
     mark(id) {
       const t = rolling.shift() ?? take();
-      if (t) clips.set(id, t);
+      if (t) {
+        t.start = performance.now(); // drift start, not take start
+        clips.set(id, t);
+      }
       if (!rolling.length) rotate();
     },
     keep(id) {
       const t = clips.get(id);
       if (!t || t.kept) return;
       t.kept = true;
+      pickStill(t);
       t.tail = setTimeout(() => {
         finish(t);
         releaseIfIdle();
@@ -159,6 +210,9 @@ export function createClipRecorder(
       clips.forEach((t) => finish(t, true));
       clips.clear();
       release();
+    },
+    still(id) {
+      return clips.get(id)?.still;
     },
     has(id) {
       return clips.has(id);
