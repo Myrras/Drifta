@@ -624,4 +624,36 @@ describe('main menu, garage, settings', () => {
       }
     });
   });
+
+  describe('pause/countdown/title', () => {
+    it('confirm+pause resumes from pause', () => {
+      const { game, step, toRun } = setup();
+      toRun();
+      step({ pause: true });
+      expect(game.debug.phase).toBe('paused');
+      step({ pause: true, confirm: true });
+      expect(game.debug.phase).toBe('run');
+    });
+
+    it('pause or blur during countdown returns to title and bumps runId', () => {
+      const { game, step } = setup();
+      step({ confirm: true });
+      const id = game.debug.runId;
+      step({ pause: true });
+      expect(game.debug.phase).toBe('title');
+      expect(game.debug.runId).toBeGreaterThan(id);
+      step({ confirm: true });
+      const id2 = game.debug.runId;
+      game.pause();
+      expect(game.debug.phase).toBe('title');
+      expect(game.debug.runId).toBeGreaterThan(id2);
+    });
+
+    it('changing the title map bumps runId', () => {
+      const game = createGame([garage, testpad], audio, () => memBest());
+      const id = game.debug.runId;
+      game.update({ ...IDLE, right: true }, DT);
+      expect(game.debug.runId).toBeGreaterThan(id);
+    });
+  });
 });

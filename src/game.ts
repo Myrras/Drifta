@@ -37,6 +37,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
 ]);
+const NEAR_RANGE = 8; // m; solids farther than this cannot matter for collide or near-miss
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const MODEL_IDS = Object.keys(PLAYER_MODELS) as PlayerModel[];
@@ -231,7 +232,13 @@ export function createGame(
     audio.update(car, s.drift, input.throttle);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
-    const hit = collide(car, floor.solids, floor.circles);
+    const near = (x: number, y: number, r: number) =>
+      (x - car.pos.x) ** 2 + (y - car.pos.y) ** 2 <= (r + NEAR_RANGE) ** 2;
+    const solids = floor.solids.filter((o) =>
+      near(o.x + o.w / 2, o.y + o.h / 2, Math.hypot(o.w, o.h) / 2),
+    );
+    const circles = floor.circles.filter((o) => near(o.x, o.y, o.r));
+    const hit = collide(car, solids, circles);
     s.scrape = 0;
     if (hit) {
       const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
@@ -242,11 +249,9 @@ export function createGame(
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
-    const nearDist = s.drift.drifting
-      ? nearestDistance(car, floor.solids, floor.circles)
-      : Infinity;
+    const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
     const pushing = Math.max(input.throttle, input.brake) > STUCK_INPUT;
-    const touching = hit !== null || nearestDistance(car, floor.solids, floor.circles) < STUCK_NEAR;
+    const touching = hit !== null || nearestDistance(car, solids, circles) < STUCK_NEAR;
     const slow = Math.hypot(car.vel.x, car.vel.y) < STUCK_SPEED;
     s.stuck = pushing && slow && touching && !s.helix ? s.stuck + dt : 0;
     if (s.stuck >= STUCK_TIME) {
@@ -267,6 +272,11 @@ export function createGame(
     if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
   }
 
+  const toTitle = () => {
+    audio.stop();
+    audio.music(false);
+    Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
+  };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
@@ -375,12 +385,6 @@ export function createGame(
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      const toTitle = () => {
-        audio.stop();
-        audio.music(false);
-        Object.assign(s, fresh(), { phase: 'title' });
-      };
-
       const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
       if (input.restart && !inMenu) {
         newRun();
@@ -392,7 +396,7 @@ export function createGame(
           if (dir && row === 0) {
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
-            Object.assign(s, fresh());
+            Object.assign(s, fresh(), { runId: s.runId + 1 });
           }
           if (input.confirm) {
             audio.resume();
@@ -410,6 +414,10 @@ export function createGame(
           settingsInput(input, dir);
           break;
         case 'countdown':
+          if (input.pause) {
+            toTitle();
+            break;
+          }
           s.countdown -= dt;
           if (s.countdown <= EPS) s.phase = 'run';
           break;
@@ -420,8 +428,8 @@ export function createGame(
           } else run(input, dt);
           break;
         case 'paused':
-          if (input.pause) toTitle();
-          else if (input.confirm) s.phase = 'run';
+          if (input.confirm) s.phase = 'run';
+          else if (input.pause) toTitle();
           break;
         case 'results':
           s.resultsAge += dt;
@@ -478,6 +486,7 @@ export function createGame(
     },
 
     pause(): void {
+      if (s.phase === 'countdown') return toTitle();
       if (s.phase !== 'run') return;
       s.phase = 'paused';
       audio.stop();
