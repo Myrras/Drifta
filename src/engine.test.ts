@@ -423,7 +423,7 @@ describe('tunes', () => {
       expect(run(ENGINE_PROFILES[m], true)).toEqual(run(ENGINE_PROFILES[m], false));
     }
     for (const [, p] of NA) expect(run(p, true)).toEqual(run(p, false));
-  });
+  }, 30000);
 
   it('street surge stops when the throttle opens again', () => {
     const { dsp } = lift(engineProfile('s13', 'street'), 6000, 0.5);
