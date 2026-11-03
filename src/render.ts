@@ -13,6 +13,7 @@ import {
   updateSparks,
 } from './particles';
 import { drawParkedCar } from './sprites';
+import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
 
 // --- visual tuning ---
@@ -29,7 +30,6 @@ const SHAKE_PX = 7; // CSS px at shake = 1
 
 const BG = '#0a0b0d';
 const CONCRETE = '#2b2c30';
-const CONCRETE_ROOF = '#22262e';
 const PAINT_WHITE = '#b9b9b0';
 const ARROW_ALPHA = 0.35; // painted floor arrows, applied after the wear mask
 const PAINT_YELLOW = '#cfa82a';
@@ -68,9 +68,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
 ]);
-const AMBIENT_ROOF = 0.74;
 const LIGHT_R = 7; // ceiling pool radius
-const POST_R = 9; // roof lamp posts
 const HEAD_LEN = 25; // player headlight cones
 const PARKED_HEAD_LEN = 18;
 const HAZARD_HZ = 1.5;
@@ -121,15 +119,10 @@ export function angleArc(drifting: boolean, slip: number, kmh: number) {
 const DOCKS = 'WANGAN DOCKS';
 const TESTPAD = 'TEST PAD';
 /** Per-map darkness: docks and test pad are lit up so obstacles read at speed. */
-function ambientOf(map: GameMap, idx: number) {
-  return map.name === DOCKS
-    ? 0.58
-    : map.name === TESTPAD
-      ? 0.3
-      : idx === 0
-        ? AMBIENT_ROOF
-        : AMBIENT;
+function ambientOf(map: GameMap) {
+  return map.name === DOCKS ? 0.58 : map.name === TESTPAD ? 0.3 : AMBIENT;
 }
+const decorOf = (map: GameMap) => (map as DecoratedMap).decor ?? [];
 const ASPHALT = '#2a2b2f';
 const QUAY_YELLOW = '#d6a51f';
 const CONTAINER_COLORS = ['#7b3a2c', '#2e4a6e', '#3c5e48', '#62666a', '#a8642c'];
@@ -609,13 +602,6 @@ function buildLights(map: GameMap, idx: number) {
         tint: 'sodium',
         glow: 0.4,
       });
-  } else if (idx === 0) {
-    // roof: lamp posts (its pillars) instead of ceiling lights
-    for (const s of f.solids) {
-      if (s.kind !== 'pillar') continue;
-      const [x, y] = [s.x + s.w / 2, s.y + s.h / 2];
-      lamps.push({ cone: false, x, y, ang: 0, size: POST_R, cut: 0.5, tint: 'cool', glow: 0.1 });
-    }
   } else {
     for (const l of f.lights)
       lamps.push({ cone: false, ...l, ang: 0, size: LIGHT_R, cut: 0.5, tint: 'cool', glow: 0.07 });
@@ -626,6 +612,8 @@ function buildLights(map: GameMap, idx: number) {
     drawLamp(mask.g, l, true, 1);
     drawLamp(glow.g, l, false, 1);
   }
+  drawDecor(mask.g, decorOf(map), 'light', idx, 0);
+  drawDecor(glow.g, decorOf(map), 'glow', idx, 0);
   return {
     mask: mask.c,
     glow: glow.c,
@@ -740,7 +728,6 @@ function speckleTile(g: Ctx, docks: boolean) {
 
 function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   const f = map.floors[idx];
-  const roof = idx === 0;
   const { c, g: base } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
   base.scale(STATIC_PX, STATIC_PX);
   let g = base;
@@ -748,7 +735,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   const docks = map.name === DOCKS;
 
   // concrete (or dock asphalt) + large-scale mottling + speckle
-  g.fillStyle = docks ? ASPHALT : roof ? CONCRETE_ROOF : CONCRETE;
+  g.fillStyle = docks ? ASPHALT : CONCRETE;
   g.fillRect(0, 0, f.w, f.h);
   for (let i = 0; i < (f.w * f.h) / 30; i++) {
     const x = rand() * f.w;
@@ -899,6 +886,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   g.globalAlpha = ARROW_ALPHA;
   g.drawImage(paintArrows(map, idx), 0, 0, f.w, f.h);
   g.globalAlpha = 1;
+  drawDecor(g, decorOf(map), 'floor', idx, 0);
 
   // walls with an inner hazard edge, pillars, parked cars (all with soft drop shadows)
   // solids go on their own layer; one blurred drawImage casts all their shadows at once
@@ -1022,6 +1010,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   base.shadowOffsetY = 4;
   base.drawImage(solids.c, 0, 0);
   base.restore();
+  drawDecor(base, decorOf(map), 'wall', idx, 0);
   return c;
 }
 
@@ -1644,7 +1633,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       const fl = v.map.floors[idx];
       const l = lightLayer(v.map, idx);
       const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
-      return { fl, l, w, amb: ambientOf(v.map, idx) };
+      return { idx, fl, l, w, amb: ambientOf(v.map) };
     });
     const dyn: [Lamp, number][] = playerLamps(car, v.brake, model).map((l) => [l, 1]);
     if (touch && v.scrape > 0) {
@@ -1704,9 +1693,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.rect(0, 0, f.w, f.h); // keep glows off the void outside the floor
     ctx.clip();
     ctx.globalCompositeOperation = 'lighter';
-    for (const { fl, l, w } of layers) {
+    for (const { idx, fl, l, w } of layers) {
       ctx.globalAlpha = w;
       ctx.drawImage(l.glow, 0, 0, fl.w, fl.h);
+      drawDecor(ctx, decorOf(v.map), 'over', idx, clock); // neon flicker, phone screens
     }
     for (const [l, a] of dyn) drawLamp(ctx, l, false, a);
     ctx.restore();
