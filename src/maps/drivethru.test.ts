@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drivethru, drivethruRoute } from './drivethru';
+import { drivethru, drivethruCorners, drivethruRoute } from './drivethru';
 import { drawDecor, type DecorLayer } from './decor';
 import { CAR_MODELS } from '../models';
 import type { Rect, Solid, Vec } from '../types';
@@ -50,13 +50,14 @@ const length = route
   .slice(1)
   .reduce((s, b, i) => s + Math.hypot(b.x - route[i].x, b.y - route[i].y), 0);
 
+/** 1 m cells with 2 m clearance, computed once. */
+let free: boolean[] | undefined;
 /** Flood fill on a 1 m grid with 2 m clearance; `skip` cells are treated as solid. */
 function reaches(from: Vec, to: Vec, skip: (p: Vec) => boolean = () => false) {
   const cols = f.w;
-  const ok = (i: number) => {
-    const p = { x: (i % cols) + 0.5, y: Math.floor(i / cols) + 0.5 };
-    return !skip(p) && clearance(p) >= 2;
-  };
+  const at = (i: number) => ({ x: (i % cols) + 0.5, y: Math.floor(i / cols) + 0.5 });
+  free ??= Array.from({ length: cols * f.h }, (_, i) => clearance(at(i)) >= 2);
+  const ok = (i: number) => free![i] && !skip(at(i));
   const cell = (p: Vec) => Math.floor(p.y) * cols + Math.floor(p.x);
   const goal = cell(to);
   const seen = new Uint8Array(cols * f.h);
@@ -101,6 +102,40 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
     expect(reaches(drivethru.start.pos, finish)).toBe(true);
     const lane = f.bonusZones!;
     expect(reaches(drivethru.start.pos, finish, (p) => lane.some((z) => inRect(p, z)))).toBe(false);
+  });
+
+  it('closes the lot: a gate across any straight cuts the finish off', () => {
+    // the old lot was open: from the start straight east into the lane, skipping the lap
+    const finish = center(drivethru.finish.zone);
+    let gates = 0;
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1];
+      const b = route[i];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 12) continue;
+      const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const n = { x: (a.y - b.y) / len, y: (b.x - a.x) / len };
+      // 20 m each side reaches the medians, never across the next aisle
+      const gate = (p: Vec) => {
+        const across = (p.x - m.x) * n.x + (p.y - m.y) * n.y;
+        const along = Math.abs((p.x - m.x) * n.y - (p.y - m.y) * n.x);
+        return Math.abs(across) <= 20 && along <= 1;
+      };
+      expect(reaches(drivethru.start.pos, finish, gate), `gate at ${m.x},${m.y}`).toBe(false);
+      gates++;
+    }
+    expect(gates).toBeGreaterThanOrEqual(7);
+  });
+
+  it('sweeps into and round the drive-thru: no tight right angles', () => {
+    // the S into the lane and both half circles: the last five corners
+    const cs = drivethruCorners.slice(-5);
+    for (const c of cs)
+      if (Math.abs(c.turn) >= (80 * Math.PI) / 180) expect(c.r).toBeGreaterThanOrEqual(22);
+    // the lane's turns flow on: left round the island, right round the restaurant
+    const sum = (k: number[]) => k.reduce((s, i) => s + cs[i].turn, 0);
+    expect(sum([1, 2])).toBeCloseTo(-Math.PI);
+    expect(sum([3, 4])).toBeCloseTo(Math.PI);
   });
 
   it('drifts the lane: the route crosses every DRIVE-THRU zone', () => {
