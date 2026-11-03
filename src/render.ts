@@ -1,8 +1,20 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
-import type { CarState, Floor, GameMap, Helix, PlayerModel, Rect, Solid, Vec } from './types';
+import type {
+  CarModel,
+  CarState,
+  Floor,
+  GameMap,
+  Helix,
+  PlayerModel,
+  Rect,
+  Solid,
+  Vec,
+} from './types';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { testpad } from './maps/testpad';
+import { tokyo, tokyoRoute } from './maps/tokyo';
+import type { CityGraph, Ped, Traffic, TrafficCar } from './traffic';
 import { CAR_MODELS, PLAYER_MODELS } from './models';
 import {
   createPool,
@@ -69,6 +81,7 @@ const AMBIENT = 0.82; // darkness inside the garage
 const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
+  [tokyo, tokyoRoute],
 ]);
 const LIGHT_R = 7; // ceiling pool radius
 const HEAD_LEN = 25; // player headlight cones
@@ -122,7 +135,7 @@ const DOCKS = 'WANGAN DOCKS';
 const TESTPAD = 'TEST PAD';
 /** Per-map darkness: docks and test pad are lit up so obstacles read at speed. */
 function ambientOf(map: GameMap) {
-  return map.name === DOCKS ? 0.58 : map.name === TESTPAD ? 0.3 : AMBIENT;
+  return map.name === DOCKS ? 0.58 : map.name === TESTPAD ? 0.3 : map === tokyo ? 0.7 : AMBIENT;
 }
 const decorOf = (map: GameMap) => (map as DecoratedMap).decor ?? [];
 const ASPHALT = '#2a2b2f';
@@ -202,7 +215,7 @@ interface Lamp {
   tint: Tint;
   glow: number;
 }
-type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium';
+type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium' | 'green';
 const TINTS: Record<Tint, string> = {
   cool: '205,230,255',
   sodium: '255,150,45',
@@ -210,6 +223,7 @@ const TINTS: Record<Tint, string> = {
   red: '255,30,40',
   amber: '255,150,20',
   white: '255,255,255',
+  green: '60,255,150',
 };
 
 let lightSprites: {
@@ -504,8 +518,9 @@ function parkedPoses(f: Floor): ParkedPose[] {
     });
 }
 
-/** Lamps of a parked car with headlights on: cones from the front corners, lamp and tail glows. */
-function parkedLamps(p: ParkedPose): Lamp[] {
+type Pose = Pick<ParkedPose, 'x' | 'y' | 'facing' | 'len' | 'wid'>;
+/** Lamps of a car with headlights on: cones from the front corners, lamp and tail (brake) glows. */
+function parkedLamps(p: Pose, brake = false): Lamp[] {
   const c = Math.cos(p.facing);
   const s = Math.sin(p.facing);
   const at = (u: number, w: number) => ({ x: p.x + u * c - w * s, y: p.y + u * s + w * c });
@@ -525,14 +540,16 @@ function parkedLamps(p: ParkedPose): Lamp[] {
         glow: 0.14,
       },
       { cone: false, ...f, ang: 0, size: 0.7, cut: 0.4, tint: 'warm', glow: 0.4 },
-      { cone: false, ...r, ang: 0, size: 0.6, cut: 0.15, tint: 'red', glow: 0.3 },
+      brake
+        ? { cone: false, ...r, ang: 0, size: 1.6, cut: 0.4, tint: 'red', glow: 0.75 }
+        : { cone: false, ...r, ang: 0, size: 0.6, cut: 0.15, tint: 'red', glow: 0.3 },
     );
   }
   return out;
 }
 
 /** The four corner lamps of a parked car with hazards on. */
-function hazardLamps(p: ParkedPose): Lamp[] {
+function hazardLamps(p: Pose): Lamp[] {
   const c = Math.cos(p.facing);
   const s = Math.sin(p.facing);
   const out: Lamp[] = [];
@@ -841,7 +858,8 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   }
 
   // finish: checkered strip on the edge facing the floor boundary + EXIT
-  if (idx === map.finish.floor) {
+  if (idx === map.finish.floor && map !== tokyo) {
+    // tokyo paints its own finish line; the nearest-edge strip would land on the deck edge
     const z = map.finish.zone;
     const gaps = [z.x, f.w - z.x - z.w, z.y, f.h - z.y - z.h];
     const side = gaps.indexOf(Math.min(...gaps)); // 0 left, 1 right, 2 top, 3 bottom
@@ -1305,6 +1323,141 @@ function contact(car: CarState, model: PlayerModel, f: Floor) {
   return best;
 }
 
+// --- live traffic ---
+const TRAFFIC_MODELS = Object.keys(CAR_MODELS) as CarModel[];
+/** Model per car, from its id and its seeded length: changes with every run's seed. */
+const trafficModel = (c: TrafficCar) =>
+  TRAFFIC_MODELS[(c.id * 7 + Math.floor(c.length * 997)) % TRAFFIC_MODELS.length];
+const carPose = (c: TrafficCar): Pose => ({
+  x: c.pos.x,
+  y: c.pos.y,
+  facing: c.heading,
+  len: c.length,
+  wid: c.width,
+});
+
+/** Signal head: car heads at stop lines (kerb side), ped heads just off crossing ends. */
+interface Head {
+  id: string;
+  x: number;
+  y: number;
+  ang: number;
+  ped: boolean;
+}
+const SIGNAL_SIDE = 3.5; // m left of the lane (left-hand traffic: kerb side)
+const heads = new WeakMap<CityGraph, Head[]>();
+function signalHeads(city: CityGraph): Head[] {
+  let out = heads.get(city);
+  if (out) return out;
+  out = [];
+  const list = out;
+  const add = (h: Head) => {
+    // straight and turn lanes share a stop line, the scramble files share kerbs
+    if (
+      !list.some((o) => o.id === h.id && o.ped === h.ped && Math.hypot(o.x - h.x, o.y - h.y) < 2.5)
+    )
+      list.push(h);
+  };
+  for (const l of city.lanes) {
+    if (!l.light) continue;
+    let d = l.light.stopAt;
+    let i = 0;
+    let seg = Math.hypot(l.pts[1].x - l.pts[0].x, l.pts[1].y - l.pts[0].y);
+    while (i < l.pts.length - 2 && d > seg) {
+      d -= seg;
+      i++;
+      seg = Math.hypot(l.pts[i + 1].x - l.pts[i].x, l.pts[i + 1].y - l.pts[i].y);
+    }
+    const [a, b] = [l.pts[i], l.pts[i + 1]];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const t = seg > 0 ? d / seg : 0;
+    const x = a.x + (b.x - a.x) * t + Math.sin(ang) * SIGNAL_SIDE;
+    const y = a.y + (b.y - a.y) * t - Math.cos(ang) * SIGNAL_SIDE;
+    add({ id: l.light.id, x, y, ang, ped: false });
+  }
+  for (const w of city.walkways) {
+    if (!w.crossing) continue;
+    const a = w.pts[0];
+    const b = w.pts[w.pts.length - 1];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const [c, s] = [Math.cos(ang) * 0.9, Math.sin(ang) * 0.9];
+    add({ id: w.crossing.signal, x: a.x - c, y: a.y - s, ang, ped: true });
+    add({ id: w.crossing.signal, x: b.x + c, y: b.y + s, ang: ang + Math.PI, ped: true });
+  }
+  heads.set(city, out);
+  return out;
+}
+const CAR_LAMPS = { red: '#ff3a3a', amber: '#ffb21e', green: '#38ff9a' } as const;
+const DIM = { red: '#3a0c0c', amber: '#3a2806', green: '#0b3320' } as const;
+/** Signal head above the darkness, plus its glow lamp. */
+function drawHead(g: Ctx, h: Head, sim: Traffic, glow: (l: Lamp) => void) {
+  const st = sim.signalState(h.id);
+  g.save();
+  g.translate(h.x, h.y);
+  g.rotate(h.ang);
+  g.fillStyle = '#0d0e10';
+  if (h.ped) {
+    g.fillRect(-0.22, -0.22, 0.44, 0.44);
+    g.fillStyle = st.ped ? CAR_LAMPS.green : CAR_LAMPS.red;
+    g.fillRect(-0.15, -0.15, 0.3, 0.3);
+  } else {
+    g.fillRect(-0.3, -0.75, 0.6, 1.5);
+    (['red', 'amber', 'green'] as const).forEach((k, i) => {
+      g.fillStyle = st.car === k ? CAR_LAMPS[k] : DIM[k];
+      g.beginPath();
+      g.arc(0, (i - 1) * 0.46, 0.19, 0, Math.PI * 2);
+      g.fill();
+    });
+  }
+  g.restore();
+  const tint: Tint = h.ped ? (st.ped ? 'green' : 'red') : st.car;
+  const along = h.ped ? 0 : ({ red: -1, amber: 0, green: 1 } as const)[st.car] * 0.46;
+  glow({
+    cone: false,
+    x: h.x - Math.sin(h.ang) * along,
+    y: h.y + Math.cos(h.ang) * along,
+    ang: 0,
+    size: h.ped ? 0.9 : 1.5,
+    cut: 0.3,
+    tint,
+    glow: 0.7,
+  });
+}
+
+const PED_SCALE = 1.4; // a bit larger than life so they read at driving zoom
+/** Top-down pedestrian, +x = heading: feet stepping and a shoulder bob while walking. */
+function drawPed(g: Ctx, p: Ped, t: number) {
+  const step = p.walking ? Math.sin(t * 9 + p.id * 1.7) : 0;
+  const hop = PED_SCALE * (1 + 0.2 * p.dodge); // a startled hop while stepping aside
+  g.save();
+  g.translate(p.pos.x, p.pos.y);
+  g.rotate(p.heading);
+  g.scale(hop * (1 + 0.05 * Math.abs(step)), hop);
+  g.fillStyle = 'rgba(0,0,0,0.35)';
+  g.beginPath();
+  g.ellipse(0.07, 0.09, 0.2, 0.3, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#141416';
+  for (const side of [-1, 1]) g.fillRect(step * side * 0.17 - 0.07, side * 0.09 - 0.05, 0.14, 0.1);
+  g.fillStyle = p.color;
+  for (const side of [-1, 1]) {
+    g.beginPath();
+    g.arc(-step * side * 0.1, side * 0.24, 0.07, 0, Math.PI * 2); // arms swing against the feet
+    g.fill();
+  }
+  g.beginPath();
+  g.ellipse(0, 0, 0.13, 0.24, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.3)'; // rim: dark clothes still read on asphalt
+  g.lineWidth = 0.03;
+  g.stroke();
+  g.fillStyle = '#1b1612';
+  g.beginPath();
+  g.arc(0.02, 0, 0.1, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
+}
+
 const statics = new Map<Floor, HTMLCanvasElement>();
 const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
 
@@ -1329,7 +1482,7 @@ export function prewarm(map: GameMap) {
 
 /** Prewarms all maps in the background, one floor per idle slice. */
 function prewarmAll() {
-  const jobs = [garage, docks, testpad].flatMap((m) =>
+  const jobs = [garage, docks, tokyo, testpad].flatMap((m) =>
     m.floors.map((_, i) => () => (staticLayer(m, i), lightLayer(m, i))),
   );
   const idle: (cb: () => void) => void =
@@ -1626,6 +1779,27 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     ctx.globalAlpha = 1;
 
+    // traffic cars under the darkness: lit by street lights and headlights like the player
+    const sim = v.traffic?.sim;
+    if (sim) {
+      for (const c of sim.cars) {
+        if (!visible(c.pos.x, c.pos.y, 4)) continue;
+        const t = spritesFor(trafficModel(c), c.color);
+        for (const sh of [true, false]) {
+          ctx.save();
+          ctx.globalAlpha = sh ? CAR_SHADOW_ALPHA : 1;
+          ctx.translate(
+            c.pos.x + (sh ? CAR_SHADOW_OFFSET.x : 0),
+            c.pos.y + (sh ? CAR_SHADOW_OFFSET.y : 0),
+          );
+          ctx.rotate(c.heading);
+          ctx.scale(c.length / CAR_LENGTH, c.width / CAR_WIDTH);
+          ctx.drawImage(sh ? t.shadow : t.car, -t.w / 2, -t.h / 2, t.w, t.h);
+          ctx.restore();
+        }
+      }
+    }
+
     const spr = spritesFor(model, v.player.color);
     ctx.save();
     ctx.globalAlpha = CAR_SHADOW_ALPHA;
@@ -1663,7 +1837,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
         1 - t,
       ]);
     }
-    if ((clock * HAZARD_HZ) % 1 < 0.5)
+    const blink = (clock * HAZARD_HZ) % 1 < 0.5;
+    if (sim)
+      for (const c of sim.cars) {
+        if (!visible(c.pos.x, c.pos.y, PARKED_HEAD_LEN)) continue;
+        for (const l of parkedLamps(carPose(c), c.braking)) dyn.push([l, 1]);
+        if (blink && c.hazardsUntil > sim.time)
+          for (const l of hazardLamps(carPose(c))) dyn.push([l, 1]);
+      }
+    if (blink)
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
@@ -1700,6 +1882,12 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     bodyFrame(ctx);
     playerLenses(ctx, car, v.brake, model);
     ctx.restore();
+    if (v.traffic) {
+      // peds above the darkness like the decor crowds: dark clothes vanish under it
+      for (const p of v.traffic.sim.peds) if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);
+      for (const h of signalHeads(v.traffic.city))
+        if (visible(h.x, h.y, 2)) drawHead(ctx, h, v.traffic.sim, (l) => dyn.push([l, 1]));
+    }
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, f.w, f.h); // keep glows off the void outside the floor

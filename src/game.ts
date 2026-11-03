@@ -23,6 +23,8 @@ import { engineProfile, engineRpm } from './engine';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
+import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
+import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
 import {
   CLIP_QUALITIES,
@@ -85,7 +87,10 @@ const STUCK_TIME = 2.5; // s
 const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
+  [tokyo, tokyoRoute],
 ]);
+/** maps with live traffic */
+const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
 const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
@@ -198,6 +203,10 @@ export function createGame(
     drift: IDLE,
     time: 0,
     countdown: COUNTDOWN_SECONDS,
+    /** live traffic, new seed every run */
+    traffic: CITIES.has(map)
+      ? createTraffic(CITIES.get(map)!, (Math.random() * 2 ** 32) >>> 0)
+      : null,
     popups: [] as Popup[],
     shake: 0,
     scrape: 0,
@@ -411,6 +420,30 @@ export function createGame(
         audio.hit();
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
+    }
+    const tr = s.traffic;
+    if (tr) {
+      tr.step(dt, car);
+      for (const c of tr.cars) {
+        if ((c.pos.x - car.pos.x) ** 2 + (c.pos.y - car.pos.y) ** 2 > 49) continue;
+        const box = { kind: 'car' as const, angle: c.heading, w: c.length, h: c.width };
+        const th = collide(car, [{ ...box, x: c.pos.x - c.length / 2, y: c.pos.y - c.width / 2 }]);
+        if (!th) continue;
+        // bounce in the traffic car's frame: it is a moving solid
+        const vx = c.speed * Math.cos(c.heading);
+        const vy = c.speed * Math.sin(c.heading);
+        const impact = -((car.vel.x - vx) * th.normal.x + (car.vel.y - vy) * th.normal.y);
+        car.vel.x -= vx;
+        car.vel.y -= vy;
+        bounce(car, th);
+        car.vel.x += vx;
+        car.vel.y += vy;
+        if (c.hazardsUntil > tr.time) continue; // already hit: just a solid now
+        hard = true;
+        audio.hit();
+        s.shake = Math.max(s.shake, Math.min(1, Math.max(impact, HARD_HIT_SPEED) / 10));
+        tr.hit(c.id, tr.time);
+      }
     }
     const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
     const pushing = Math.max(input.clutch ? 0 : input.throttle, input.brake) > STUCK_INPUT;
@@ -640,6 +673,7 @@ export function createGame(
             break;
           }
           s.countdown -= dt;
+          s.traffic?.step(dt, s.car);
           if (s.countdown <= EPS) s.phase = 'run';
           break;
         case 'run':
@@ -700,6 +734,7 @@ export function createGame(
             impact: 0,
             runId: a.runId,
             clip: null,
+            traffic: null,
           }
         : {
             map,
@@ -716,6 +751,7 @@ export function createGame(
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
+            traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
           };
       return {
         render,

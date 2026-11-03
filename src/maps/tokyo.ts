@@ -229,8 +229,8 @@ type Junction = {
   offset: number;
 };
 const JUNCTIONS: Junction[] = [
-  { id: 'S', at: v(143, 150), streets: ['Y1', 'X1'], major: 'Y1', ped: 24, offset: 0 },
-  { id: 'Q', at: v(257, 150), streets: ['Y1', 'X2'], major: 'Y1', ped: 12, offset: 13 },
+  { id: 'S', at: v(143, 150), streets: ['Y1', 'X1'], major: 'Y1', ped: 28, offset: 0 },
+  { id: 'Q', at: v(257, 150), streets: ['Y1', 'X2'], major: 'Y1', ped: 18, offset: 13 },
   { id: 'NT1', at: v(143, 31), streets: ['R', 'X1'], major: 'R', ped: 0, offset: 6 },
   { id: 'NT2', at: v(257, 31), streets: ['R', 'X2'], major: 'R', ped: 0, offset: 21 },
   { id: 'ET', at: v(369, 150), streets: ['R', 'Y1'], major: 'R', ped: 0, offset: 30 },

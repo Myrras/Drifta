@@ -1,3 +1,4 @@
+import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
 export interface RenderView {
@@ -24,6 +25,8 @@ export interface RenderView {
   runId: number;
   /** clipping zone the player is drifting in, lit up */
   clip: Rect | null;
+  /** live traffic and its city graph (signal heads), null on maps without traffic */
+  traffic: { sim: Traffic; city: CityGraph } | null;
 }
 
 export interface Popup {
