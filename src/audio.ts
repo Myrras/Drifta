@@ -99,8 +99,9 @@ export function createAudio() {
   // boom cars: one voice (wobbling lowpass -> level -> pan) per car, one shared kick scheduler
   let boomBus: GainNode | null = null;
   const booms: { kick: GainNode; level: GainNode; pan: StereoPannerNode }[] = [];
-  let boomT = 0; // next kick time
+  let boomT = -1; // next kick time
   let boomI = 0; // next kick index in the bar
+  let boomOrigin = -1; // start time of a bar; -1 until the first boom() call
 
   function applyVolumes(): void {
     if (!ctx) return;
@@ -291,6 +292,11 @@ export function createAudio() {
         set(sqSrc.playbackRate, 0.9 + slip * 0.2, 0.1);
       }
     },
+    /** Seconds into the kick bar at this instant (feed to boomPulse), or null with no audio or before the first boom(). */
+    boomPhase(): number | null {
+      if (!ctx || ctx.state !== 'running' || boomOrigin < 0) return null;
+      return (((ctx.currentTime - boomOrigin) % BOOM_BAR) + BOOM_BAR) % BOOM_BAR;
+    },
     /** Call every frame of a run with the player and the floor's boom car centers; silent when not called. */
     boom(player: Vec, cars: Vec[]): void {
       if (!ctx || ctx.state !== 'running') return;
@@ -305,7 +311,7 @@ export function createAudio() {
         if (g >= 0.01) live.push(v.kick);
       });
       for (let i = cars.length; i < booms.length; i++) set(booms[i].level.gain, 0, 0.05);
-      if (boomT < now - 0.1) [boomT, boomI] = [now + 0.02, 0]; // first call, or back after a pause
+      if (boomT < now - 0.1) [boomT, boomI, boomOrigin] = [now + 0.02, 0, now + 0.02]; // first call, or back after a pause
       while (boomT < now + 0.12) {
         for (const k of live) boomKick(k, boomT);
         const n = (boomI + 1) % BOOM_KICKS.length;

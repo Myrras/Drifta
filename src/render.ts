@@ -686,8 +686,13 @@ function policeLivery(g: Ctx, len: number, wid: number) {
 }
 
 /** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
-function drawBoomCar(g: Ctx, { p, color }: { p: ParkedPose; color: string }, t: number, a: number) {
-  const k = boomPulse(t);
+function drawBoomCar(
+  g: Ctx,
+  { p, color }: { p: ParkedPose; color: string },
+  t: number,
+  k: number,
+  a: number,
+) {
   const c = Math.cos(p.facing);
   const s = Math.sin(p.facing);
   const jit = k * 0.03 * Math.sin(t * 90); // m, sideways
@@ -1888,9 +1893,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
     }
     ctx.globalAlpha = 1;
+    const pulse = boomPulse(v.boomPhase ?? clock); // audio's bar phase keeps the shake on the thump
     for (const [idx, a] of floors)
       for (const b of lightLayer(v.map, idx).boom)
-        if (visible(b.p.x, b.p.y, 5)) drawBoomCar(ctx, b, clock, a);
+        if (visible(b.p.x, b.p.y, 5)) drawBoomCar(ctx, b, clock, pulse, a);
 
     // traffic cars under the darkness: lit by street lights and headlights like the player
     const sim = v.traffic?.sim;
@@ -1974,7 +1980,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
-    const pulse = boomPulse(clock);
+
     for (const { l, w } of layers)
       for (const { p } of l.boom)
         if (visible(p.x, p.y, 5))

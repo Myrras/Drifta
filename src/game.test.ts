@@ -31,6 +31,7 @@ const audio: AudioLike = {
   resume: noop,
   update: noop,
   boom: noop,
+  boomPhase: () => null,
   hit: noop,
   bank: noop,
   fail: noop,
