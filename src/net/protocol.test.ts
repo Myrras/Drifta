@@ -9,8 +9,8 @@ const info = {
 };
 
 const all: Msg[] = [
-  { t: 'hello', v: '1.0.2', info },
-  { t: 'hello', v: '1.0.2', info: { name: 'A', car: 'celica', color: '#fff' } },
+  { t: 'hello', v: APP_VERSION, info },
+  { t: 'hello', v: APP_VERSION, info: { name: 'A', car: 'celica', color: '#fff' } },
   { t: 'ping', id: 3, at: 1234.5 },
   { t: 'pong', id: 3, at: 1234.5 },
   { t: 'map', map: 'Harbor' },
