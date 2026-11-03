@@ -11,7 +11,8 @@ export interface Rect {
 }
 export type CarModel =
   'civic' | 'supra' | 'rx7' | 'r32' | 's13' | '180sx' | 'ae86' | 'nsx' | 'evo4' | 'wrx';
-export type PlayerModel = CarModel | 'mx5';
+/** player-only cars are never parked on maps */
+export type PlayerModel = CarModel | 'mx5' | 'rx8' | 'celica';
 export interface Solid extends Rect {
   kind: SolidKind;
   /** rotation of the rect about its center (rad); omitted = axis-aligned */

@@ -128,6 +128,8 @@ export interface EngineProfile {
   fireAmp: number[];
   /** Wankel: sharp single-integrator pulse, partial burns and reflux doublets at low rpm */
   rotary?: boolean;
+  /** rotary brap depth (partial burns, reflux), default 1 = peripheral-port 13B-REW; side ports barely overlap */
+  brap?: number;
   idle: number;
   limit: number;
   /** hard fuel cut, hard ignition cut (bangs) or staged soft cut; bounce Hz for the hard cuts */
@@ -452,6 +454,59 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
       tu: [145, 85, 4700, 14, 0.9], // small single TD05/VF
     },
     gain: 0.86,
+  },
+  // Renesis 13B NA: side exhaust ports, smooth even hum, 9000 rpm fuel cut, intake howl up top
+  rx8: {
+    fireDt: [0.015, -0.015, 0.015, -0.015],
+    fireAmp: [1.04, 0.96, 1.04, 0.96],
+    rotary: true,
+    brap: 0.15,
+    idle: 850,
+    limit: 9000,
+    limiter: 'fuel',
+    limHz: 20,
+    headers: [0.35, 0.35],
+    header: [-0.35, 4800],
+    pipe: [1.8, -0.4, 2800],
+    lp: [1500, 4600],
+    body: 110,
+    rasp: [2500, 1.1],
+    turb: 0.9,
+    tau: [0.2, 0.42],
+    intake: [600, 1900, 0.22],
+    mech: 0,
+    pops: [8, 0.5, 0.2],
+    gain: 2.7,
+  },
+  // 3S-GTE gen 3: mid-size single CT20B, between the T25 S13 and the GT28 180SX
+  celica: {
+    fireDt: [0.02, -0.015, 0.015, -0.02],
+    fireAmp: [1.02, 0.98, 1.03, 0.97],
+    idle: 800,
+    limit: 7200,
+    limiter: 'ign',
+    limHz: 14,
+    headers: [0.4, 0.4],
+    header: [-0.45, 3400],
+    pipe: [2.1, -0.5, 1800],
+    lp: [850, 3000],
+    body: 125,
+    rasp: [1600, 0.9],
+    turb: 1,
+    tau: [0.42, 0.78],
+    intake: [450, 1500, 0.22],
+    mech: 0.015,
+    pops: [14, 0.8, 0.32],
+    turbo: {
+      spool: [3000, 4400],
+      tau: [0.35, 0.8],
+      whine: [620, 2200, 0.065],
+      hiss: 0.08,
+      bov: [0.85, 380],
+      flutter: [5, 10, 0.35],
+      tu: [155, 90, 4300, 15, 1.05], // mid single CT20B
+    },
+    gain: 0.92,
   },
 };
 
@@ -955,10 +1010,11 @@ export class EngineDSP {
           if (p.rotary) {
             amp *= 1 + (0.03 + 0.09 * (1 - rpmN)) * this.rand();
             // brap: partial burns and an overlap reflux doublet at low rpm
-            if (this.rand01() < 0.25 * clamp01(1 - (rpm - 900) / 2600) ** 1.5)
+            const brap = p.brap ?? 1;
+            if (this.rand01() < 0.25 * brap * clamp01(1 - (rpm - 900) / 2600) ** 1.5)
               amp *= 0.15 + 0.35 * this.rand01();
             this.schedule(-0.15 * amp, 0.0012);
-            const rf = clamp01((4500 - rpm) / 1000);
+            const rf = brap * clamp01((4500 - rpm) / 1000);
             if (rf > 0) this.schedule(0.25 * rf * amp, 0.004 + 0.003 * this.rand01());
           } else amp *= 1 + 0.03 * this.rand();
           this.imp[bank] += amp;
