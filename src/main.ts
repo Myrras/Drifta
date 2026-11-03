@@ -115,6 +115,7 @@ const EDGES = [
   'tabNext',
   'skip',
   'photo',
+  'mp',
   'cheat',
 ] as const;
 const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
