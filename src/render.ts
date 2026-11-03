@@ -2,6 +2,7 @@ import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
 import type { CarState, Floor, GameMap, Helix, PlayerModel, Rect, Solid, Vec } from './types';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
+import { testpad } from './maps/testpad';
 import { CAR_MODELS, PLAYER_MODELS } from './models';
 import {
   createPool,
@@ -623,15 +624,10 @@ function buildLights(map: GameMap, idx: number) {
 function parkedCar(g: Ctx, len: number, wid: number, color: string) {
   const hl = len / 2;
   const hw = wid / 2;
-  g.shadowColor = STATIC_SHADOW;
-  g.shadowBlur = 10;
-  g.shadowOffsetX = 3;
-  g.shadowOffsetY = 4;
   g.fillStyle = color;
   g.beginPath();
   g.roundRect(-hl, -hw, len, wid, [0.35, 0.55, 0.55, 0.35]);
   g.fill();
-  g.shadowColor = 'transparent';
   g.fillStyle = 'rgba(0,0,0,0.18)'; // hood/trunk shading
   g.fillRect(hl - 1.0, -hw + 0.15, 0.8, wid - 0.3);
   g.fillRect(-hl + 0.15, -hw + 0.15, 0.6, wid - 0.3);
@@ -712,11 +708,28 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
   return c;
 }
 
+const TILE_PX = 256;
+/** Aggregate speckle as a small repeating noise tile, mapped 1 tile px : 1 layer px. */
+function speckleTile(g: Ctx, docks: boolean) {
+  const { c, g: t } = makeCanvas(TILE_PX, TILE_PX);
+  const rand = rng(docks ? 3 : 5);
+  const d = (docks ? 0.06 : 0.1) * STATIC_PX; // finer aggregate on docks
+  const n = (TILE_PX * TILE_PX * (docks ? 1.2 : 0.5)) / (STATIC_PX * STATIC_PX);
+  for (let i = 0; i < n; i++) {
+    t.fillStyle = rand() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.045)';
+    t.fillRect(rand() * TILE_PX, rand() * TILE_PX, d, d);
+  }
+  const pat = g.createPattern(c, 'repeat')!;
+  pat.setTransform(new DOMMatrix().scale(1 / STATIC_PX));
+  return pat;
+}
+
 function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   const f = map.floors[idx];
   const roof = idx === 0;
-  const { c, g } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
-  g.scale(STATIC_PX, STATIC_PX);
+  const { c, g: base } = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
+  base.scale(STATIC_PX, STATIC_PX);
+  let g = base;
   const rand = rng(idx * 7919 + 17);
   const docks = map.name === DOCKS;
 
@@ -734,11 +747,10 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.fillStyle = grad;
     g.fillRect(x - r, y - r, 2 * r, 2 * r);
   }
-  for (let i = 0; i < f.w * f.h * (docks ? 1.2 : 0.5); i++) {
-    g.fillStyle = rand() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.045)';
-    const d = docks ? 0.06 : 0.1; // finer aggregate
-    g.fillRect(rand() * f.w, rand() * f.h, d, d);
-  }
+  g.save();
+  g.fillStyle = speckleTile(g, docks);
+  g.fillRect(0, 0, f.w, f.h);
+  g.restore();
   if (docks) {
     // faint wet sheen: long soft streaks of cool reflection
     for (let i = 0; i < (f.w * f.h) / 250; i++) {
@@ -856,13 +868,12 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
   g.globalAlpha = 1;
 
   // walls with an inner hazard edge, pillars, parked cars (all with soft drop shadows)
-  const shadow = () => {
-    g.shadowColor = STATIC_SHADOW;
-    g.shadowBlur = 10;
-    g.shadowOffsetX = 3;
-    g.shadowOffsetY = 4;
-  };
-  const noShadow = () => (g.shadowColor = 'transparent');
+  // solids go on their own layer; one blurred drawImage casts all their shadows at once
+  const solids = makeCanvas(f.w * STATIC_PX, f.h * STATIC_PX);
+  solids.g.scale(STATIC_PX, STATIC_PX);
+  g = solids.g;
+  const shadow = () => {};
+  const noShadow = () => {};
   /** Runs draw in the solid's local frame: origin at its center, rotated by its angle. */
   const local = (s: Solid, draw: () => void) => {
     g.save();
@@ -902,9 +913,9 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       w.x <= 0.01 || w.y <= 0.01 || w.x + w.w >= f.w - 0.01 || w.y + w.h >= f.h - 0.01;
     if (docks && perimeter) {
       // quay edge: yellow line painted on the ground just inside the wall
-      g.fillStyle = QUAY_YELLOW;
-      if (horiz) g.fillRect(w.x, top ? w.y + w.h + 0.25 : w.y - 0.55, w.w, t);
-      else g.fillRect(left ? w.x + w.w + 0.25 : w.x - 0.55, w.y, t, w.h);
+      base.fillStyle = QUAY_YELLOW; // on the ground layer, no cast shadow
+      if (horiz) base.fillRect(w.x, top ? w.y + w.h + 0.25 : w.y - 0.55, w.w, t);
+      else base.fillRect(left ? w.x + w.w + 0.25 : w.x - 0.55, w.y, t, w.h);
       continue;
     }
     const strip: Rect = horiz
@@ -970,6 +981,14 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.fillStyle = hl;
     g.fill();
   }
+  base.save();
+  base.setTransform(1, 0, 0, 1, 0, 0);
+  base.shadowColor = STATIC_SHADOW;
+  base.shadowBlur = 10;
+  base.shadowOffsetX = 3;
+  base.shadowOffsetY = 4;
+  base.drawImage(solids.c, 0, 0);
+  base.restore();
   return c;
 }
 
@@ -984,10 +1003,9 @@ const POPUP_Y: Partial<Record<PlayerModel, number>> = {
   nsx: 0.37,
 };
 
-/** Half length/width of the player's body: the roadster matches the collision box. */
-function playerDims(model: PlayerModel) {
-  const m = model === 'mx5' ? { length: CAR_LENGTH, width: CAR_WIDTH } : PLAYER_MODELS[model];
-  return { hl: m.length / 2, hw: m.width / 2 };
+/** Half length/width of the player's body: always the collision box (sprites are scaled to fit). */
+function playerDims(_model: PlayerModel) {
+  return { hl: CAR_LENGTH / 2, hw: CAR_WIDTH / 2 };
 }
 
 /** Raised pop-up pods: dark recess behind, body-color top, lens face forward. */
@@ -1033,7 +1051,12 @@ function playerSprites(model: PlayerModel, color: string) {
 
   const { c, g } = mk();
   if (model === 'mx5') roadster(g, hl, bh, color);
-  else drawParkedCar(g, model, color);
+  else {
+    const m = PLAYER_MODELS[model];
+    g.scale(CAR_LENGTH / m.length, CAR_WIDTH / m.width); // fill exactly the hitbox
+    drawParkedCar(g, model, color);
+    g.scale(m.length / CAR_LENGTH, m.width / CAR_WIDTH);
+  }
   const py = POPUP_Y[model];
   if (py !== undefined) pods(g, hl, py, color);
   return { car: c, shadow: sh.c, w, h };
@@ -1258,15 +1281,52 @@ function contact(car: CarState, model: PlayerModel, f: Floor) {
   return best;
 }
 
+const statics = new Map<Floor, HTMLCanvasElement>();
+const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
+
+function staticLayer(map: GameMap, idx: number) {
+  const fl = map.floors[idx];
+  let l = statics.get(fl);
+  if (!l) statics.set(fl, (l = buildStatic(map, idx)));
+  return l;
+}
+
+function lightLayer(map: GameMap, idx: number) {
+  const fl = map.floors[idx];
+  let l = lightLayers.get(fl);
+  if (!l) lightLayers.set(fl, (l = buildLights(map, idx)));
+  return l;
+}
+
+/** Builds (and caches) every layer of a map up front, so its first show doesn't stall. */
+export function prewarm(map: GameMap) {
+  map.floors.forEach((_, i) => (staticLayer(map, i), lightLayer(map, i)));
+}
+
+/** Prewarms all maps in the background, one floor per idle slice. */
+function prewarmAll() {
+  const jobs = [garage, docks, testpad].flatMap((m) =>
+    m.floors.map((_, i) => () => (staticLayer(m, i), lightLayer(m, i))),
+  );
+  const idle: (cb: () => void) => void =
+    typeof requestIdleCallback === 'function'
+      ? (cb) => requestIdleCallback(cb)
+      : (cb) => setTimeout(cb, 50);
+  const next = () => {
+    jobs.shift()?.();
+    if (jobs.length) idle(next);
+  };
+  idle(next);
+}
+
 export function createRenderer(canvas: HTMLCanvasElement) {
+  prewarmAll();
   const ctx = canvas.getContext('2d')!;
   let dpr = 1;
   let cssW = 1;
   let cssH = 1;
 
-  const statics = new Map<Floor, HTMLCanvasElement>();
   const skids = new Map<Floor, ReturnType<typeof makeCanvas>>();
-  const lightLayers = new Map<Floor, ReturnType<typeof buildLights>>();
   let shade = makeCanvas(1, 1); // half-res darkness mask
   let clock = 0;
   const carSprites = new Map<string, ReturnType<typeof playerSprites>>();
@@ -1522,8 +1582,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     if (v.blend) floors.push([v.blend.toFloor, v.blend.t]);
     for (const [idx, a] of floors) {
       const fl = v.map.floors[idx];
-      let layer = statics.get(fl);
-      if (!layer) statics.set(fl, (layer = buildStatic(v.map, idx)));
+      const layer = staticLayer(v.map, idx);
       ctx.globalAlpha = a;
       ctx.drawImage(layer, 0, 0, fl.w, fl.h);
       const skid = skids.get(fl);
@@ -1548,8 +1607,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t
     const layers = floors.map(([idx, a]) => {
       const fl = v.map.floors[idx];
-      let l = lightLayers.get(fl);
-      if (!l) lightLayers.set(fl, (l = buildLights(v.map, idx)));
+      const l = lightLayer(v.map, idx);
       const w = v.blend && idx === v.floorIndex ? 1 - v.blend.t : a;
       return { fl, l, w, amb: ambientOf(v.map, idx) };
     });

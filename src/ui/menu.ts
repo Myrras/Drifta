@@ -1,6 +1,28 @@
 import type { HudView, MenuRow } from '../view';
 import { drawCar } from '../sprites';
 
+const CAR_HALF = 4; // m, half-size of the cached preview square
+const CAR_PX = 64; // px per m in the cache
+const carCache = new Map<string, HTMLCanvasElement>();
+
+/** Car with its warm rim glow, rendered once per model|color (blur is costly per frame). */
+function carImage(model: Parameters<typeof drawCar>[1], color: string): HTMLCanvasElement {
+  const key = `${model}|${color}`;
+  let c = carCache.get(key);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = c.height = 2 * CAR_HALF * CAR_PX;
+    const g = c.getContext('2d')!;
+    g.translate(c.width / 2, c.height / 2);
+    g.scale(CAR_PX, CAR_PX);
+    g.shadowColor = 'rgba(255,225,170,0.9)';
+    g.shadowBlur = (1.1 / 13) * CAR_PX; // same glow as 1.1 u at scale 13 u/m
+    drawCar(g, model, color);
+    carCache.set(key, c);
+  }
+  return c;
+}
+
 const FONT = '"Segoe UI", system-ui, sans-serif';
 const SKEW = -0.2;
 
@@ -148,14 +170,12 @@ function drawGarage(
   g.arc(0, 0, 30 * u, 0, Math.PI * 2);
   g.fill();
   g.restore();
+  const car = carImage(m.model, m.color);
   g.save();
   g.translate(cx, cy);
   g.rotate((performance.now() / 1000) * 0.5);
   g.scale(13 * u, 13 * u);
-  // rim light: warm glow hugging the silhouette
-  g.shadowColor = 'rgba(255,225,170,0.9)';
-  g.shadowBlur = 1.1 * u;
-  drawCar(g, m.model, m.color);
+  g.drawImage(car, -CAR_HALF, -CAR_HALF, 2 * CAR_HALF, 2 * CAR_HALF);
   g.restore();
 
   text(g, m.name.toUpperCase(), cx, h * 0.12, 8 * u, '#fff', {
