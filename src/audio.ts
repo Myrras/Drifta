@@ -8,6 +8,16 @@ import type { Tune } from './settings';
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
+export type UiSound = 'move' | 'adjust' | 'confirm' | 'back' | 'tab';
+/** menu blips: wave, start Hz, end Hz, seconds, peak gain */
+const UI_BLIPS: Record<UiSound, [OscillatorType, number, number, number, number]> = {
+  move: ['square', 880, 880, 0.035, 0.05],
+  adjust: ['square', 660, 990, 0.045, 0.05],
+  confirm: ['square', 660, 1320, 0.1, 0.07],
+  back: ['square', 880, 440, 0.09, 0.06],
+  tab: ['triangle', 520, 780, 0.06, 0.12],
+};
+
 /** Loop window [startSec, endSec] of `seconds` with high, steady RMS (50 ms blocks). */
 export function pickLoopWindow(
   samples: Float32Array,
@@ -209,6 +219,27 @@ export function createAudio() {
     fail(): void {
       shot('hit', 0.5, 0.6);
       mus?.drop();
+    },
+    /** short synthesized menu blip on the sfx bus */
+    ui(kind: UiSound): void {
+      if (!ctx) return;
+      const [type, from, to, dur, vol] = UI_BLIPS[kind];
+      try {
+        const t = ctx.currentTime;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(from, t);
+        o.frequency.exponentialRampToValueAtTime(to, t + dur);
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+        o.connect(g).connect(sfxBus);
+        o.start(t);
+        o.stop(t + dur);
+      } catch {
+        /* ignore */
+      }
     },
     music(on: boolean): void {
       musicOn = on;

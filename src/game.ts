@@ -162,6 +162,7 @@ export function createGame(
   };
   applyVolumes();
   audio.setTrack(cfg.track);
+  audio.music(true); // menu music; audio.resume() on the first gesture actually starts it
   let row = 0;
   let confirmReset = false;
   let confirmClear = false;
@@ -491,7 +492,8 @@ export function createGame(
 
   const toTitle = () => {
     audio.stop();
-    audio.music(false);
+    audio.music(true);
+    audio.setIntensity((intensity = 0.15));
     clips?.clear();
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
@@ -510,6 +512,7 @@ export function createGame(
     gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
     audio.update(gCarState, IDLE, input.rev ? 1 : 0, gCar, gTune);
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (dir || dv || input.tune) audio.ui('adjust');
     if (dir) {
       gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
       gColor = PLAYER_MODELS[gCar].colors[0];
@@ -523,10 +526,12 @@ export function createGame(
       save();
       Object.assign(s, fresh());
       audio.stop();
+      audio.ui('confirm');
       go('title', 1);
     } else if (input.pause) {
       [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
       audio.stop();
+      audio.ui('back');
       go('title', 1);
     }
   }
@@ -537,6 +542,7 @@ export function createGame(
     if (dv) {
       row = cycle(row, dv, back + 1);
       confirmReset = confirmClear = false;
+      audio.ui('move');
     }
     const td = (input.tabNext ? 1 : 0) - (input.tabPrev ? 1 : 0) || (row === 0 ? dir : 0);
     if (td) {
@@ -545,10 +551,12 @@ export function createGame(
       const last = TABS[tab].ids.length + 1;
       row = was ? last : Math.min(row, last - 1);
       confirmReset = confirmClear = false;
+      audio.ui('tab');
       return;
     }
     const id = row > 0 && row < back ? TABS[tab].ids[row - 1] : undefined;
     const act = dir || input.confirm;
+    if (id && act) audio.ui(dir ? 'adjust' : 'confirm');
     if ((id === 'master' || id === 'music' || id === 'sfx' || id === 'engine') && dir) {
       cfg[id] = Math.min(1, Math.max(0, Math.round((cfg[id] + dir * 0.1) * 10) / 10));
       applyVolumes();
@@ -586,7 +594,10 @@ export function createGame(
         stores.forEach((b, i) => b.set((bests[i] = 0)));
         confirmReset = false;
       } else confirmReset = true;
-    } else if ((row === back && input.confirm) || input.pause) go('title', 2);
+    } else if ((row === back && input.confirm) || input.pause) {
+      audio.ui('back');
+      go('title', 2);
+    }
   }
 
   const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
@@ -685,6 +696,7 @@ export function createGame(
       s.shake = Math.max(0, s.shake - SHAKE_DECAY * dt);
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+      const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
       const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
       if (input.restart && !inMenu) {
@@ -694,14 +706,17 @@ export function createGame(
       if (s.phase === 'title' || s.phase === 'settings') stepAttract(dt);
       switch (s.phase) {
         case 'title':
-          row = cycle(row, (input.down ? 1 : 0) - (input.up ? 1 : 0), TITLE_ROWS);
+          if (dv) audio.ui('move');
+          row = cycle(row, dv, TITLE_ROWS);
           if (dir && row === 0) {
+            audio.ui('adjust');
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
             Object.assign(s, fresh(), { runId: s.runId + 1 });
           }
           if (input.confirm) {
             audio.resume();
+            audio.ui('confirm');
             if (row === 0) newRun();
             else {
               [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
@@ -742,7 +757,6 @@ export function createGame(
         case 'results': {
           s.resultsAge += dt;
           const ready = s.resultsAge >= RESULTS_LOCKOUT;
-          const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
           if (input.pause) toTitle();
           else if (input.confirm && ready) newRun();
           else if (input.save) {

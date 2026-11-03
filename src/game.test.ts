@@ -25,6 +25,7 @@ const audio: AudioLike = {
   hit: noop,
   bank: noop,
   fail: noop,
+  ui: noop,
   stop: noop,
   music: noop,
   setIntensity: noop,
@@ -531,6 +532,7 @@ describe('main menu, garage, settings', () => {
     const a = {
       ...audio,
       music: vi.fn(),
+      ui: vi.fn(),
       setVolumes: vi.fn(),
       setIntensity: vi.fn(),
       setTrack: vi.fn(),
@@ -848,9 +850,31 @@ describe('main menu, garage, settings', () => {
     expect(game.view().hud.best).toBe(0);
   });
 
-  it('uses the saved car stats and toggles music with the run', () => {
+  it('menu nav blips: move, adjust, confirm, tab, back', () => {
+    const { a, tap } = rig();
+    tap({ down: true });
+    tap({ up: true });
+    tap({ right: true });
+    tap({ down: true });
+    tap({ down: true });
+    tap({ confirm: true }); // settings
+    tap({ tabNext: true });
+    tap({ pause: true });
+    expect(a.ui.mock.calls.map((c) => c[0])).toEqual([
+      'move',
+      'move',
+      'adjust',
+      'move',
+      'move',
+      'confirm',
+      'tab',
+      'back',
+    ]);
+  });
+
+  it('uses the saved car stats; music plays in menus and runs', () => {
     const { game, a, tap } = rig({ car: 'supra', color: '#ff7a00' });
-    expect(a.music).not.toHaveBeenCalledWith(true);
+    expect(a.music).toHaveBeenLastCalledWith(true); // menu music from the start
     tap({ confirm: true });
     expect(a.music).toHaveBeenLastCalledWith(true);
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS.supra.stats);
@@ -861,7 +885,7 @@ describe('main menu, garage, settings', () => {
     game.update({ ...IDLE, pause: true }, DT);
     game.update({ ...IDLE, pause: true }, DT);
     expect(game.view().hud.phase).toBe('title');
-    expect(a.music).toHaveBeenLastCalledWith(false);
+    expect(a.music).toHaveBeenLastCalledWith(true);
   });
 
   describe('auto-recover', () => {
