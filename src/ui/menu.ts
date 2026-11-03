@@ -1,5 +1,7 @@
 import type { HudView, MenuRow, MenuView, UiContext } from '../view';
 import { drawCar } from '../sprites';
+import type { Look } from '../cosmetics';
+import { drawSlot } from './garage';
 import { PLAYER_MODELS } from '../models';
 import { cachedGrad, DISPLAY, drawBackdrop, drawOverlayFx, MASTHEAD, OSD, THEMES } from './theme';
 import { drawLogo } from './logo';
@@ -10,8 +12,12 @@ const CAR_PX = 96; // px per m in the cache
 const carCache = new Map<string, HTMLCanvasElement>();
 
 /** Car with its warm rim glow, rendered once per model|color (blur is costly per frame). */
-function carImage(model: Parameters<typeof drawCar>[1], color: string): HTMLCanvasElement {
-  const key = `${model}|${color}`;
+function carImage(
+  model: Parameters<typeof drawCar>[1],
+  color: string,
+  look: Look,
+): HTMLCanvasElement {
+  const key = `${model}|${color}|${JSON.stringify(look)}`;
   let c = carCache.get(key);
   if (!c) {
     c = document.createElement('canvas');
@@ -21,7 +27,7 @@ function carImage(model: Parameters<typeof drawCar>[1], color: string): HTMLCanv
     g.scale(CAR_PX, CAR_PX);
     g.shadowColor = 'rgba(255,225,170,0.9)';
     g.shadowBlur = (1.1 / 13) * CAR_PX; // same glow as 1.1 u at scale 13 u/m
-    drawCar(g, model, color);
+    drawCar(g, model, color, look);
     carCache.set(key, c);
   }
   return c;
@@ -106,8 +112,8 @@ const SETTINGS_HINTS: [Action, string][] = [
   ['back', 'back'],
 ];
 const GARAGE_HINTS: [Action, string][] = [
-  ['adjust', 'car'],
-  ['navigate', 'paint'],
+  ['navigate', 'slot'],
+  ['adjust', 'change'],
   ['tune', 'tune'],
   ['rev', 'rev'],
   ['confirm', 'select'],
@@ -486,13 +492,14 @@ function drawGarage(
   g: CanvasRenderingContext2D,
   m: NonNullable<MenuView['garage']>,
   hint: string,
+  row: number,
 ): void {
   const { th, u, w, h, now } = F;
   const arcade = th.id === 'arcade';
   const bottom = h - 8 * u;
   const wide = w >= h * 1.05;
   const cw = wide ? Math.min(72 * u, w * 0.46) : Math.min(76 * u, w - 8 * u);
-  const ch = 43 * u;
+  const ch = 68 * u;
   let cardX: number, cardY: number, carX: number, carY: number, carR: number;
   if (wide) {
     cardX = w - 5 * u - cw;
@@ -537,7 +544,7 @@ function drawGarage(
   g.shadowBlur = 0;
   g.restore();
   // car, slowly rotating, grows in on open
-  const car = carImage(m.model, m.color);
+  const car = carImage(m.model, m.color, m.look);
   g.save();
   g.translate(carX, carY);
   g.rotate(now * 0.5);
@@ -588,26 +595,22 @@ function drawGarage(
   g.fillRect(x0, y + 10.6 * u, x1 - x0, Math.max(1, 0.18 * u));
   const acc = arcade ? th.accent2 : th.accent;
   const sf = th.font(700, 2.6 * u);
-  text(g, `◀  ${m.index + 1} / ${m.count}  ▶`, x0, y + 13.8 * u, sf, acc);
-  text(g, 'TUNE', x0, y + 19 * u, th.font(700, 2.4 * u), th.dim);
-  text(g, `◀ ${m.tune.toUpperCase()} ▶`, x1, y + 19 * u, sf, th.text, 'right');
-  text(g, 'PAINT', x0, y + 24.6 * u, th.font(700, 2.4 * u), th.dim);
-  const sw = 3.6 * u;
-  for (let i = 0; i < m.colors.length; i++) {
-    const c = m.colors[i];
-    const sx = x1 - sw - (m.colors.length - 1 - i) * (sw + 1.2 * u);
-    const sy = y + 24.6 * u - sw / 2;
-    if (c === m.color) {
-      g.strokeStyle = acc;
-      g.lineWidth = 0.5 * u;
-      g.strokeRect(sx - 0.6 * u, sy - 0.6 * u, sw + 1.2 * u, sw + 1.2 * u);
-    }
-    g.fillStyle = c;
-    g.fillRect(sx, sy, sw, sw);
+  if (row === 0) {
+    g.globalAlpha = e * 0.2;
+    g.fillStyle = acc;
+    g.fillRect(x0 - 1.2 * u, y + 11.8 * u, x1 - x0 + 2.4 * u, 4 * u);
+    g.globalAlpha = e;
   }
-  bar(g, 'POWER', m.stats.power, x0, x1, y + 30.4 * u);
-  bar(g, 'GRIP', m.stats.grip, x0, x1, y + 34.6 * u);
-  bar(g, 'WEIGHT', m.stats.weight, x0, x1, y + 38.8 * u);
+  text(g, `◀  ${m.index + 1} / ${m.count}  ▶`, x0, y + 13.8 * u, sf, acc);
+  text(g, 'TUNE', x0, y + 18.4 * u, th.font(700, 2.4 * u), th.dim);
+  text(g, `◀ ${m.tune.toUpperCase()} ▶`, x1, y + 18.4 * u, sf, th.text, 'right');
+  m.slots.forEach((r, i) =>
+    drawSlot(g, th, u, r, row === i + 1, x0, x1, y + (22.8 + i * 4.2) * u, acc),
+  );
+  if (m.lock) text(g, `LOCKED: ${m.lock}`, x0, y + 52.4 * u, th.font(700, 2.2 * u), acc);
+  bar(g, 'POWER', m.stats.power, x0, x1, y + 57 * u);
+  bar(g, 'GRIP', m.stats.grip, x0, x1, y + 60.8 * u);
+  bar(g, 'WEIGHT', m.stats.weight, x0, x1, y + 64.6 * u);
   const tag = PLAYER_MODELS[m.model].tag;
   if (tag) hazardBadge(g, tag, x1 + 1.5 * u, y - 0.4 * u);
   g.restore();
@@ -701,7 +704,7 @@ export function drawMenu(
   const hk = hintsFor(m.ui);
   drawBackdrop(ctx, width, height, now, th, m.screen !== 'garage'); // attract scene behind
   if (m.screen === 'garage') {
-    if (m.garage) drawGarage(ctx, m.garage, hk.garage);
+    if (m.garage) drawGarage(ctx, m.garage, hk.garage, m.row);
   } else if (m.screen === 'title') {
     drawTitle(ctx, v, m, hk);
   } else {

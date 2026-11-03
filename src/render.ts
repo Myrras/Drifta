@@ -24,7 +24,8 @@ import {
   updateSmoke,
   updateSparks,
 } from './particles';
-import { drawParkedCar } from './sprites';
+import { drawCar, drawParkedCar } from './sprites';
+import { itemById, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
 
@@ -1073,7 +1074,7 @@ function bodyPath(g: Ctx, hl: number, bh: number) {
 }
 
 /** Player car sprite (roadster or a JDM model in its paint) + its blurred shadow, local frame +x = nose. */
-function playerSprites(model: PlayerModel, color: string) {
+function playerSprites(model: PlayerModel, color: string, look?: Look) {
   const { hl, hw } = playerDims(model);
   const bh = hw - 0.1; // body half width; tires peek out 0.1 m
   const w = 2 * hl + 2 * SPRITE_M;
@@ -1092,11 +1093,17 @@ function playerSprites(model: PlayerModel, color: string) {
   sh.g.fill();
 
   const { c, g } = mk();
-  if (model === 'mx5') roadster(g, hl, bh, color);
+  // the roadster has its own drawing; with cosmetics it goes through the shared sprite code
+  const custom = look && Object.entries(look).some(([k, v]) => v && k !== 'color');
+  if (custom)
+    color =
+      itemById(look.skin === 'fortune-orange' && model === 'rx7' ? look.skin : look.paint)?.color ??
+      color;
+  if (model === 'mx5' && !custom) roadster(g, hl, bh, color);
   else {
     const m = PLAYER_MODELS[model];
     g.scale(CAR_LENGTH / m.length, CAR_WIDTH / m.width); // fill exactly the hitbox
-    drawParkedCar(g, model, color);
+    drawCar(g, model, color, custom ? look : undefined);
     g.scale(m.length / CAR_LENGTH, m.width / CAR_WIDTH);
   }
   const py = POPUP_Y[model];
@@ -1507,7 +1514,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   let shade = makeCanvas(1, 1); // half-res darkness mask
   let clock = 0;
   const carSprites = new Map<string, ReturnType<typeof playerSprites>>();
-  const puffs = puffSprites();
+  let puffs = puffSprites();
+  let puffRgb = smokeColor();
   const smoke = createPool(SMOKE_CAP);
   const sparks = createPool(SPARK_CAP);
   let smokeAcc = 0;
@@ -1550,10 +1558,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     return s;
   }
 
-  function spritesFor(model: PlayerModel, color: string) {
-    const key = `${model}|${color}`;
+  function spritesFor(model: PlayerModel, color: string, look?: Look) {
+    const key = look ? `${model}|${color}|${JSON.stringify(look)}` : `${model}|${color}`;
     let s = carSprites.get(key);
-    if (!s) carSprites.set(key, (s = playerSprites(model, color)));
+    if (!s) carSprites.set(key, (s = playerSprites(model, color, look)));
     return s;
   }
 
@@ -1800,7 +1808,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       }
     }
 
-    const spr = spritesFor(model, v.player.color);
+    const spr = spritesFor(model, v.player.color, v.player.look);
     ctx.save();
     ctx.globalAlpha = CAR_SHADOW_ALPHA;
     ctx.translate(car.pos.x + CAR_SHADOW_OFFSET.x, car.pos.y + CAR_SHADOW_OFFSET.y);
@@ -1813,7 +1821,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.restore();
 
     if (v.ghost) {
-      const gs = spritesFor(v.ghost.model, v.ghost.color);
+      const gs = spritesFor(v.ghost.model, v.ghost.color, v.ghost.look);
       ctx.save();
       ctx.globalAlpha = 0.35;
       ctx.translate(v.ghost.x, v.ghost.y);
@@ -1822,6 +1830,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       ctx.restore();
     }
 
+    const rgb = smokeColor(v.player.look);
+    if (rgb !== puffRgb) puffs = puffSprites(3, (puffRgb = rgb));
     drawSmoke(ctx, smoke, puffs, visible); // under the darkness: lit by the same lights
 
     // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t

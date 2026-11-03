@@ -18,6 +18,17 @@ import type { createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
+import { getLook, loadProgress, saveProgress, setLook } from './progress';
+import type { Look } from './cosmetics';
+import {
+  currentIndex,
+  equip,
+  ownedLook,
+  SLOT_LABELS,
+  SLOTS,
+  slotOptions,
+  type Slot,
+} from './ui/garage';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
 import { createAttractDriver } from './attract';
@@ -180,6 +191,27 @@ export function createGame(
   let gColor = cfg.color;
   let gTune = cfg.tune;
   const gCarState = createCar(maps[0].start); // garage engine preview; only rpm is used
+  // customise: look per car lives in progress; the garage edits a draft until ENTER
+  const pStore = storage ?? {
+    getItem: (k: string) => localStorage.getItem(k),
+    setItem: (k: string, v: string) => localStorage.setItem(k, v),
+  };
+  let prog = loadProgress(pStore);
+  let cheat = false; // session-only unlock-all, set by the cheat code (never saved)
+  let gLook: Look = {};
+  let gCur: number[] = []; // option cursor per slot (may rest on a locked option)
+  const gOpts = (s: Slot) => slotOptions(s, gCar, PLAYER_MODELS[gCar].colors, prog, cheat);
+  const lookOf = (car: PlayerModel): Look =>
+    ownedLook(getLook(prog, car) as Look, car, PLAYER_MODELS[car].colors, prog, cheat);
+  let raceLook = lookOf(cfg.car);
+  function gLoad(car: PlayerModel, color?: string): void {
+    gCar = car;
+    gLook = lookOf(car);
+    const cs = PLAYER_MODELS[car].colors;
+    gColor = color ?? cs.find((c) => c === (gLook as { color?: string }).color) ?? cs[0];
+    gCur = SLOTS.map((s) => currentIndex(s, gOpts(s), gLook, gColor));
+  }
+  const gDraft = () => setLook(prog, gCar, { ...gLook, color: gColor });
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
@@ -357,7 +389,11 @@ export function createGame(
     const newBest = total > bests[sel];
     if (newBest) {
       stores[sel].set((bests[sel] = total));
-      saveGhost(map.name, { car: cfg.car, look: { color: cfg.color }, frames: rec.frames });
+      saveGhost(map.name, {
+        car: cfg.car,
+        look: { ...raceLook, color: cfg.color },
+        frames: rec.frames,
+      });
     }
     s.results = {
       comboPoints,
@@ -521,24 +557,31 @@ export function createGame(
     gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
     audio.update(gCarState, IDLE, input.rev ? 1 : 0, gCar, gTune);
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-    if (dir || dv || input.tune) audio.ui('adjust');
-    if (dir) {
-      gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
-      gColor = PLAYER_MODELS[gCar].colors[0];
-    }
-    if (dv) {
-      const cs = PLAYER_MODELS[gCar].colors;
-      gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
+    if (dv) row = cycle(row, dv, SLOTS.length + 1); // 0 = car, n = SLOTS[n - 1]
+    if (dir || dv || input.tune) audio.ui(dv ? 'move' : 'adjust');
+    if (dir && row === 0) {
+      gDraft();
+      gLoad(MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)]);
+    } else if (dir) {
+      const slot = SLOTS[row - 1];
+      const opts = gOpts(slot);
+      gCur[row - 1] = cycle(gCur[row - 1], dir, opts.length);
+      ({ look: gLook, color: gColor } = equip(slot, opts[gCur[row - 1]], gLook, gColor));
     }
     if (input.confirm) {
       Object.assign(cfg, { car: gCar, color: gColor, tune: gTune });
       save();
+      gDraft();
+      saveProgress(prog, pStore);
+      raceLook = lookOf(cfg.car);
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
       go('title', 1);
     } else if (input.pause) {
-      [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+      prog = loadProgress(pStore); // drop the draft
+      gTune = cfg.tune;
+      gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
       go('title', 1);
@@ -688,6 +731,12 @@ export function createGame(
           name: m.name,
           color: gColor,
           tune: gTune,
+          look: gLook,
+          slots: SLOTS.map((s, i) => {
+            const o = gOpts(s)[gCur[i]];
+            return { label: SLOT_LABELS[s], name: o.name, color: o.color, locked: !!o.lock };
+          }),
+          lock: (row > 0 && gOpts(SLOTS[row - 1])[gCur[row - 1]].lock) || '',
           colors: m.colors,
           index: MODEL_IDS.indexOf(gCar),
           count: MODEL_IDS.length,
@@ -733,7 +782,8 @@ export function createGame(
             audio.ui('confirm');
             if (row === 0) newRun();
             else {
-              [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+              gTune = cfg.tune;
+              gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
               go(row === 1 ? 'garage' : 'settings');
             }
@@ -787,7 +837,8 @@ export function createGame(
         if (!g || !ghost || g.floor !== s.floorIndex) return null;
         const model = Object.hasOwn(PLAYER_MODELS, ghost.car) ? ghost.car : cfg.car;
         const c = ghost.look?.color;
-        return { ...g, model, color: typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0] };
+        const color = typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0];
+        return { ...g, model, color, look: ghost.look as Look | undefined };
       };
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
@@ -830,7 +881,7 @@ export function createGame(
             fade: 0,
             blend,
             shake: cfg.shake ? s.shake : 0,
-            player: { model: cfg.car, color: cfg.color },
+            player: { model: cfg.car, color: cfg.color, look: raceLook },
             scrape: s.scrape,
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,

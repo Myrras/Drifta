@@ -13,6 +13,7 @@ import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
 import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
+import { defaultProgress, PROGRESS_KEY } from './progress';
 import { settingsLayout } from './ui/menu';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo } from './maps/tokyo';
@@ -523,8 +524,9 @@ describe('menu', () => {
 });
 
 describe('main menu, garage, settings', () => {
-  const rig = (saved?: object, host?: MusicHost) => {
+  const rig = (saved?: object, host?: MusicHost, progress?: object) => {
     const mem = new Map<string, string>(saved ? [[SETTINGS_KEY, JSON.stringify(saved)]] : []);
+    if (progress) mem.set(PROGRESS_KEY, JSON.stringify(progress));
     const storage = {
       getItem: (k: string) => mem.get(k) ?? null,
       setItem: (k: string, v: string) => void mem.set(k, v),
@@ -588,11 +590,9 @@ describe('main menu, garage, settings', () => {
     tap({ right: true });
     expect(g().model).toBe('civic');
     expect(g().color).toBe(PLAYER_MODELS.civic.colors[0]);
-    tap({ down: true });
+    tap({ down: true }); // PAINT slot
+    tap({ right: true });
     expect(g().color).toBe(PLAYER_MODELS.civic.colors[1]);
-    tap({ up: true });
-    tap({ up: true });
-    expect(g().color).toBe(PLAYER_MODELS.civic.colors.at(-1));
     tap({ pause: true }); // revert
     expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.mx5.name);
     tap({ confirm: true });
@@ -605,6 +605,39 @@ describe('main menu, garage, settings', () => {
       color: PLAYER_MODELS.wrx.colors[0],
     });
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS.wrx.stats);
+  });
+
+  it('garage customise: locked options show a hint and never equip; owned ones persist', () => {
+    const progress = defaultProgress();
+    progress.paints.push('harbor-teal');
+    const { game, tap, mem } = rig(undefined, undefined, progress);
+    const g = () => game.view().hud.menu!.garage!;
+    const open = () => {
+      tap({ down: true });
+      tap({ confirm: true });
+    };
+    open();
+    tap({ down: true }); // PAINT
+    const n = PLAYER_MODELS.mx5.colors.length;
+    for (let i = 0; i < n; i++) tap({ right: true }); // past the stock colours: CONCRETE GREY
+    expect(g().slots[0]).toMatchObject({ name: 'CONCRETE GREY', locked: true });
+    expect(g().lock).toBe('3RD on B2 MEET');
+    expect(g().look.paint).toBeUndefined();
+    tap({ right: true });
+    tap({ right: true });
+    expect(g().slots[0]).toMatchObject({ name: 'HARBOR TEAL', locked: false });
+    expect(g().look.paint).toBe('harbor-teal');
+    tap({ down: true }); // SKIN
+    tap({ down: true }); // UNDERGLOW
+    tap({ right: true });
+    expect(g().slots[2].locked).toBe(true);
+    expect(g().lock).toBe('daily challenge');
+    tap({ confirm: true });
+    const saved = JSON.parse(mem.get(PROGRESS_KEY)!);
+    expect(saved.looks.mx5).toMatchObject({ paint: 'harbor-teal' });
+    expect(saved.looks.mx5.underglow).toBeUndefined();
+    tap({ confirm: true }); // title returns on the GARAGE row
+    expect(g().look.paint).toBe('harbor-teal');
   });
 
   it('garage: T toggles the tune, enter saves it and applies the stat boost', () => {
