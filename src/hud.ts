@@ -5,7 +5,6 @@ import { drawMenu, carImage } from './ui/menu';
 import { createTach } from './ui/tach';
 import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
 import { hintLine, type Action } from './ui/prompts';
-import { itemById } from './cosmetics';
 
 // Night garage under sodium lamps: amber light, signal red, start-light green on blue-black ink.
 const DISPLAY = 'Impact, Haettenschweiler, "Arial Black", sans-serif';
