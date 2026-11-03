@@ -2,6 +2,9 @@ import { COMBO_GRACE } from './config';
 import { MEDAL_NAMES, medalFor } from './scoring';
 import type { HudView, Popup } from './view';
 import { drawMenu } from './ui/menu';
+import { createTach } from './ui/tach';
+import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
+import { hintLine } from './ui/prompts';
 
 // Night garage under sodium lamps: amber light, signal red, start-light green on blue-black ink.
 const DISPLAY = 'Impact, Haettenschweiler, "Arial Black", sans-serif';
@@ -90,6 +93,8 @@ interface TextOpts {
   scale?: number;
   rot?: number;
   glow?: string;
+  /** full CSS font (themed overlays); skips the racing slant */
+  css?: string;
 }
 
 function setFont(ctx: CanvasRenderingContext2D, size: number, font: TextOpts['font']): void {
@@ -118,8 +123,9 @@ function text(
   ctx.translate(x, y);
   if (o.rot) ctx.rotate(o.rot);
   if (o.scale !== undefined) ctx.scale(o.scale, o.scale);
-  if (o.font !== 'label') ctx.transform(1, 0, SKEW, 1, 0, 0);
+  if (o.font !== 'label' && !o.css) ctx.transform(1, 0, SKEW, 1, 0, 0);
   setFont(ctx, size, o.font);
+  if (o.css) ctx.font = o.css;
   ctx.textAlign = o.align ?? 'left';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
@@ -295,8 +301,35 @@ const anim = {
   multAt: -99,
   combo: 0,
   score: 0,
-  speed: 0,
 };
+
+let tachInst: ReturnType<typeof createTach> | undefined; // lazy: tach.ts imports hud.ts (cycle)
+let lastPhase = '';
+let lastTime = 0;
+
+export const pauseHint = (ui: HudView['ui']): string =>
+  hintLine(
+    [
+      ['confirm', 'resume'],
+      ['restart', 'restart'],
+      ['back', 'menu'],
+    ],
+    ui.device,
+    ui.padStyle,
+  );
+export const resultsHint = (ui: HudView['ui']): string =>
+  hintLine([['confirm', 'race again']], ui.device, ui.padStyle);
+
+function tachPalette(th: Theme) {
+  const vhs = th.id === 'vhs';
+  return {
+    accent: vhs ? '#e2483a' : '#ff2f6a',
+    accent2: vhs ? '#e0a82e' : '#2ef2c8',
+    text: th.text,
+    dim: th.dim,
+    glow: th.glow,
+  };
+}
 
 const BANK_FLY = 0.55; // s for banked points to reach the total
 
@@ -470,9 +503,11 @@ export function drawHud(
   anim.last = nowS;
   const cx = width / 2;
   const pad = 3 * u;
+  const th = THEMES[v.ui.theme];
 
   if (v.phase === 'countdown') {
     anim.score = v.score;
+    lastPhase = v.phase;
     drawCountdown(ctx, v, cx, u);
     return;
   }
@@ -632,86 +667,53 @@ export function drawHud(
       ),
     );
 
-    // ---- speedometer, needle eased toward the real speed
-    anim.speed = approach(anim.speed, v.speedKmh, dt, 9);
-    const r = 9 * u;
-    const sx = width - pad - r - u;
-    const sy = height - pad - r - u;
-    const a0 = Math.PI * 0.667; // 240 deg arc, gap at the bottom
-    const sweep = (Math.PI * 4) / 3;
-    const f = clamp01(anim.speed / 140);
-    ctx.save();
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r + 2.2 * u, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.lineWidth = 1.4 * u;
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.beginPath();
-    ctx.arc(sx, sy, r, a0, a0 + sweep);
-    ctx.stroke();
-    ctx.strokeStyle = STEEL;
-    ctx.lineWidth = 0.35 * u;
-    ctx.beginPath();
-    for (let i = 0; i <= 7; i++) {
-      const a = a0 + (sweep * i) / 7;
-      ctx.moveTo(sx + Math.cos(a) * (r - 2.2 * u), sy + Math.sin(a) * (r - 2.2 * u));
-      ctx.lineTo(sx + Math.cos(a) * (r - 1.2 * u), sy + Math.sin(a) * (r - 1.2 * u));
-    }
-    ctx.stroke();
-    if (f > 0) {
-      const hot = f > 0.85;
-      ctx.strokeStyle = hot ? RED : AMBER;
-      ctx.shadowColor = ctx.strokeStyle;
-      ctx.shadowBlur = hot ? 2 * u : u;
-      ctx.lineWidth = 1.4 * u;
-      ctx.beginPath();
-      ctx.arc(sx, sy, r, a0, a0 + sweep * f);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-    const na = a0 + sweep * f;
-    ctx.strokeStyle = WHITE;
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 0.5 * u;
-    ctx.beginPath();
-    ctx.moveTo(sx - Math.cos(na) * 1.5 * u, sy - Math.sin(na) * 1.5 * u);
-    ctx.lineTo(sx + Math.cos(na) * (r - 0.8 * u), sy + Math.sin(na) * (r - 0.8 * u));
-    ctx.stroke();
-    ctx.fillStyle = RED;
-    ctx.beginPath();
-    ctx.arc(sx, sy, 1 * u, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    text(ctx, String(Math.round(anim.speed)), sx, sy + 4.6 * u, 4.4 * u, WHITE, {
-      align: 'center',
-    });
-    text(ctx, 'km/h', sx, sy + 8 * u, 1.8 * u, STEEL, {
-      align: 'center',
-      font: 'label',
-      stroke: null,
-    });
+    // ---- tach; reset on run start/restart (phase enters run, or the run clock jumps back)
+    if ((v.phase === 'run' && lastPhase !== 'run' && lastPhase !== 'paused') || v.time < lastTime)
+      (tachInst ??= createTach()).reset();
+    const tach = (tachInst ??= createTach());
+    const tr = 9 * u;
+    tach.draw(
+      ctx,
+      width - pad - 1.25 * tr,
+      height - pad - 1.2 * tr,
+      tr,
+      { rpm: v.rpm, redline: v.redline, gear: v.gear, speedKmh: v.speedKmh },
+      tachPalette(th),
+      dt,
+    );
+    lastPhase = v.phase;
+    lastTime = v.time;
 
     if (v.phase === 'run' && v.time < 0.8) drawGo(ctx, v.time, width, height, u);
     if (v.phase === 'paused') {
       overlay(ctx, width, height, 0.6);
-      text(ctx, 'PAUSED', cx, height * 0.45, 13 * u, WHITE, { align: 'center' });
-      text(ctx, 'ENTER resume · R restart · ESC menu', cx, height * 0.55, 3 * u, STEEL, {
+      text(ctx, 'PAUSED', cx, height * 0.45, 13 * u, th.text, {
         align: 'center',
-        font: 'label',
+        css: th.font(800, 13 * u, true),
+        glow: th.glow ? th.accent : undefined,
       });
+      text(ctx, pauseHint(v.ui), cx, height * 0.55, 3 * u, th.dim, {
+        align: 'center',
+        css: th.font(600, 3 * u),
+        stroke: null,
+      });
+      drawOverlayFx(ctx, width, height, nowS, th, { osd: false });
     }
     return;
   }
 
+  lastPhase = v.phase;
   const r = v.results;
   if (!r) return;
   overlay(ctx, width, height, 0.7);
   const pw = Math.min(width * 0.9, 60 * u);
   const ex = r.drifts.length ? 5 + 4.5 * r.drifts.length : 0; // top drifts block
   const top = height / 2 - (28 + ex / 2) * u;
-  plate(ctx, cx - pw / 2 - 6 * u, top, pw, (56 + ex) * u, 'rgba(12,14,28,0.94)', AMBER, 1.4 * u);
-  text(ctx, 'FINISHED', cx, top + 6.5 * u, 8 * u, WHITE, { align: 'center' });
+  plate(ctx, cx - pw / 2 - 6 * u, top, pw, (56 + ex) * u, th.panel, th.accent, 1.4 * u);
+  text(ctx, 'FINISHED', cx, top + 6.5 * u, 8 * u, th.text, {
+    align: 'center',
+    css: th.font(800, 8 * u, true),
+  });
   const rows: [string, string][] = [
     ['Combo points', formatScore(r.comboPoints)],
     ['Time', formatTime(r.time)],
@@ -719,31 +721,45 @@ export function drawHud(
   ];
   rows.forEach(([k, val], i) => {
     const y = top + (15 + i * 5) * u;
-    text(ctx, k, cx - pw / 2 + 7 * u, y, 2.8 * u, STEEL, { font: 'label', stroke: null });
-    text(ctx, val, cx + pw / 2 - 5 * u, y, 3.6 * u, WHITE, { align: 'right' });
+    text(ctx, k, cx - pw / 2 + 7 * u, y, 2.8 * u, th.dim, {
+      css: th.font(600, 2.8 * u),
+      stroke: null,
+    });
+    text(ctx, val, cx + pw / 2 - 5 * u, y, 3.6 * u, th.text, {
+      align: 'right',
+      css: th.font(700, 3.6 * u),
+    });
   });
-  text(ctx, 'Total', cx - pw / 2 + 3 * u, top + 33 * u, 4 * u, AMBER, { font: 'label' });
-  text(ctx, formatScore(r.total), cx + pw / 2 - 5 * u, top + 33 * u, 8 * u, AMBER, {
+  text(ctx, 'Total', cx - pw / 2 + 3 * u, top + 33 * u, 4 * u, th.accent, {
+    css: th.font(800, 4 * u, true),
+  });
+  text(ctx, formatScore(r.total), cx + pw / 2 - 5 * u, top + 33 * u, 8 * u, th.accent, {
     align: 'right',
-    glow: AMBER,
+    css: th.font(800, 8 * u),
+    glow: th.glow ? th.accent : undefined,
   });
-  text(ctx, `Best ${formatScore(r.best)}`, cx - 2 * u, top + 41 * u, 3 * u, STEEL, {
+  text(ctx, `Best ${formatScore(r.best)}`, cx - 2 * u, top + 41 * u, 3 * u, th.dim, {
     align: 'center',
-    font: 'label',
+    css: th.font(600, 3 * u),
   });
   const mt = medalText(r.total, r.medals);
   if (mt)
-    text(ctx, mt, cx - 2 * u, top + 37.5 * u, 2.8 * u, AMBER, { align: 'center', font: 'label' });
+    text(ctx, mt, cx - 2 * u, top + 37.5 * u, 2.8 * u, th.accent, {
+      align: 'center',
+      css: th.font(700, 2.8 * u),
+    });
   if (r.drifts.length) drawTopDrifts(ctx, r, cx, pw, top + 46 * u, u);
   if (r.newBest && Math.floor(nowS * 3) % 2 === 0)
     text(ctx, 'NEW BEST!', cx - 3 * u, top + (47 + ex) * u, 5 * u, GREEN, {
       align: 'center',
       glow: GREEN,
     });
-  text(ctx, 'ENTER / A race again', cx - 4 * u, top + (53 + ex) * u, 2.8 * u, WHITE, {
+  text(ctx, resultsHint(v.ui), cx - 4 * u, top + (53 + ex) * u, 2.8 * u, th.text, {
     align: 'center',
-    font: 'label',
+    css: th.font(600, 2.8 * u),
+    stroke: null,
   });
+  drawOverlayFx(ctx, width, height, nowS, th, { osd: false });
 }
 
 /** Results list of the run's best combos with their clip save state. */

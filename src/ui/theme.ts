@@ -321,6 +321,7 @@ function vhsOverlay(
   h: number,
   t: number,
   th: Theme,
+  osd: boolean,
 ): void {
   const u = Math.min(w, h) / 100;
   const src = ctx.canvas as HTMLCanvasElement | undefined;
@@ -379,6 +380,10 @@ function vhsOverlay(
   );
   ctx.fillRect(0, 0, w, h);
 
+  if (!osd) {
+    ctx.restore();
+    return;
+  }
   // OSD corner: PLAY ▶ and the tape counter, with a chroma fringe
   const fs = Math.max(14, 4.4 * u);
   const x = 4 * u;
@@ -422,7 +427,8 @@ export function drawOverlayFx(
   h: number,
   t: number,
   theme: Theme,
+  opts?: { osd?: boolean },
 ): void {
-  if (theme.id === 'vhs') vhsOverlay(ctx, w, h, t, theme);
+  if (theme.id === 'vhs') vhsOverlay(ctx, w, h, t, theme, opts?.osd ?? true);
   else arcadeOverlay(ctx, w, h, t);
 }
