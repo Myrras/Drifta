@@ -84,6 +84,8 @@ export interface InputState {
   right: boolean;
   /** edge-triggered, menu navigation (optional so car tests need no change) */ up?: boolean;
   down?: boolean;
+  /** level: garage engine rev (R / right trigger) */ rev?: boolean;
+  /** edge-triggered: garage tune toggle (T / pad X) */ tune?: boolean;
 }
 /** rpm normalized 0..1 */
 export interface CarState {

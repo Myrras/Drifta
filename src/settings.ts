@@ -2,6 +2,8 @@ import { PLAYER_MODELS } from './models';
 import { TRACKS, type Track } from './music';
 import type { PlayerModel } from './types';
 
+export type Tune = 'performance' | 'street';
+
 export interface Settings {
   master: number;
   music: number;
@@ -11,6 +13,7 @@ export interface Settings {
   track: Track;
   car: PlayerModel;
   color: string;
+  tune: Tune;
 }
 
 export const SETTINGS_KEY = 'drifta.settings';
@@ -25,6 +28,7 @@ export const defaultSettings = (): Settings => ({
   track: 'tokyo',
   car: 'mx5',
   color: '#d32030',
+  tune: 'street',
 });
 
 const vol = (v: unknown, d: number) =>
@@ -51,6 +55,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
     car: ok ? car : d.car,
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
+    tune: raw.tune === 'performance' || raw.tune === 'street' ? raw.tune : d.tune,
   };
 }
 

@@ -2,6 +2,10 @@ import type { CarState, DriftInfo, PlayerModel } from './types';
 import { ENGINE_PROFILES, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
 import { createMusic, type Track } from './music';
+import type { Tune } from './settings';
+
+// shortcut: replaced by engineProfile(model, tune) from ./engine at merge
+const profileFor = (model: PlayerModel, _tune: Tune) => ENGINE_PROFILES[model];
 
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
@@ -45,7 +49,7 @@ export function createAudio() {
   let sqGain: GainNode;
   let engNode: AudioWorkletNode | null = null;
   let lastPost = -1;
-  let engCar: PlayerModel | null = null; // car whose profile the worklet has
+  let engKey = ''; // model+tune whose profile the worklet has
   let sqSrc: AudioBufferSourceNode | null = null;
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
@@ -170,13 +174,19 @@ export function createAudio() {
         ctx = null;
       }
     },
-    update(car: CarState, drift: DriftInfo, throttle: number, model: PlayerModel): void {
+    update(
+      car: CarState,
+      drift: DriftInfo,
+      throttle: number,
+      model: PlayerModel,
+      tune: Tune,
+    ): void {
       if (!ctx) return;
       if (engNode && ctx.currentTime - lastPost >= 1 / 60) {
         lastPost = ctx.currentTime;
-        const prof = ENGINE_PROFILES[model];
-        if (model !== engCar) {
-          engCar = model;
+        const prof = profileFor(model, tune);
+        if (`${model}/${tune}` !== engKey) {
+          engKey = `${model}/${tune}`;
           engNode.port.postMessage({ profile: prof });
         }
         engNode.port.postMessage({ rpm: engineRpm(car.rpm, prof), throttle });

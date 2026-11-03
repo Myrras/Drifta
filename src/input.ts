@@ -133,6 +133,7 @@ const MAPPED = new Set([
   'ShiftRight',
   'Escape',
   'KeyR',
+  'KeyT',
   'Enter',
   'NumpadEnter',
 ]);
@@ -152,6 +153,7 @@ export function createInput(
     right: latchedEdge(),
     up: latchedEdge(),
     down: latchedEdge(),
+    tune: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -164,6 +166,7 @@ export function createInput(
     ArrowRight: kbEdge.right,
     KeyW: kbEdge.up,
     ArrowUp: kbEdge.up,
+    KeyT: kbEdge.tune,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
@@ -184,6 +187,7 @@ export function createInput(
     right: edgeTracker(),
     up: edgeTracker(),
     down: edgeTracker(),
+    tune: edgeTracker(),
   };
 
   return {
@@ -213,6 +217,11 @@ export function createInput(
         up: pick(
           kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')),
           padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5),
+        ),
+        rev: held.has('KeyR') || (pad?.buttons[7]?.value ?? 0) > 0.5,
+        tune: pick(
+          kbEdge.tune.poll(held.has('KeyT')),
+          padEdge.tune(pad?.buttons[2]?.pressed ?? false),
         ),
         down: pick(
           kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')),
