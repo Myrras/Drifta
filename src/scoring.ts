@@ -19,7 +19,7 @@ import {
 const SWITCHBACK_WINDOW = 0.5; // s of non-drift gap that still counts as a switchback
 const DRIFT_REENTRY_GAP = 0.3; // s; shorter gaps are slip flicker, not a new drift
 const BONUS_POINTS: Partial<Record<Trick, number>> = { SCRAMBLE: 1500, 'DRIVE-THRU': 2500 };
-const COP_SHOW_DIST = 2.5; // m
+export const COP_SHOW_DIST = 4.5; // m, car hull to police rect; Tokyo routes pass 5 m off, so a slide is needed
 const COP_SHOW_BONUS = 1000;
 const TWO_PI = Math.PI * 2;
 

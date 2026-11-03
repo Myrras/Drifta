@@ -90,6 +90,7 @@ const LIGHT_R = 7; // ceiling pool radius
 const HEAD_LEN = 25; // player headlight cones
 const PARKED_HEAD_LEN = 18;
 const HAZARD_HZ = 1.5;
+const POLICE_HZ = 2.5; // light bar: red, blue, red...
 
 const SKID_W = 0.25;
 const SKID_MIN_KMH = 15;
@@ -218,7 +219,7 @@ interface Lamp {
   tint: Tint;
   glow: number;
 }
-type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium' | 'green';
+type Tint = 'cool' | 'warm' | 'red' | 'amber' | 'white' | 'sodium' | 'green' | 'blue';
 const TINTS: Record<Tint, string> = {
   cool: '205,230,255',
   sodium: '255,150,45',
@@ -227,6 +228,7 @@ const TINTS: Record<Tint, string> = {
   amber: '255,150,20',
   white: '255,255,255',
   green: '60,255,150',
+  blue: '50,110,255',
 };
 
 let lightSprites: {
@@ -574,6 +576,21 @@ function hazardLamps(p: Pose): Lamp[] {
   return out;
 }
 
+/** A parked police car's light bar: its red and its blue half. */
+function policeLamps(p: Pose): [Lamp, Lamp] {
+  const lamp = (w: number, tint: Tint): Lamp => ({
+    cone: false,
+    x: p.x - 0.1 * Math.cos(p.facing) - w * Math.sin(p.facing),
+    y: p.y - 0.1 * Math.sin(p.facing) + w * Math.cos(p.facing),
+    ang: 0,
+    size: 4,
+    cut: 0.5,
+    tint,
+    glow: 0.95,
+  });
+  return [lamp(-0.3, 'red'), lamp(0.3, 'blue')];
+}
+
 /** Edge highlight of every solid, drawn above the darkness (warm on docks, cool elsewhere). */
 function buildRim(map: GameMap, idx: number) {
   const f = map.floors[idx];
@@ -642,7 +659,22 @@ function buildLights(map: GameMap, idx: number) {
     glow: glow.c,
     rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
+    police: poses.filter((p) => p.s.police).map(policeLamps),
   };
+}
+
+/** Police livery over a black parked car, local frame +x = nose: white cabin, light bar. */
+function policeLivery(g: Ctx, len: number, wid: number) {
+  g.fillStyle = '#f2f2ee';
+  g.beginPath();
+  g.roundRect(-len * 0.2, -wid / 2 + 0.14, len * 0.26, wid - 0.28, 0.2);
+  g.fill();
+  g.fillStyle = '#111';
+  g.fillRect(-0.32, -wid / 2 + 0.3, 0.44, wid - 0.6);
+  g.fillStyle = '#e8262a';
+  g.fillRect(-0.26, -wid / 2 + 0.36, 0.32, wid / 2 - 0.4);
+  g.fillStyle = '#2a5cff';
+  g.fillRect(-0.26, 0.04, 0.32, wid / 2 - 0.4);
 }
 
 /** Parked car in local frame, +x = nose. */
@@ -690,7 +722,7 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
   g.lineJoin = 'round';
   g.lineCap = 'round';
 
-  const route = (ROUTES.get(map) ?? []).find((r) => r.floor === idx)?.points ?? [];
+  const routes = (ROUTES.get(map) ?? []).filter((r) => r.floor === idx).map((r) => r.points);
   const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const blocked = (p: Vec) =>
     p.x < 1 ||
@@ -705,25 +737,26 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
       return d > h.rCore - 0.3 && d < h.rOuter + 0.3;
     });
   const placed: Vec[] = [];
-  for (let i = 1; i + 1 < route.length; i++) {
-    const [a, b, n] = [route[i - 1], route[i], route[i + 1]];
-    const dirIn = Math.atan2(b.y - a.y, b.x - a.x);
-    let turn = Math.atan2(n.y - b.y, n.x - b.x) - dirIn;
-    turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-    if (Math.abs(turn) <= Math.PI / 6) continue;
-    turn = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, turn));
-    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-    for (const back of [10, 8, 12, 6]) {
-      if (back > segLen) continue;
-      const x = b.x - back * Math.cos(dirIn);
-      const y = b.y - back * Math.sin(dirIn);
-      if (placed.some((q) => Math.hypot(q.x - x, q.y - y) < 10)) continue;
-      if (turnFootprint(x, y, dirIn, turn).some(blocked)) continue;
-      placed.push({ x, y });
-      turnArrow(g, x, y, dirIn, turn);
-      break;
+  for (const route of routes)
+    for (let i = 1; i + 1 < route.length; i++) {
+      const [a, b, n] = [route[i - 1], route[i], route[i + 1]];
+      const dirIn = Math.atan2(b.y - a.y, b.x - a.x);
+      let turn = Math.atan2(n.y - b.y, n.x - b.x) - dirIn;
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      if (Math.abs(turn) <= Math.PI / 6) continue;
+      turn = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, turn));
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      for (const back of [10, 8, 12, 6]) {
+        if (back > segLen) continue;
+        const x = b.x - back * Math.cos(dirIn);
+        const y = b.y - back * Math.sin(dirIn);
+        if (placed.some((q) => Math.hypot(q.x - x, q.y - y) < 10)) continue;
+        if (turnFootprint(x, y, dirIn, turn).some(blocked)) continue;
+        placed.push({ x, y });
+        turnArrow(g, x, y, dirIn, turn);
+        break;
+      }
     }
-  }
   for (const h of map.helixes) if (h.from === idx) helixArrow(g, h);
 
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -993,6 +1026,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       g.fill();
       noShadow();
       drawParkedCar(g, p.s.model, p.s.color ?? pick(CAR_MODELS[p.s.model].colors));
+      if (p.s.police) policeLivery(g, p.len, p.wid);
     } else parkedCar(g, p.len, p.wid, p.s.color ?? pick(PARKED_COLORS));
     g.restore();
   });
@@ -1900,6 +1934,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
+    const wig = Math.floor(clock * POLICE_HZ * 2) % 2;
+    for (const { l, w } of layers)
+      for (const bar of l.police) if (visible(bar[0].x, bar[0].y, 6)) dyn.push([bar[wig], w]);
 
     const m = shade.g;
     const k = shade.c.width / canvas.width;

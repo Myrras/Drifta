@@ -511,22 +511,28 @@ export function createGame(
     const clear = () => !collide(car, floor.solids, floor.circles);
     const place = (pos: Vec, angle: number) =>
       Object.assign(car, { pos: { ...pos }, angle, vel: { x: 0, y: 0 }, angVel: 0 });
-    const pts = ROUTES.get(map)?.find((r) => r.floor === s.floorIndex)?.points;
+    // a floor may carry several routes (TOKYO NIGHTS): recover onto the nearest
+    const routes = (ROUTES.get(map) ?? []).filter((r) => r.floor === s.floorIndex);
+    let pts = routes[0]?.points;
     if (pts && pts.length > 1) {
       let best = Infinity;
       let seg = 0;
       let t = 0;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i];
-        const dx = pts[i + 1].x - a.x;
-        const dy = pts[i + 1].y - a.y;
-        const u = Math.max(
-          0,
-          Math.min(1, ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1)),
-        );
-        const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
-        if (d < best) [best, seg, t] = [d, i, u];
-      }
+      for (const r of routes)
+        for (let i = 0; i < r.points.length - 1; i++) {
+          const a = r.points[i];
+          const dx = r.points[i + 1].x - a.x;
+          const dy = r.points[i + 1].y - a.y;
+          const u = Math.max(
+            0,
+            Math.min(
+              1,
+              ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1),
+            ),
+          );
+          const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
+          if (d < best) [best, seg, t, pts] = [d, i, u, r.points];
+        }
       // step forward along the route until clear
       search: for (let i = seg; i < pts.length - 1; i++, t = 0) {
         const a = pts[i];

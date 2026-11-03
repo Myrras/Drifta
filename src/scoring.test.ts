@@ -242,13 +242,13 @@ describe('v0.9 bonus tricks', () => {
     expect(s.combo!.points - p).toBeGreaterThan(1500);
     expect(tricks(run(s, at([z1, z2]), 0.5))).not.toContain('SCRAMBLE');
   });
-  it('COP SHOW once per combo under 2.5 m', () => {
+  it('COP SHOW once per combo under 4.5 m', () => {
     const s = createScoring();
-    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 3 }), 0.1))).not.toContain(
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 5 }), 0.1))).not.toContain(
       'COP SHOW',
     );
-    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 2 }), 0.1))).toContain('COP SHOW');
-    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 2 }), 0.1))).not.toContain(
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 4 }), 0.1))).toContain('COP SHOW');
+    expect(tricks(stepScoring(s, F({ drifting: true, nearPolice: 4 }), 0.1))).not.toContain(
       'COP SHOW',
     );
   });
