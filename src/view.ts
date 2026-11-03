@@ -161,6 +161,7 @@ export interface MenuView {
 }
 
 export interface MpHud {
+  role: 'host' | 'guest';
   rival: string;
   /** banked + live combo value */
   rivalScore: number;

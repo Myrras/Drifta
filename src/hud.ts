@@ -836,12 +836,10 @@ export const paintName = (id: string): string =>
   itemById(id)?.name ?? id.replace(/-/g, ' ').toUpperCase();
 
 /** MP results: role decides REMATCH (host) or waiting (guest) */
-export type MpHint = Pick<MpHud, 'connected'> & { role?: 'host' | 'guest' };
-
 export function resultsHint(
   ui: HudView['ui'],
   r: NonNullable<HudView['results']>,
-  mp?: MpHint,
+  mp?: Pick<MpHud, 'connected' | 'role'>,
 ): string {
   if (r.chooser)
     return hintLine(

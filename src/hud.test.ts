@@ -167,7 +167,7 @@ describe('hint lines', () => {
     );
     expect(resultsHint(kb, r, { ...guest, connected: false })).toBe('ESC title');
     expect(resultsHint(xbox, { ...r, carPick: true }, guest)).toBe('A choose car · B leave');
-    expect(resultsHint(kb, { ...r, carPick: true }, { connected: false })).toBe(
+    expect(resultsHint(kb, { ...r, carPick: true }, { ...guest, connected: false })).toBe(
       'ENTER choose car · ESC title',
     );
   });

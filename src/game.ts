@@ -1299,7 +1299,7 @@ export function createGame(
           { x: p.x, y: p.y, angle: p.angle, model, color: info.color, look, name: info.name },
         ];
       };
-      const mpHud = (): (MpHud & { role: 'host' | 'guest' }) | undefined => {
+      const mpHud = (): MpHud | undefined => {
         if (!m) return undefined;
         const r = m.rival;
         return {
