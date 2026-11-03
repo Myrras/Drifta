@@ -1,6 +1,7 @@
 import type { CarState, DriftInfo } from './types';
 import { engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
+import { createMusic } from './music';
 
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
@@ -47,6 +48,21 @@ export function createAudio() {
   let sqSrc: AudioBufferSourceNode | null = null;
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
+  let musicBus: GainNode;
+  let sfxBus: GainNode;
+  let engBus: GainNode;
+  let mus: ReturnType<typeof createMusic> | null = null;
+  let musicOn = false;
+  let intensity = 0.15;
+  let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
+
+  function applyVolumes(): void {
+    if (!ctx) return;
+    master.gain.value = vols.master;
+    musicBus.gain.value = vols.music;
+    sfxBus.gain.value = vols.sfx;
+    engBus.gain.value = vols.engine;
+  }
 
   function loop(buf: AudioBuffer, gain: GainNode, win?: [number, number]): AudioBufferSourceNode {
     const s = ctx!.createBufferSource();
@@ -83,14 +99,23 @@ export function createAudio() {
     const c = new AC();
     ctx = c;
     master = c.createGain();
-    master.gain.value = 0.5;
+    master.gain.value = vols.master;
     master.connect(c.destination);
     engGain = c.createGain();
     engGain.gain.value = 0;
-    engGain.connect(master);
+    engBus = c.createGain();
+    engBus.connect(master);
+    engGain.connect(engBus);
+    sfxBus = c.createGain();
+    sfxBus.connect(master);
+    musicBus = c.createGain();
+    musicBus.connect(master);
+    mus = createMusic(c, musicBus);
+    mus.setIntensity(intensity);
+    applyVolumes();
     sqGain = c.createGain();
     sqGain.gain.value = 0;
-    sqGain.connect(master);
+    sqGain.connect(sfxBus);
   }
 
   async function startEngine(): Promise<void> {
@@ -117,7 +142,7 @@ export function createAudio() {
       s.buffer = buf;
       s.playbackRate.value = rate;
       g.gain.value = vol;
-      s.connect(g).connect(master);
+      s.connect(g).connect(sfxBus);
       s.start();
     } catch {
       /* ignore */
@@ -134,6 +159,7 @@ export function createAudio() {
         if (ctx.state === 'suspended') void ctx.resume();
         if (!started) {
           started = true;
+          if (musicOn) mus?.start();
           void startEngine();
           for (const n of Object.keys(FILES) as Name[]) void load(n);
         }
@@ -161,9 +187,24 @@ export function createAudio() {
     },
     bank(): void {
       shot('bank', 0.7);
+      mus?.fill();
     },
     fail(): void {
       shot('hit', 0.5, 0.6);
+      mus?.drop();
+    },
+    music(on: boolean): void {
+      musicOn = on;
+      if (on) mus?.start();
+      else mus?.stop();
+    },
+    setIntensity(x: number): void {
+      intensity = x;
+      mus?.setIntensity(x);
+    },
+    setVolumes(v: typeof vols): void {
+      vols = { ...v };
+      applyVolumes();
     },
     stop(): void {
       if (!ctx) return;
