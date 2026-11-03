@@ -25,7 +25,7 @@ interface Take {
 }
 
 const STILL_MS = 200;
-const STILL_MAX = 25; // ring cap: ~5 s of history, 25 small canvases
+const STILL_MAX = 32; // ring cap: stills spread over the whole current drift
 const STILL_W = 320;
 
 /** index of the time nearest to target, -1 if none */
@@ -53,21 +53,34 @@ export function createClipRecorder(
   let rolling: Take[] = [];
   let [maxLong, maxShort, fps, bitrate] = PRESETS.medium;
   const clips = new Map<number, Take>();
-  const ring: { t: number; c: HTMLCanvasElement }[] = [];
-  let ringHead = 0;
+  let ring: { t: number; c: HTMLCanvasElement }[] = [];
+  let spare: HTMLCanvasElement[] = []; // canvases freed by decimation, reused
+  let gap = STILL_MS;
   let lastStill = 0;
+
+  /** new drift: start the stills over at the finest interval */
+  function resetStills(): void {
+    spare.push(...ring.map((e) => e.c));
+    ring = [];
+    gap = STILL_MS;
+    lastStill = 0;
+  }
 
   function snap(): void {
     const now = performance.now();
-    if (now - lastStill < STILL_MS) return;
+    if (now - lastStill < gap) return;
     lastStill = now;
-    let e = ring[ringHead];
-    if (ring.length < STILL_MAX) ring.push((e = { t: now, c: document.createElement('canvas') }));
-    else ringHead = (ringHead + 1) % STILL_MAX; // overwrite the oldest, reusing its canvas
-    e.t = now;
-    e.c.width = STILL_W;
-    e.c.height = Math.max(1, Math.round((out.height * STILL_W) / out.width));
-    e.c.getContext('2d')!.drawImage(out, 0, 0, e.c.width, e.c.height);
+    if (ring.length >= STILL_MAX) {
+      // full: keep every other still and halve the rate, so any drift length fits
+      spare.push(...ring.filter((_, i) => i % 2).map((e) => e.c));
+      ring = ring.filter((_, i) => !(i % 2));
+      gap *= 2;
+    }
+    const c = spare.pop() ?? document.createElement('canvas');
+    ring.push({ t: now, c });
+    c.width = STILL_W;
+    c.height = Math.max(1, Math.round((out.height * STILL_W) / out.width));
+    c.getContext('2d')!.drawImage(out, 0, 0, c.width, c.height);
   }
 
   function pickStill(t: Take): void {
@@ -154,7 +167,10 @@ export function createClipRecorder(
     },
     begin(quality) {
       this.clear();
-      ring.length = ringHead = lastStill = 0;
+      ring = [];
+      spare = [];
+      gap = STILL_MS;
+      lastStill = 0;
       if (!mimeType || quality === 'off') return;
       [maxLong, maxShort, fps, bitrate] = PRESETS[quality];
       try {
@@ -174,6 +190,7 @@ export function createClipRecorder(
       const t = rolling.shift() ?? take();
       if (t) {
         t.start = performance.now(); // drift start, not take start
+        resetStills();
         clips.set(id, t);
       }
       if (!rolling.length) rotate();
