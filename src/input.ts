@@ -166,6 +166,10 @@ export type PolledInput = InputState & { device: InputDevice; padStyle: PadStyle
 export const padStyleOf = (id: string): PadStyle =>
   /xbox|045e/i.test(id) ? 'xbox' : /054c|dualshock|dualsense|playstation/i.test(id) ? 'ps' : 'xbox';
 
+const busy = (p: Gamepad) =>
+  Array.from(p.buttons).some((x) => x.pressed || x.value > 0.15) ||
+  Array.from(p.axes).some((a) => Math.abs(a) > 0.5); // drift must not steal the device
+
 export function createInput(
   win: Window,
   now: () => number = () => performance.now(),
@@ -237,11 +241,16 @@ export function createInput(
   };
   const cheat = konami();
   let prevButtons: boolean[] = [];
+  let padIndex = -1;
 
   return {
     poll() {
-      const pads = win.navigator?.getGamepads?.() ?? [];
-      const pad = Array.from(pads).find((p) => p && p.connected) ?? null;
+      // the last pad with input wins, so an idle pad (or dongle) in slot 0 cannot hide another
+      const pads = Array.from(win.navigator?.getGamepads?.() ?? []).filter(
+        (p): p is Gamepad => !!p && p.connected,
+      );
+      const pad = pads.find(busy) ?? pads.find((p) => p.index === padIndex) ?? pads[0] ?? null;
+      if (pad) padIndex = pad.index;
       const t = now();
       const dt = (t - last) / 1000;
       last = t;
@@ -250,10 +259,7 @@ export function createInput(
       const gp = gamepadInput(pad);
       if (pad) {
         padStyle = padStyleOf(pad.id ?? '');
-        const active =
-          Array.from(pad.buttons).some((x) => x.pressed || x.value > 0.15) ||
-          Array.from(pad.axes).some((a) => Math.abs(a) > 0.5); // drift must not steal the device
-        if (active) device = 'pad';
+        if (busy(pad)) device = 'pad';
       }
       const m = mergeInput(kb, gp);
       const padLeft = padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5);

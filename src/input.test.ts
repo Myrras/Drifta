@@ -208,6 +208,29 @@ describe('createInput pad edge tracking', () => {
       'xbox',
     );
   });
+  it('uses the last pad with input, not just the first connected one', () => {
+    const w = new EventTarget() as unknown as Window;
+    const mk = (index: number, id: string) => ({
+      index,
+      id,
+      connected: true,
+      buttons: Array.from({ length: 16 }, () => ({ pressed: false, value: 0 })),
+      axes: [0, 0],
+    });
+    const idle = mk(0, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)');
+    const ds = mk(1, 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c)');
+    (w as unknown as { navigator: unknown }).navigator = { getGamepads: () => [idle, ds] };
+    const input = createInput(w);
+    ds.buttons[9].pressed = true;
+    expect(input.poll()).toMatchObject({ pause: true, device: 'pad', padStyle: 'ps' });
+    ds.buttons[9].pressed = false;
+    expect(input.poll().padStyle).toBe('ps'); // both idle: stays on the DualSense
+    ds.buttons[7].value = 1;
+    expect(input.poll()).toMatchObject({ throttle: 1, padStyle: 'ps' });
+    ds.buttons[7].value = 0;
+    idle.buttons[0].pressed = true;
+    expect(input.poll()).toMatchObject({ handbrake: true, padStyle: 'xbox' });
+  });
   it('skip is edge-triggered for N and RB', () => {
     const { w, buttons, state, input } = setup();
     w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyN', repeat: false }));
