@@ -4,6 +4,7 @@ import { drawMenu } from './ui/menu';
 import { createTach } from './ui/tach';
 import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
 import { hintLine, type Action } from './ui/prompts';
+import { itemById } from './cosmetics';
 
 // Night garage under sodium lamps: amber light, signal red, start-light green on blue-black ink.
 const DISPLAY = 'Impact, Haettenschweiler, "Arial Black", sans-serif';
@@ -863,9 +864,14 @@ function drawResults(
   const x0 = cx - cw / 2;
 
   // ---- headline: FINISHED, big total
-  text(ctx, 'FINISHED', cx, 6 * u, 3.2 * u, th.dim, {
+  const dl = r.daily;
+  const head = dl
+    ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
+    : 'FINISHED';
+  const headPx = fitPx(ctx, head, (p) => th.font(700, p, true), 3.2 * u, cw);
+  text(ctx, head, cx, 6 * u, headPx, dl ? (dl.cleared ? GREEN : RED) : th.dim, {
     align: 'center',
-    css: th.font(700, 3.2 * u, true),
+    css: th.font(700, headPx, true),
     stroke: null,
   });
   const total = formatScore(r.total);
@@ -944,6 +950,7 @@ function drawResults(
   const labelFont = th.font(800, 2.4 * u, true);
   text(ctx, 'TOP DRIFTS', x0, ly, 2.4 * u, th.accent2, { css: labelFont, stroke: null });
   const toasts = r.newPaints.map((id) => `NEW PAINT · ${paintName(id)}`);
+  if (dl?.reward) toasts.push(`NEW · ${itemById(dl.reward)?.name ?? paintName(dl.reward)}`);
   if (r.carPick) toasts.push('CAR PICK EARNED');
   if (toasts.length) {
     const room = cw - cssWidth(ctx, 'TOP DRIFTS', labelFont) - 3 * u;

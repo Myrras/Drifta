@@ -24,6 +24,7 @@ import { settingsLayout } from './ui/menu';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo } from './maps/tokyo';
 import { ENGINE_PROFILES } from './engine';
+import { dailyFor, isLegendDay } from './daily';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -684,9 +685,10 @@ describe('main menu, garage, settings', () => {
   it('up/down wrap, enter opens garage and settings', () => {
     const { game, tap, row } = rig();
     tap({ up: true });
-    expect(row()).toBe(2);
+    expect(row()).toBe(3);
     tap({ down: true });
     expect(row()).toBe(0);
+    tap({ down: true });
     tap({ down: true });
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('garage');
@@ -708,6 +710,7 @@ describe('main menu, garage, settings', () => {
     const { game, tap, mem } = rig();
     const g = () => game.view().hud.menu!.garage!;
     tap({ down: true });
+    tap({ down: true });
     tap({ confirm: true });
     tap({ right: true });
     expect(g().model).toBe('civic');
@@ -716,12 +719,12 @@ describe('main menu, garage, settings', () => {
     tap({ right: true });
     expect(g().color).toBe(PLAYER_MODELS.civic.colors[1]);
     tap({ pause: true }); // revert
-    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.mx5.name);
+    expect(game.view().hud.menu!.rows[2].value).toBe(PLAYER_MODELS.mx5.name);
     tap({ confirm: true });
     tap({ left: true });
     expect(g().model).toBe('wrx');
     tap({ confirm: true });
-    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.wrx.name);
+    expect(game.view().hud.menu!.rows[2].value).toBe(PLAYER_MODELS.wrx.name);
     expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({
       car: 'wrx',
       color: PLAYER_MODELS.wrx.colors[0],
@@ -735,6 +738,7 @@ describe('main menu, garage, settings', () => {
     const { game, tap, mem } = rig(undefined, undefined, progress);
     const g = () => game.view().hud.menu!.garage!;
     const open = () => {
+      tap({ down: true });
       tap({ down: true });
       tap({ confirm: true });
     };
@@ -765,6 +769,7 @@ describe('main menu, garage, settings', () => {
   it('garage: T toggles the tune, enter saves it and applies the stat boost', () => {
     const { game, tap, mem } = rig();
     tap({ down: true });
+    tap({ down: true });
     tap({ confirm: true });
     tap({ tune: true });
     expect(game.view().hud.menu!.garage!.tune).toBe('performance');
@@ -787,6 +792,7 @@ describe('main menu, garage, settings', () => {
       game.update(IDLE, DT);
     };
     step({ down: true });
+    step({ down: true });
     step({ confirm: true });
     update.mockClear();
     game.update({ ...IDLE, rev: true }, 0.5);
@@ -800,6 +806,7 @@ describe('main menu, garage, settings', () => {
 
   it('garage stat bars are normalised 0..1', () => {
     const { game, tap } = rig();
+    tap({ down: true });
     tap({ down: true });
     tap({ confirm: true });
     for (let i = 0; i < 11; i++) {
@@ -1011,6 +1018,7 @@ describe('main menu, garage, settings', () => {
     tap({ right: true });
     tap({ down: true });
     tap({ down: true });
+    tap({ down: true });
     tap({ confirm: true }); // settings
     tap({ tabNext: true });
     tap({ pause: true });
@@ -1018,6 +1026,7 @@ describe('main menu, garage, settings', () => {
       'move',
       'move',
       'adjust',
+      'move',
       'move',
       'move',
       'confirm',
@@ -1338,6 +1347,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
     const g = () => game.view().hud.menu!.garage!;
     const toGarage = () => {
       tap({ down: true });
+      tap({ down: true });
       tap({ confirm: true });
     };
     const reload = () =>
@@ -1368,7 +1378,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
     expect(g().model).toBe('rx8');
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('title');
-    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.rx8.name);
+    expect(game.view().hud.menu!.rows[2].value).toBe(PLAYER_MODELS.rx8.name);
     expect(JSON.parse(mem.get(PROGRESS_KEY)!)).toMatchObject({
       starterChosen: true,
       unlocked: ['rx8'],
@@ -1412,7 +1422,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
 
   it('a saved locked car falls back to the starter', () => {
     const { game } = rig(started('180sx'), { car: 'supra', color: '#ff7a00' });
-    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS['180sx'].name);
+    expect(game.view().hud.menu!.rows[2].value).toBe(PLAYER_MODELS['180sx'].name);
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS['180sx'].stats);
   });
 
@@ -1448,5 +1458,103 @@ describe('progression: starter, locks, car picks, cheat', () => {
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('countdown');
     expect(game.view().render.player.model).toBe('rx8');
+  });
+});
+
+describe('daily and legend runs', () => {
+  const dates = Array.from({ length: 60 }, (_, i) =>
+    new Date(Date.UTC(2026, 5, 1 + i)).toISOString().slice(0, 10),
+  );
+  const plain = dates.find((d) => !isLegendDay(d))!;
+  const legend = dates.find(isLegendDay)!;
+  const maps = [garage, tokyo];
+  const rig = (date: string) => {
+    const prog: Progress = { ...defaultProgress(), starterChosen: true, unlocked: ['civic'] };
+    const mem = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+    };
+    const game = createGame(maps, audio, () => memBest(), storage, undefined, undefined, prog, () => date);
+    const tap = (input: Partial<InputState>) => {
+      game.update({ ...IDLE, ...input }, DT);
+      game.update(IDLE, DT);
+    };
+    const start = () => {
+      while (game.view().hud.menu!.row !== 1) tap({ down: true });
+      tap({ confirm: true });
+      game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
+    };
+    const finish = (score: number) => {
+      const fin = dailyFor(date, maps).map.finish;
+      game.debug.scoring.banked = score;
+      game.debug.floorIndex = fin.floor;
+      game.debug.car.pos = { x: fin.zone.x + 1, y: fin.zone.y + 1 };
+      game.update(IDLE, DT);
+      return game.view().hud.results!;
+    };
+    return { game, tap, start, finish, prog };
+  };
+
+  it('title shows the DAILY row with map, target and streak; positions replace medals', () => {
+    const { game, prog } = rig(plain);
+    const d = dailyFor(plain, maps);
+    const m = game.view().hud.menu!;
+    expect(m.rows[1]).toEqual({
+      label: 'DAILY',
+      value: `${d.map.name} · ${d.target.toLocaleString('en-US')}`,
+    });
+    expect(m.note).toBe('STREAK 0');
+    expect(m.rows[0].value).toBe('◀ B2 MEET ▶');
+    prog.results['B2 MEET'] = { position: 2, score: 1, time: 1 };
+    expect(game.view().hud.menu!.rows[0].value).toBe('◀ B2 MEET ▶ 2ND');
+  });
+
+  it('clearing the daily pays once, then the title says CLEARED', () => {
+    const { game, tap, start, finish, prog } = rig(plain);
+    const d = dailyFor(plain, maps);
+    start();
+    expect(game.debug.phase).toBe('run');
+    const r = finish(d.target);
+    expect(r.daily).toMatchObject({ kind: 'daily', cleared: true, target: d.target });
+    expect(r.daily!.reward).toBeDefined();
+    expect(prog.cosmetics).toEqual([r.daily!.reward]);
+    expect(prog.daily).toMatchObject({ lastClear: plain, streak: 1 });
+    tap({ pause: true }); // results -> title
+    expect(game.view().hud.menu!.note).toBe('STREAK 1 · CLEARED');
+    start();
+    expect(finish(d.target).daily!.reward).toBeUndefined();
+    expect(prog.cosmetics.length).toBe(1);
+  });
+
+  it('missing the target fails the daily', () => {
+    const { start, finish, prog } = rig(plain);
+    start();
+    expect(finish(1).daily).toMatchObject({ cleared: false });
+    expect(prog.daily.clears).toBe(0);
+  });
+
+  it('a legend forces its car and skin, counts wall hits, and restores the car after', () => {
+    const { game, tap, start, finish, prog } = rig(legend);
+    prog.pickedMaps.push('TOKYO NIGHTS'); // no car pick to interrupt the restart
+    expect(game.view().hud.menu!.rows[1].label).toBe('LEGEND');
+    start();
+    const v = game.view().render;
+    expect(v.player.model).toBe('rx7');
+    expect(v.player.look).toMatchObject({ skin: 'fortune-orange' });
+    game.debug.wallHits = 1;
+    const bad = finish(1e6);
+    expect(bad.daily).toMatchObject({ kind: 'legend', cleared: false, wallHits: 1 });
+    expect(prog.skins).toEqual([]);
+    game.update(IDLE, 1); // past the results lockout
+    void 0;
+    tap({ confirm: true }); // restart the same legend
+    game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
+    expect(game.debug.wallHits).toBe(0);
+    const ok = finish(1e6);
+    expect(ok.daily).toMatchObject({ cleared: true, reward: 'fortune-orange' });
+    expect(prog.skins).toEqual(['fortune-orange']);
+    tap({ pause: true });
+    expect(game.view().hud.menu!.rows[2].value).toBe(PLAYER_MODELS.civic.name);
   });
 });
