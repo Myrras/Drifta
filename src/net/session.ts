@@ -42,6 +42,7 @@ export interface Session {
   sendPose(time: number, x: number, y: number, angle: number, floor: number): void;
   sendScore(banked: number, combo: number): void;
   finish(total: number, time: number): void;
+  /** Rival pose INTERP_DELAY behind runTime; holds the last frame while connected. */
   rivalPose(runTime: number): GhostFrame | null;
   backToLobby(): void;
   leave(): void;
@@ -244,6 +245,8 @@ export function createSession(
       if (!rival.connected || !frames.length) return null;
       const t = runTime - INTERP_DELAY;
       if (t < frames[0].t) return null;
+      const last = frames[frames.length - 1];
+      if (t >= last.t) return { ...last };
       return sample({ car: rival.info?.car ?? me.car, frames }, t);
     },
     backToLobby() {

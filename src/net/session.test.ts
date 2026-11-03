@@ -204,6 +204,16 @@ describe('session', () => {
     expect(h.rivalPose(1.3)?.x).toBeCloseTo(10);
   });
 
+  it('holds the last rival frame while connected, null after disconnect', () => {
+    toRace();
+    b.send({ t: 'pose', time: 1, x: 0, y: 0, angle: 0, floor: 0 });
+    b.send({ t: 'pose', time: 1.2, x: 10, y: 20, angle: 1, floor: 1 });
+    expect(h.rivalPose(5)).toEqual({ t: 1.2, x: 10, y: 20, angle: 1, floor: 1 });
+    expect(h.rivalPose(60)?.x).toBe(10);
+    a.setState('closed');
+    expect(h.rivalPose(5)).toBeNull();
+  });
+
   it('caps the pose buffer to about 10 s', () => {
     toRace();
     for (let i = 0; i <= 400; i++)
