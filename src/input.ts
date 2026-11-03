@@ -147,7 +147,7 @@ export type PadStyle = 'ps' | 'xbox';
 export type PolledInput = InputState & { device: InputDevice; padStyle: PadStyle; skip: boolean };
 
 export const padStyleOf = (id: string): PadStyle =>
-  /054c|dualshock|dualsense|playstation|wireless controller/i.test(id) ? 'ps' : 'xbox';
+  /xbox|045e/i.test(id) ? 'xbox' : /054c|dualshock|dualsense|playstation/i.test(id) ? 'ps' : 'xbox';
 
 export function createInput(
   win: Window,
@@ -233,7 +233,7 @@ export function createInput(
         padStyle = padStyleOf(pad.id ?? '');
         const active =
           Array.from(pad.buttons).some((x) => x.pressed || x.value > 0.15) ||
-          Array.from(pad.axes).some((a) => Math.abs(a) > 0.15);
+          Array.from(pad.axes).some((a) => Math.abs(a) > 0.5); // drift must not steal the device
         if (active) device = 'pad';
       }
       const m = mergeInput(kb, gp);

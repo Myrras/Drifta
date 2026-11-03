@@ -170,6 +170,7 @@ export function createGame(
   let usage = '';
   const afterChange = () => {
     void audio.refreshMyMusic();
+    if (cfg.track === 'mine') audio.setTrack('mine'); // leave a TOKYO fallback once the library changes
     void host?.size().then((v) => (usage = v));
   };
   let tab = 0;
@@ -548,8 +549,7 @@ export function createGame(
     }
     const id = row > 0 && row < back ? TABS[tab].ids[row - 1] : undefined;
     const act = dir || input.confirm;
-    if (id === 'master' || id === 'music' || id === 'sfx' || id === 'engine') {
-      if (!dir) return;
+    if ((id === 'master' || id === 'music' || id === 'sfx' || id === 'engine') && dir) {
       cfg[id] = Math.min(1, Math.max(0, Math.round((cfg[id] + dir * 0.1) * 10) / 10));
       applyVolumes();
       save();

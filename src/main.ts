@@ -53,7 +53,9 @@ picker.addEventListener('change', async () => {
   picker.value = '';
   if (!files.length) return;
   const r = await importFiles(files);
-  pickDone(r.reason ?? (r.added ? `+${r.added} ADDED` : `${r.skipped} SKIPPED`));
+  const why = r.reason?.replace(/ \(.*\)/, '').toUpperCase();
+  const count = r.added ? `+${r.added} ADDED` : why ? '' : `${r.skipped} SKIPPED`;
+  pickDone([count, why].filter(Boolean).join(' · '));
 });
 const musicHost = {
   // runs in the frame loop right after the keydown; transient user activation still holds

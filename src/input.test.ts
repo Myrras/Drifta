@@ -182,6 +182,8 @@ describe('createInput pad edge tracking', () => {
     state.pad = { connected: true, buttons, axes: [0.1, -0.14] };
     expect(input.poll().device).toBe('kb');
     state.pad.axes = [0.2, 0];
+    expect(input.poll().device).toBe('kb');
+    state.pad.axes = [0.6, 0];
     expect(input.poll().device).toBe('pad');
   });
   it('detects padStyle', () => {
@@ -193,6 +195,9 @@ describe('createInput pad edge tracking', () => {
     expect(style('Xbox 360 Controller (STANDARD GAMEPAD)')).toBe('xbox');
     expect(style('Wireless Controller (STANDARD GAMEPAD Vendor: 054c)')).toBe('ps');
     expect(style('DualSense')).toBe('ps');
+    expect(style('Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)')).toBe(
+      'xbox',
+    );
   });
   it('skip is edge-triggered for N and RB', () => {
     const { w, buttons, state, input } = setup();

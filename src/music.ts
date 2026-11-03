@@ -196,6 +196,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   async function playNext(): Promise<void> {
     if (loading) return;
     loading = true;
+    let retry = false;
     try {
       if (!bag) await reload();
       if (track !== 'mine' || !running) return;
@@ -210,7 +211,9 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
           fails++;
           void playNext();
         });
-        ctx.createMediaElementSource(el).connect(out);
+        const g = ctx.createGain();
+        g.gain.value = 0.3; // match the procedural bus level
+        ctx.createMediaElementSource(el).connect(g).connect(out);
       }
       const old = url;
       url = URL.createObjectURL(blob);
@@ -220,9 +223,13 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
       fails = 0;
     } catch {
       fails++;
-      if (fails > mineCount + 1) fallback();
+      retry = true;
     } finally {
       loading = false;
+    }
+    if (retry && track === 'mine' && running) {
+      if (fails > mineCount + 1) fallback();
+      else void playNext();
     }
   }
 
@@ -447,6 +454,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
       if (t === track) return;
       track = t;
       if (t === 'mine') {
+        fails = 0;
         void reload().then(() => running && startMine());
         return;
       }

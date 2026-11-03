@@ -805,6 +805,15 @@ describe('main menu, garage, settings', () => {
     expect(game.view().hud.phase).not.toBe('settings');
   });
 
+  it('esc on a volume row leaves settings', () => {
+    const { game, tap } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    tap({ down: true });
+    tap({ pause: true });
+    expect(game.view().hud.phase).not.toBe('settings');
+  });
+
   it('clear my music needs a second enter', async () => {
     const clear = vi.fn(async () => {});
     const { game, a, tap } = rig(undefined, {
