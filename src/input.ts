@@ -140,6 +140,7 @@ const MAPPED = new Set([
   'KeyP',
   'KeyZ',
   'KeyX',
+  'KeyM',
   'Enter',
   'NumpadEnter',
 ]);
@@ -193,6 +194,7 @@ export function createInput(
     tabPrev: latchedEdge(),
     tabNext: latchedEdge(),
     photo: latchedEdge(),
+    mp: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -210,6 +212,7 @@ export function createInput(
     KeyQ: kbEdge.tabPrev,
     KeyE: kbEdge.tabNext,
     KeyP: kbEdge.photo,
+    KeyM: kbEdge.mp,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
@@ -238,6 +241,7 @@ export function createInput(
     tabPrev: edgeTracker(),
     tabNext: edgeTracker(),
     photo: edgeTracker(),
+    mp: edgeTracker(),
   };
   const cheat = konami();
   let prevButtons: boolean[] = [];
@@ -287,7 +291,7 @@ export function createInput(
           kbEdge.skip.poll(held.has('KeyN')),
           padEdge.skip(pad?.buttons[5]?.pressed ?? false),
         ),
-        // LB / RB are clutch / skip in-game; only the settings screen reads the tab edges
+        // LB / RB are clutch / skip in-game; only the title (daily / garage) and settings read them
         tabPrev: pick(
           kbEdge.tabPrev.poll(held.has('KeyQ')),
           padEdge.tabPrev(pad?.buttons[4]?.pressed ?? false),
@@ -300,6 +304,7 @@ export function createInput(
           kbEdge.photo.poll(held.has('KeyP')),
           padEdge.photo(pad?.buttons[11]?.pressed ?? false), // R3
         ),
+        mp: pick(kbEdge.mp.poll(held.has('KeyM')), padEdge.mp(pad?.buttons[3]?.pressed ?? false)),
         photoPan: {
           x: clamp(
             gp.steer +

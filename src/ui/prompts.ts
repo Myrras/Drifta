@@ -15,6 +15,9 @@ export type Action =
   | 'navigate'
   | 'adjust'
   | 'tabs'
+  | 'tabPrev'
+  | 'tabNext'
+  | 'multiplayer'
   | 'rev'
   | 'pick'
   | 'save'
@@ -38,6 +41,9 @@ const KB: Record<Action, string> = {
   navigate: '↑↓',
   adjust: '←→',
   tabs: 'Q/E',
+  tabPrev: 'Q', // title: daily
+  tabNext: 'E', // title: garage
+  multiplayer: 'M',
   rev: 'R',
   pick: '←→',
   save: 'S', // results: save the selected clip
@@ -62,6 +68,9 @@ const PAD: Record<Action, [string, string]> = {
   navigate: ['D-PAD ↑↓', 'D-PAD ↑↓'],
   adjust: ['D-PAD ←→', 'D-PAD ←→'],
   tabs: ['LB/RB', 'L1/R1'],
+  tabPrev: ['LB', 'L1'],
+  tabNext: ['RB', 'R1'],
+  multiplayer: ['Y', '△'], // pad button 3
   rev: ['RT', 'R2'], // garage rev reads pad button 7
   pick: ['D-PAD ←→', 'D-PAD ←→'],
   save: ['X', '□'],

@@ -95,6 +95,16 @@ const TITLE_HINTS: [Action, string][] = [
   ['navigate', 'move'],
   ['adjust', 'map'],
   ['confirm', 'select'],
+  ['tabPrev', 'daily'],
+  ['tabNext', 'garage'],
+  ['multiplayer', 'multiplayer'],
+  ['pause', 'settings'],
+];
+const OPTION_HINTS: [Action, string][] = [
+  ['navigate', 'move'],
+  ['adjust', 'change'],
+  ['confirm', 'select'],
+  ['back', 'back'],
 ];
 const DRIVE_HINTS: [Action, string][] = [
   ['throttle', 'gas'],
@@ -143,8 +153,11 @@ const H = {
   settings: '',
   garage: '',
   lobby: '',
+  option: '',
   tabL: '',
   tabR: '',
+  mp: '',
+  set: '',
 };
 
 function hintsFor(ui: UiContext): typeof H {
@@ -158,7 +171,10 @@ function hintsFor(ui: UiContext): typeof H {
     H.starter = hintLine(STARTER_HINTS, ui.device, ui.padStyle);
     H.pick = hintLine(PICK_HINTS, ui.device, ui.padStyle);
     H.lobby = hintLine(LOBBY_HINTS, ui.device, ui.padStyle);
+    H.option = hintLine(OPTION_HINTS, ui.device, ui.padStyle);
     [H.tabL, H.tabR] = glyph('tabs', ui.device, ui.padStyle).split('/');
+    H.mp = glyph('multiplayer', ui.device, ui.padStyle);
+    H.set = glyph('pause', ui.device, ui.padStyle);
   }
   return H;
 }
@@ -699,22 +715,257 @@ function toast(g: CanvasRenderingContext2D, s: string): void {
 
 let bestVal = -1;
 let bestStr = '';
-let bestNote: string | undefined;
+
+const CARD_W = 30; // u, title side cards
+const CARD_H = 34;
+const TAB_W = 6; // u, fallback edge tabs
+const TAB_L = 30;
+// title rows by index (game.ts TITLE_IDS)
+const PLAY = 0;
+const MP = 1;
+const DAILY = 2;
+const GARAGE = 3;
+const SETTINGS = 4;
+
+/**
+ * Title layout: DAILY / GARAGE cards beside the center column when they fit
+ * (56u column + 2 x (6u gap + 30u card + 2u margin) = 132u), else slim edge tabs.
+ * u = min(w, h) / 100, so portrait and near-square windows get the tabs.
+ */
+export function titleLayout(w: number, u: number): { cards: boolean; pw: number } {
+  const cards = w >= 132 * u;
+  return { cards, pw: cards ? 56 * u : Math.min(72 * u, w - 16 * u) };
+}
+
+/** Small key glyph box, e.g. L1 / Q; align is the anchor side at x. */
+function chip(
+  g: CanvasRenderingContext2D,
+  s: string,
+  x: number,
+  y: number,
+  on: boolean,
+  align: 'left' | 'right' | 'center',
+): void {
+  const { th, u } = F;
+  const f = th.font(700, 2.2 * u);
+  g.font = f;
+  const bw = g.measureText(s).width + 1.6 * u;
+  const bh = 3.4 * u;
+  const bx = align === 'left' ? x : align === 'right' ? x - bw : x - bw / 2;
+  const col = on ? th.text : th.dim;
+  g.strokeStyle = col;
+  g.lineWidth = Math.max(1, 0.2 * u);
+  g.strokeRect(bx, y - bh / 2, bw, bh);
+  text(g, s, bx + bw / 2, y + 0.1 * u, f, col, 'center');
+}
+
+/** Panel for a card or tab; the selected one glows in the accent. */
+function panel(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  pw: number,
+  ph: number,
+  on: boolean,
+  band = ph, // selected: panelSel fill this deep (cards: the header only, so stats stay readable)
+): void {
+  const { th, u, now } = F;
+  g.fillStyle = th.panel;
+  g.fillRect(x, y, pw, ph);
+  if (on) {
+    g.fillStyle = th.panelSel;
+    g.fillRect(x, y, pw, band);
+  }
+  g.fillStyle = vhs() ? th.text : th.accent;
+  g.fillRect(x, y, vhs() ? pw : pw * 0.38, Math.max(1, 0.6 * u));
+  if (!on) return;
+  g.save();
+  g.strokeStyle = vhs() ? th.text : th.accent2;
+  g.lineWidth = Math.max(1, 0.35 * u);
+  g.shadowColor = th.accent;
+  g.shadowBlur = (1.2 + 1.6 * (0.5 + 0.5 * Math.sin(now * 4.2))) * u * th.glow;
+  g.strokeRect(x, y, pw, ph);
+  g.restore();
+}
+
+/** Calendar icon centred on (x, y), s px wide; a tick when cleared. */
+function calendar(
+  g: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  s: number,
+  done: boolean,
+): void {
+  const { th, u } = F;
+  const acc = vhs() ? th.accent : th.accent2;
+  g.strokeStyle = th.text;
+  g.lineWidth = Math.max(1, 0.25 * u);
+  g.strokeRect(x - s / 2, y - s * 0.4, s, s * 0.85);
+  g.fillStyle = acc;
+  g.fillRect(x - s / 2, y - s * 0.4, s, s * 0.22);
+  g.fillStyle = th.text;
+  g.fillRect(x - s * 0.28, y - s * 0.55, s * 0.1, s * 0.25); // binder rings
+  g.fillRect(x + s * 0.18, y - s * 0.55, s * 0.1, s * 0.25);
+  if (done) {
+    g.strokeStyle = HAZARD;
+    g.lineWidth = Math.max(1, 0.4 * u);
+    g.beginPath();
+    g.moveTo(x - s * 0.25, y + s * 0.12);
+    g.lineTo(x - s * 0.05, y + s * 0.3);
+    g.lineTo(x + s * 0.3, y - s * 0.05);
+    g.stroke();
+  } else
+    for (let i = 0; i < 6; i++)
+      g.fillRect(x - s * 0.3 + (i % 3) * s * 0.25, y + (i < 3 ? 0 : s * 0.22), s * 0.1, s * 0.1);
+}
+
+function dailyCard(
+  g: CanvasRenderingContext2D,
+  d: NonNullable<MenuView['daily']>,
+  x: number,
+  y: number,
+  on: boolean,
+  key: string,
+): void {
+  const { th, u } = F;
+  const cw = CARD_W * u;
+  const x0 = x + 3 * u;
+  const x1 = x + cw - 3 * u;
+  const acc = vhs() ? th.accent : th.accent2;
+  panel(g, x, y, cw, CARD_H * u, on, 9.6 * u);
+  calendar(g, x0 + 2.2 * u, y + 5.6 * u, 4.4 * u, d.cleared);
+  text(g, d.label, x0 + 5.6 * u, y + 5.6 * u, labelFont(3.2 * u), th.text);
+  chip(g, key, x1, y + 5.6 * u, on, 'right');
+  g.fillStyle = 'rgba(255,255,255,0.25)';
+  g.fillRect(x0, y + 9.6 * u, x1 - x0, Math.max(1, 0.18 * u));
+  const mpx = fitPx(g, d.map, valueFont(3 * u), 3 * u, x1 - x0);
+  text(g, d.map, x0, y + 13.6 * u, valueFont(mpx), th.text);
+  const lf = th.font(700, 2.4 * u);
+  text(g, 'TARGET', x0, y + 18.4 * u, lf, th.dim);
+  text(g, d.target, x1, y + 18.4 * u, valueFont(2.6 * u), acc, 'right');
+  text(g, 'STREAK', x0, y + 22.8 * u, lf, th.dim);
+  text(g, String(d.streak), x1, y + 22.8 * u, valueFont(2.6 * u), th.text, 'right');
+  if (d.cleared) {
+    g.fillStyle = HAZARD;
+    g.fillRect(x0, y + 26.6 * u, x1 - x0, 4.4 * u);
+    text(g, 'CLEARED', (x0 + x1) / 2, y + 28.9 * u, th.font(800, 2.6 * u), INK, 'center');
+  }
+}
+
+function garageCard(
+  g: CanvasRenderingContext2D,
+  c: NonNullable<MenuView['car']>,
+  x: number,
+  y: number,
+  on: boolean,
+  key: string,
+): void {
+  const { th, u, now } = F;
+  const cw = CARD_W * u;
+  const x0 = x + 3 * u;
+  const x1 = x + cw - 3 * u;
+  panel(g, x, y, cw, CARD_H * u, on, 9.6 * u);
+  text(g, 'GARAGE', x0, y + 5.6 * u, labelFont(3.2 * u), th.text);
+  chip(g, key, x1, y + 5.6 * u, on, 'right');
+  g.save();
+  g.translate(x + cw / 2, y + 14.6 * u);
+  g.rotate(-0.3 + 0.08 * Math.sin(now * 0.8));
+  const s = 3.4 * u; // px per m
+  g.scale(s, s);
+  g.drawImage(carImage(c.model, c.color, c.look), -CAR_HALF, -CAR_HALF, 2 * CAR_HALF, 2 * CAR_HALF);
+  g.restore();
+  const name = c.name.toUpperCase();
+  const npx = fitPx(g, name, valueFont(2.8 * u), 2.8 * u, x1 - x0);
+  text(g, name, x0, y + 22 * u, valueFont(npx), th.text);
+  bar(g, 'POWER', c.stats.power, x0, x1, y + 25.6 * u);
+  bar(g, 'GRIP', c.stats.grip, x0, x1, y + 28.4 * u);
+  bar(g, 'WEIGHT', c.stats.weight, x0, x1, y + 31.2 * u);
+}
+
+/** Slim vertical tab on a screen edge, centred at cy; key glyph at its top end. */
+function edgeTab(
+  g: CanvasRenderingContext2D,
+  left: boolean,
+  cy: number,
+  label: string,
+  key: string,
+  on: boolean,
+  e: number,
+): void {
+  const { th, u, w } = F;
+  const tw = TAB_W * u;
+  const tl = TAB_L * u;
+  const x = left ? 0 : w - tw;
+  g.save();
+  g.globalAlpha = e;
+  g.translate((1 - e) * tw * (left ? -1 : 1), 0);
+  panel(g, x, cy - tl / 2, tw, tl, on);
+  chip(g, key, x + tw / 2, cy - tl / 2 + 3.4 * u, on, 'center');
+  g.translate(x + tw / 2, cy + 2.6 * u);
+  g.rotate(left ? -Math.PI / 2 : Math.PI / 2);
+  const f = (px: number) => th.font(700, px, !vhs());
+  const px = fitPx(g, label, f(2.6 * u), 2.6 * u, tl - 9 * u);
+  text(g, label, 0, 0, f(px), on ? '#ffffff' : th.text, 'center');
+  g.restore();
+}
+
+/** SETTINGS gear in the top-right corner with its key glyph. */
+function gear(g: CanvasRenderingContext2D, on: boolean, key: string): void {
+  const { th, u, w } = F;
+  const cx = w - 6.5 * u;
+  const cy = 6.5 * u;
+  const r = 2.4 * u;
+  g.save();
+  g.globalAlpha = enter(SETTINGS, A.open);
+  g.fillStyle = on ? th.panelSel : th.panel;
+  g.beginPath();
+  g.arc(cx, cy, r * 1.75, 0, Math.PI * 2);
+  g.fill();
+  if (on) {
+    g.strokeStyle = vhs() ? th.text : th.accent2;
+    g.lineWidth = Math.max(1, 0.35 * u);
+    g.shadowColor = th.accent;
+    g.shadowBlur = 2 * u * th.glow;
+    g.stroke();
+    g.shadowBlur = 0;
+  }
+  g.translate(cx, cy);
+  g.fillStyle = th.text;
+  for (let k = 0; k < 8; k++) {
+    g.rotate(Math.PI / 4);
+    g.fillRect(-0.45 * u, -r * 1.2, 0.9 * u, r * 0.6);
+  }
+  g.beginPath();
+  g.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = on ? th.panelSel : INK;
+  g.beginPath();
+  g.arc(0, 0, r * 0.38, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
+  g.globalAlpha = enter(SETTINGS, A.open);
+  chip(g, key, cx - r * 1.75 - 1.2 * u, cy, on, 'right');
+  g.globalAlpha = 1;
+}
 
 function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typeof H): void {
   const { th, u, w, h, now } = F;
-  const step = 10 * u;
+  const { cards, pw } = titleLayout(w, u);
   const ph = 8 * u;
+  const mph = 6 * u; // slimmer MULTIPLAYER row
+  const gap = cards ? 8.5 * u : 0; // PLAY center to MULTIPLAYER center; tabs: no MP row
   const hintTop = h - 8.6 * u;
   // logo spans about -1.1 S (VHS rule) .. +1.35 S (kana / strapline); VHS stamp needs ~5.4 S wide
   const top = 12 * u;
-  const Sw = Math.min((w * 0.9) / 5.4, 24 * u);
+  const Sw = Math.min(((cards ? w : w - 2 * TAB_W * u) * 0.9) / 5.4, 24 * u);
   // tall windows: center logo + rows as one block; short ones: rows sit low, logo shrinks
-  const n = m.rows.length - 1;
-  const block = 2.5 * Sw + 4 * u + ph + n * step + 7.6 * u;
+  const below = gap + (cards ? mph : ph) / 2 + 7.6 * u; // PLAY center to under the BEST line
+  const block = 2.5 * Sw + 4 * u + ph / 2 + below;
   const rowsTop = Math.min(
     h * 0.5 + 10 * u,
-    hintTop - 9 * u - ph / 2 - n * step,
+    hintTop - 9 * u - ph / 2 - gap,
+    // cards start level with PLAY and must clear the hint line
+    cards ? hintTop - 3 * u - CARD_H * u + ph / 2 : Infinity,
     top + Math.max(0, hintTop - top - block) * 0.42 + 2.5 * Sw + 4 * u + ph / 2,
   );
   const S = Math.max(4 * u, Math.min(Sw, (rowsTop - ph / 2 - 4 * u - top) / 2.5));
@@ -734,26 +985,111 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
     );
     g.globalAlpha = 1;
   }
-  rows(g, m.rows, m.row, rowsTop, step, 0, A.rowsOpen, selPos(now));
+  // center column: PLAY, then MULTIPLAYER when the cards fit (else it is an edge tab)
+  const center = cards ? [PLAY, MP] : [PLAY];
+  const ys = [rowsTop, rowsTop + gap];
+  const hs = [ph, mph];
+  const dx = vhs() ? 6 * u : -26 * u; // entrance: VHS eases in, Arcade skids in from the left
+  for (const i of center) {
+    const e = enter(i, A.rowsOpen);
+    g.globalAlpha = e;
+    plate(g, w / 2 + (1 - e) * dx, ys[i], pw, hs[i]);
+  }
+  g.globalAlpha = 1;
+  if (center.includes(m.row)) {
+    const t = cards ? clamp01(selPos(now)) : 0; // slides between PLAY and MULTIPLAYER only
+    highlight(g, w / 2, rowsTop + t * gap, pw, ph + (mph - ph) * t, enter(0, A.open));
+  }
+  const onLabel = vhs() ? th.text : '#ffffff';
+  const offVal = vhs() ? th.accent : th.accent2;
+  for (const i of center) {
+    const r = m.rows[i];
+    const e = enter(i, A.rowsOpen);
+    if (e <= 0) continue;
+    g.globalAlpha = e;
+    const on = i === m.row;
+    const x0 = w / 2 - pw / 2 + 3.4 * u + (1 - e) * dx;
+    const x1 = w / 2 + pw / 2 - 3 * u + (1 - e) * dx;
+    const lf = labelFont(i === MP ? 2.8 * u : 3.6 * u);
+    text(g, r.label, x0, ys[i], lf, on ? onLabel : th.text);
+    if (i === MP) chip(g, hk.mp, x0 + g.measureText(r.label).width + 2 * u, ys[i], on, 'left');
+    const vf = valueFont(i === MP ? 2.6 * u : 3 * u);
+    if (r.value) text(g, r.value, x1, ys[i], vf, on ? onLabel : offVal, 'right');
+  }
+  g.globalAlpha = 1;
   if (v.par > 0) {
-    if (v.best !== bestVal || m.note !== bestNote) {
+    if (v.best !== bestVal) {
       bestVal = v.best;
-      bestNote = m.note;
-      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}${m.note ? `  ·  ${m.note}` : ''}`;
+      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}`;
     }
     g.globalAlpha = enter(3, A.open);
     text(
       g,
       bestStr,
       w / 2,
-      rowsTop + n * step + ph / 2 + 3.6 * u,
+      rowsTop + gap + (cards ? mph : ph) / 2 + 3.6 * u,
       th.font(700, 3 * u, th.id === 'vhs'),
       th.id === 'vhs' ? th.accent : th.accent2,
       'center',
     );
     g.globalAlpha = 1;
   }
+  const d = m.daily;
+  const c = m.car;
+  if (cards) {
+    const y = rowsTop - ph / 2;
+    const off = pw / 2 + 6 * u; // clear of the highlight slashes
+    const cw = CARD_W * u;
+    for (const [i, x, sx] of [
+      [DAILY, w / 2 - off - cw, -1],
+      [GARAGE, w / 2 + off, 1],
+    ]) {
+      const e = enter(i, A.open);
+      g.save();
+      g.globalAlpha = e;
+      g.translate((1 - e) * sx * 14 * u, 0);
+      if (i === DAILY && d) dailyCard(g, d, x, y, m.row === DAILY, hk.tabL);
+      if (i === GARAGE && c) garageCard(g, c, x, y, m.row === GARAGE, hk.tabR);
+      g.restore();
+    }
+  } else {
+    // DAILY on the left edge; GARAGE and MULTIPLAYER stacked on the right, clear of gear and hints
+    const half = TAB_L * u + u;
+    const cy = Math.max(top + half, Math.min(rowsTop, hintTop - 2 * u - half));
+    // the selected tab shows its value (daily map, car, HOST / JOIN)
+    const say = (i: number) => (m.row === i && m.rows[i].value) || m.rows[i].label;
+    edgeTab(g, true, cy, say(DAILY), hk.tabL, m.row === DAILY, enter(DAILY, A.open));
+    const tr = (i: number, y: number, key: string) =>
+      edgeTab(g, false, y, say(i), key, m.row === i, enter(i, A.open));
+    tr(GARAGE, cy - half / 2, hk.tabR);
+    tr(MP, cy + half / 2, hk.mp);
+  }
+  gear(g, m.row === SETTINGS, hk.set);
   hints(g, hk.title, hk.drive);
+}
+
+/** PLAY step for a map with an option: map heading, BEST, option row, START. */
+function drawMapOption(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typeof H): void {
+  const { th, u, w, h, now } = F;
+  const step = 10 * u;
+  const pw = Math.min(72 * u, w * 0.94);
+  const top = h * 0.24;
+  heading(g, m.items[m.selected] ?? '', w / 2, top, pw);
+  g.globalAlpha = enter(1, A.open);
+  const best = `BEST  ${Math.round(v.best).toLocaleString('en-US')}`;
+  text(
+    g,
+    best,
+    w / 2,
+    top + 9 * u,
+    th.font(700, 3 * u, vhs()),
+    vhs() ? th.accent : th.accent2,
+    'center',
+  );
+  g.globalAlpha = 1;
+  const rowsTop = Math.min(top + 22 * u, h - 13 * u - step);
+  rows(g, m.rows, m.row, rowsTop, step, 0, A.rowsOpen, selPos(now));
+  hints(g, hk.option, '');
 }
 
 // ---------- multiplayer lobby ----------
@@ -806,6 +1142,8 @@ export function drawMenu(
     else if (gm) drawGarage(ctx, gm, 'GARAGE', hk.garage, m.row, gm.lock?.offer ? hk.pick : '');
   } else if (m.screen === 'title') {
     drawTitle(ctx, v, m, hk);
+  } else if (m.screen === 'mapoption') {
+    drawMapOption(ctx, v, m, hk);
   } else if (m.screen === 'mplobby') {
     drawMpLobby(ctx, m, hk);
   } else {

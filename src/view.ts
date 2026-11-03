@@ -137,12 +137,24 @@ export interface MenuRow {
 
 /** Title, garage and settings screens. */
 export interface MenuView {
-  screen: 'starter' | 'title' | 'garage' | 'settings' | 'mplobby';
+  /** mapoption: the PLAY step for a map with an option (option row, START) */
+  screen: 'starter' | 'title' | 'mapoption' | 'garage' | 'settings' | 'mplobby';
   /** short notice over the menu, e.g. the cheat */
   toast?: string;
+  /** title: PLAY, MULTIPLAYER, DAILY, GARAGE, SETTINGS (cards / tabs / gear by row index) */
   rows: MenuRow[];
-  /** title only: small line next to BEST, e.g. the daily streak */
+  /** mplobby: status line under the heading */
   note?: string;
+  /** title only: DAILY / LEGEND card */
+  daily?: { label: string; map: string; target: string; streak: number; cleared: boolean };
+  /** title only: GARAGE card; stats are 0..1 across all models */
+  car?: {
+    model: PlayerModel;
+    name: string;
+    color: string;
+    look: Look;
+    stats: { power: number; grip: number; weight: number };
+  };
   /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
   tabs?: { names: string[]; active: number };
   ui: UiContext;

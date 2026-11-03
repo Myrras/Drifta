@@ -154,14 +154,17 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-type TitleId = 'play' | 'option' | 'daily' | 'mp' | 'garage' | 'settings' | 'username';
+/** title rows: PLAY and MULTIPLAYER in the center, DAILY / GARAGE cards (or edge tabs), SETTINGS gear */
+const TITLE_IDS = ['play', 'mp', 'daily', 'garage', 'settings'] as const;
+type TitleId = (typeof TITLE_IDS)[number];
+const titleRow = (id: TitleId) => TITLE_IDS.indexOf(id);
 type LobbyId = 'map' | 'option' | 'ready' | 'garage' | 'start' | 'leave';
 const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
   { name: 'VIDEO', ids: ['shake', 'clips', 'theme', 'ghost'] },
-  { name: 'GAME', ids: ['reset'] },
+  { name: 'GAME', ids: ['username', 'reset'] },
 ] as const;
 const REDLINE_BELOW_LIMIT = 200; // rpm; profiles only store the limiter (Celica 7200 -> 7000)
 const ATTRACT_ROUTE = docksRoute[0].points;
@@ -191,10 +194,21 @@ export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
   // tuning values
   return tune === 'performance' ? { ...st, power: st.power * 1.05, grip: st.grip * 1.03 } : st;
 };
+<<<<<<< HEAD
 /** a stat scaled 0..1 across all models, as the garage bars show it */
 const normStat = (car: PlayerModel, tune: Tune, k: keyof CarStats) => {
   const [lo, hi] = statRange(k);
   return hi > lo ? Math.min(1, (tunedStats(car, tune)[k] - lo) / (hi - lo)) : 0.5;
+=======
+/** stat bars, 0..1 across all models */
+const statsOf = (car: PlayerModel, tune: Tune) => {
+  const n = (k: keyof CarStats) => {
+    const [lo, hi] = statRange(k);
+    const v = tunedStats(car, tune)[k];
+    return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
+  };
+  return { power: n('power'), grip: n('grip'), weight: n('mass') };
+>>>>>>> slice/menu
 };
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
@@ -334,16 +348,7 @@ export function createGame(
   const hazards = () => !mapOption(map) || (mp ? mpHazards : hazardsOn(cfg, map.name));
   /** geometry the run drives on; `map` stays the identity for bests, routes, cities */
   const geo = () => (mapOption(map) === 'pillars' && !hazards() ? withoutPillars(map) : map);
-  const titleIds = (): TitleId[] => [
-    'play',
-    ...(mapOption(map) ? (['option'] as const) : []),
-    'daily',
-    'mp',
-    'garage',
-    'settings',
-    'username',
-  ];
-  const titleRow = (id: TitleId) => titleIds().indexOf(id);
+  let optStep = false; // PLAY on a map with an option: option + START step before the run
   const fresh = () => ({
     car: createCar(map.start, tunedStats(cfg.car, cfg.tune)),
     floorIndex: map.start.floor,
@@ -974,6 +979,27 @@ export function createGame(
     }
   }
 
+  /** PLAY step for a map with an option: row 0 the option, row 1 START; back to the title */
+  function optionInput(input: InputState, dir: number, dv: number): void {
+    if (dv) {
+      row = cycle(row, dv, 2);
+      audio.ui('move');
+    }
+    // pad START is pause + confirm: it acts on the row, B / ESC go back
+    if (input.pause && !input.confirm) {
+      audio.ui('back');
+      [optStep, row] = [false, titleRow('play')];
+    } else if (row === 0 && (dir || input.confirm)) {
+      audio.ui(dir ? 'adjust' : 'confirm');
+      cfg.hazards[map.name] = !hazardsOn(cfg, map.name);
+      save();
+    } else if (row === 1 && input.confirm) {
+      audio.ui('confirm');
+      [optStep, row] = [false, titleRow('play')];
+      newRun();
+    }
+  }
+
   function settingsInput(input: InputState, dir: number): void {
     const back = TABS[tab].ids.length + 1;
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
@@ -1030,6 +1056,9 @@ export function createGame(
     } else if (id === 'theme' && act) {
       cfg.menuTheme = cfg.menuTheme === 'arcade' ? 'vhs' : 'arcade';
       save();
+    } else if (id === 'username' && input.confirm) {
+      if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
+      else [draft, caretT, noteT] = [cfg.name, 0, 0];
     } else if (id === 'reset' && input.confirm) {
       if (confirmReset) {
         stores.forEach((b, i) => b.set((bests[i] = 0)));
@@ -1055,46 +1084,44 @@ export function createGame(
       garage: null,
     };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
+    const toast = toastT > 0 ? toastMsg : undefined;
+    if (s.phase === 'title' && optStep) {
+      const label = OPTION_LABEL[mapOption(map)!];
+      const value = `◀ ${hazardsOn(cfg, map.name) ? 'ON' : 'OFF'} ▶`;
+      return { ...base, screen: 'mapoption', rows: [{ label, value }, { label: 'START' }], toast };
+    }
     if (s.phase === 'title') {
       const date = today();
       const dl = dailyFor(date, maps);
-      const done = prog.daily.lastClear === date;
-      const ids = titleIds();
-      const noted = (id: TitleId) => ids[row] === id && noteT > 0 && note;
-      const opt = mapOption(map);
-      const rows = ids.map((id): MenuRow => {
-        switch (id) {
-          case 'play':
-            return { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` };
-          case 'option':
-            return { label: OPTION_LABEL[opt!], value: hazardsOn(cfg, map.name) ? 'ON' : 'OFF' };
-          case 'daily':
-            return {
-              label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
-              value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
-            };
-          case 'mp':
-            return { label: 'MULTIPLAYER', value: noted('mp') || `◀ ${mpMode.toUpperCase()} ▶` };
-          case 'garage':
-            return { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name };
-          case 'settings':
-            return { label: 'SETTINGS' };
-          case 'username':
-            return {
-              label: 'USERNAME',
-              value:
-                draft !== null
-                  ? draft + (caretT % 1 < 0.5 ? '_' : ' ')
-                  : noted('username') || cfg.name,
-            };
-        }
-      });
+      const label = dl.kind === 'legend' ? 'LEGEND' : 'DAILY';
+      const target = dl.target.toLocaleString('en-US');
+      const mpNote = TITLE_IDS[row] === 'mp' && noteT > 0 && note;
+      const rows: MenuRow[] = [
+        { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` },
+        { label: 'MULTIPLAYER', value: mpNote || `◀ ${mpMode.toUpperCase()} ▶` },
+        { label, value: `${dl.map.name} · ${target}` },
+        { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
+        { label: 'SETTINGS' },
+      ];
       return {
         ...base,
         screen: 'title',
         rows,
-        note: `STREAK ${liveStreak(prog, date)}${done ? ' · CLEARED' : ''}`,
-        toast: toastT > 0 ? toastMsg : undefined,
+        toast,
+        daily: {
+          label,
+          map: dl.map.name,
+          target,
+          streak: liveStreak(prog, date),
+          cleared: prog.daily.lastClear === date,
+        },
+        car: {
+          model: cfg.car,
+          name: PLAYER_MODELS[cfg.car].name,
+          color: cfg.color,
+          look: raceLook,
+          stats: statsOf(cfg.car, cfg.tune),
+        },
       };
     }
     if (s.phase === 'mplobby' && mp) {
@@ -1151,6 +1178,14 @@ export function createGame(
             return { label: 'CLIP QUALITY', value: cfg.clips.toUpperCase() };
           case 'theme':
             return { label: 'MENU THEME', value: cfg.menuTheme.toUpperCase() };
+          case 'username':
+            return {
+              label: 'USERNAME',
+              value:
+                draft !== null
+                  ? draft + (caretT % 1 < 0.5 ? '_' : ' ')
+                  : (TABS[tab].ids[row - 1] === id && noteT > 0 && note) || cfg.name,
+            };
           case 'reset':
             return {
               label: 'RESET BEST SCORES',
@@ -1171,7 +1206,10 @@ export function createGame(
       const car = first ? STARTERS[starter] : gCar;
       const ids = first ? STARTERS : MODEL_IDS;
       const m = PLAYER_MODELS[car];
+<<<<<<< HEAD
       const n = (k: keyof CarStats) => normStat(car, first ? 'street' : gTune, k);
+=======
+>>>>>>> slice/menu
       return {
         ...base,
         screen: first ? 'starter' : 'garage',
@@ -1193,7 +1231,7 @@ export function createGame(
           colors: m.colors,
           index: ids.indexOf(car),
           count: ids.length,
-          stats: { power: n('power'), grip: n('grip'), weight: n('mass') },
+          stats: statsOf(car, first ? 'street' : gTune),
           lock:
             first || isCarUnlocked(prog, car, s.cheat)
               ? null
@@ -1266,7 +1304,7 @@ export function createGame(
           }
           break;
         case 'title': {
-          if (draft !== null || swallow || mpOpen) break;
+          if (swallow || mpOpen) break;
           if (input.cheat) {
             // pad Konami code; its final A must not also pick the row
             s.cheat = true;
@@ -1274,29 +1312,40 @@ export function createGame(
             audio.ui('confirm');
             break;
           }
-          const ids = titleIds();
-          if (dv) audio.ui('move');
-          row = cycle(Math.min(row, ids.length - 1), dv, ids.length);
-          const id = ids[row];
-          if (id === 'option' && (dir || input.confirm)) {
-            audio.ui(dir ? 'adjust' : 'confirm');
-            cfg.hazards[map.name] = !hazardsOn(cfg, map.name);
-            save();
+          if (optStep) {
+            optionInput(input, dir, dv);
             break;
           }
-          if (dir && id === 'play') {
+          // shortcuts: Q / LB daily, E / RB garage, M / Y multiplayer, ESC / START settings
+          // (pad START is pause + confirm; pad B alone stays unused here)
+          const toSettings = input.pause && (ui.device === 'kb' || input.confirm);
+          const key: TitleId | null = input.tabPrev
+            ? 'daily'
+            : input.tabNext
+              ? 'garage'
+              : input.mp
+                ? 'mp'
+                : toSettings
+                  ? 'settings'
+                  : null;
+          if (dv && !key) audio.ui('move');
+          const n = TITLE_IDS.length;
+          row = key ? titleRow(key) : cycle(Math.min(row, n - 1), dv, n);
+          const id = TITLE_IDS[row];
+          if (dir && !key && id === 'play') {
             audio.ui('adjust');
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
             Object.assign(s, fresh(), { runId: s.runId + 1 });
-          } else if (dir && id === 'mp') {
+          } else if (dir && !key && id === 'mp') {
             audio.ui('adjust');
             mpMode = mpMode === 'host' ? 'join' : 'host';
           }
-          if (input.confirm) {
+          if (input.confirm || key) {
             audio.resume();
             audio.ui('confirm');
-            if (id === 'play') newRun();
+            if (id === 'play' && mapOption(map)) [optStep, row] = [true, 1];
+            else if (id === 'play') newRun();
             else if (id === 'daily') startDaily();
             else if (id === 'mp') {
               if (ui.device === 'pad' || !mpHost) [note, noteT] = ['USE KEYBOARD + MOUSE', 3];
@@ -1304,9 +1353,6 @@ export function createGame(
                 mpOpen = true;
                 mpHost.open(mpMode, joinMp);
               }
-            } else if (id === 'username') {
-              if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
-              else [draft, caretT, noteT] = [cfg.name, 0, 0];
             } else {
               openGarage();
               go(id === 'garage' ? 'garage' : 'settings');
@@ -1322,7 +1368,7 @@ export function createGame(
           garageInput(input, dir, dt);
           break;
         case 'settings':
-          settingsInput(input, dir);
+          if (draft === null && !swallow) settingsInput(input, dir);
           break;
         case 'countdown':
           if (input.pause) {
