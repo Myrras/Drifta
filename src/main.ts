@@ -4,6 +4,7 @@ import { createGame } from './game';
 import { createInput } from './input';
 import { createAudio } from './audio';
 import { garage } from './maps/garage';
+import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
 import { BEST_SCORE_KEY, DT } from './config';
 
@@ -37,7 +38,7 @@ const bestFor = (name: string) => {
     },
   };
 };
-const game = createGame([garage, testpad], audio, bestFor);
+const game = createGame([garage, docks, testpad], audio, bestFor);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);

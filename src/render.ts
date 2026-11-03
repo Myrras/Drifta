@@ -1,6 +1,7 @@
 import { CAR_LENGTH, CAR_WIDTH, inRect } from './collision';
 import type { CarState, Floor, GameMap, Helix, PlayerModel, Rect, Solid, Vec } from './types';
 import { garage, garageRoute } from './maps/garage';
+import { docks, docksRoute } from './maps/docks';
 import { CAR_MODELS, PLAYER_MODELS } from './models';
 import {
   createPool,
@@ -60,6 +61,10 @@ const POD_Y = 0.48; // pop-up headlight pods, m off the center line
 // lighting: dark ambient layer with light cut out (half res) drawn over the world, then additive glows
 const LIGHT_PX = 4; // px per meter, static per-floor light layers
 const AMBIENT = 0.82; // darkness inside the garage
+const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
+  [garage, garageRoute],
+  [docks, docksRoute],
+]);
 const AMBIENT_ROOF = 0.74;
 const LIGHT_R = 7; // ceiling pool radius
 const POST_R = 9; // roof lamp posts
@@ -622,7 +627,7 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
   g.lineJoin = 'round';
   g.lineCap = 'round';
 
-  const route = map === garage ? (garageRoute.find((r) => r.floor === idx)?.points ?? []) : [];
+  const route = (ROUTES.get(map) ?? []).find((r) => r.floor === idx)?.points ?? [];
   const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const blocked = (p: Vec) =>
     p.x < 1 ||

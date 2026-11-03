@@ -1,5 +1,6 @@
 import { COMBO_GRACE } from './config';
 import type { HudView, Popup } from './view';
+import { drawMenu } from './ui/menu';
 
 // Night garage under sodium lamps: amber light, signal red, start-light green on blue-black ink.
 const DISPLAY = 'Impact, Haettenschweiler, "Arial Black", sans-serif';
@@ -453,54 +454,13 @@ export function drawHud(
   width: number,
   height: number,
 ): void {
+  if (drawMenu(ctx, v, width, height)) return;
   const u = Math.min(width, height) / 100; // 1 unit = 1% of short side
   const nowS = performance.now() / 1000;
   const dt = Math.min(0.1, Math.max(0, nowS - anim.last));
   anim.last = nowS;
   const cx = width / 2;
   const pad = 3 * u;
-
-  if (v.phase === 'title') {
-    overlay(ctx, width, height, 0.6);
-    text(ctx, 'DRIFTA', cx, height * 0.25, 20 * u, RED, {
-      align: 'center',
-      stroke: WHITE,
-      glow: RED,
-    });
-    text(ctx, 'Drift. Chain. Bank.', cx, height * 0.25 + 12 * u, 3.6 * u, WHITE, {
-      align: 'center',
-      font: 'label',
-    });
-    plate(ctx, cx - 30 * u, height * 0.5 - 4 * u, 60 * u, 8 * u, INK, AMBER);
-    if (v.menu) {
-      const { items, selected } = v.menu;
-      text(ctx, `◀ ${items[selected]} ▶`, cx, height * 0.5 - 8 * u, 5 * u, WHITE, {
-        align: 'center',
-      });
-      text(ctx, '←/→ choose map', cx, height * 0.5 + 7 * u, 2.2 * u, STEEL, {
-        align: 'center',
-        font: 'label',
-      });
-    }
-    text(ctx, 'Press ENTER / A to start', cx, height * 0.5, 4.4 * u, AMBER, {
-      align: 'center',
-      alpha: 0.85 + 0.15 * Math.sin(nowS * 5),
-    });
-    [
-      'WASD/Arrows drive · SPACE handbrake · R restart · ESC pause',
-      'Gamepad: stick, RT/LT, A handbrake, START pause',
-    ].forEach((l, i) =>
-      text(ctx, l, cx, height * 0.62 + i * 4 * u, 2.4 * u, STEEL, {
-        align: 'center',
-        font: 'label',
-      }),
-    );
-    if (v.par > 0)
-      text(ctx, `BEST ${formatScore(v.best)}`, cx, height * 0.62 + 12 * u, 4 * u, WHITE, {
-        align: 'center',
-      });
-    return;
-  }
 
   if (v.phase === 'countdown') {
     anim.score = v.score;
