@@ -32,16 +32,19 @@ export interface Session {
   readonly phase: SessionPhase;
   readonly rival: Rival;
   readonly map: string | null;
+  /** Host-chosen per-map hazards toggle; applies to both players. */
+  readonly hazards: boolean;
   readonly ready: boolean;
   readonly rtt: number;
   readonly error: 'version' | null;
   /** Replaces my info; re-sent as hello before the race. */
   setInfo(info: PlayerInfo): void;
-  pickMap(name: string): void;
+  pickMap(name: string, hazards?: boolean): void;
+  setHazards(on: boolean): void;
   setReady(r: boolean): void;
   canStart(): boolean;
   start(): void;
-  onStart(cb: (map: string, inMs: number) => void): void;
+  onStart(cb: (map: string, inMs: number, hazards: boolean) => void): void;
   sendPose(time: number, x: number, y: number, angle: number, floor: number): void;
   sendScore(banked: number, combo: number): void;
   finish(total: number, time: number): void;
@@ -61,6 +64,7 @@ export function createSession(
 ): Session {
   let phase: SessionPhase = 'handshake';
   let map: string | null = null;
+  let hazards = true;
   let ready = false;
   let rtt = 0;
   let error: 'version' | null = null;
@@ -79,7 +83,7 @@ export function createSession(
   let finished = false;
   let pingId = 0;
   let lastPing = -Infinity;
-  const startCbs: ((map: string, inMs: number) => void)[] = [];
+  const startCbs: ((map: string, inMs: number, hazards: boolean) => void)[] = [];
   const changeCbs: (() => void)[] = [];
   const changed = () => changeCbs.forEach((cb) => cb());
 
@@ -90,11 +94,12 @@ export function createSession(
     finished = false;
     Object.assign(rival, { banked: 0, combo: 0, total: null, time: null });
   };
-  const enterRace = (m: string, inMs: number) => {
+  const enterRace = (m: string, inMs: number, hz: boolean) => {
     map = m;
+    hazards = hz;
     phase = 'race';
     resetRace();
-    startCbs.forEach((cb) => cb(m, inMs));
+    startCbs.forEach((cb) => cb(m, inMs, hz));
     changed();
   };
   const enterLobby = () => {
@@ -146,6 +151,7 @@ export function createSession(
       case 'map':
         if (role !== 'guest' || phase !== 'lobby') return;
         map = m.map;
+        hazards = m.hazards;
         ready = false;
         rival.ready = false;
         return changed();
@@ -155,7 +161,7 @@ export function createSession(
         return changed();
       case 'start':
         if (role !== 'guest' || phase !== 'lobby') return;
-        return enterRace(m.map, Math.max(0, m.delay - rtt / 2));
+        return enterRace(m.map, Math.max(0, m.delay - rtt / 2), m.hazards);
       case 'pose':
         if (phase !== 'race') return;
         return pushFrame({ t: m.time, x: m.x, y: m.y, angle: m.angle, floor: m.floor });
@@ -194,6 +200,9 @@ export function createSession(
     get map() {
       return map;
     },
+    get hazards() {
+      return hazards;
+    },
     get ready() {
       return ready;
     },
@@ -208,12 +217,21 @@ export function createSession(
       if (link.state === 'open' && (phase === 'handshake' || phase === 'lobby'))
         link.send({ t: 'hello', v: APP_VERSION, info });
     },
-    pickMap(name) {
+    pickMap(name, hz = true) {
       if (role !== 'host' || phase !== 'lobby') return;
       map = name;
+      hazards = hz;
       ready = false;
       rival.ready = false;
-      link.send({ t: 'map', map: name });
+      link.send({ t: 'map', map: name, hazards: hz });
+      changed();
+    },
+    setHazards(on) {
+      if (role !== 'host' || phase !== 'lobby' || map === null || on === hazards) return;
+      hazards = on;
+      ready = false;
+      rival.ready = false;
+      link.send({ t: 'map', map, hazards: on });
       changed();
     },
     setReady(r) {
@@ -225,8 +243,8 @@ export function createSession(
     canStart,
     start() {
       if (!canStart() || map === null) return;
-      link.send({ t: 'start', map, delay: START_DELAY_MS });
-      enterRace(map, START_DELAY_MS);
+      link.send({ t: 'start', map, delay: START_DELAY_MS, hazards });
+      enterRace(map, START_DELAY_MS, hazards);
     },
     onStart(cb) {
       startCbs.push(cb);

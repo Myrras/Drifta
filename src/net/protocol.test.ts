@@ -13,10 +13,12 @@ const all: Msg[] = [
   { t: 'hello', v: APP_VERSION, info: { name: 'A', car: 'celica', color: '#fff' } },
   { t: 'ping', id: 3, at: 1234.5 },
   { t: 'pong', id: 3, at: 1234.5 },
-  { t: 'map', map: 'Harbor' },
+  { t: 'map', map: 'Harbor', hazards: true },
+  { t: 'map', map: 'Harbor', hazards: false },
   { t: 'ready', ready: true },
   { t: 'ready', ready: false },
-  { t: 'start', map: 'Harbor', delay: 3000 },
+  { t: 'start', map: 'Harbor', delay: 3000, hazards: true },
+  { t: 'start', map: 'Harbor', delay: 3000, hazards: false },
   { t: 'pose', time: 12.5, x: -40.25, y: 300, angle: 1.57, floor: 1 },
   { t: 'score', banked: 12000, combo: 450 },
   { t: 'finish', total: 54321, time: 88.2 },
@@ -51,7 +53,11 @@ describe('protocol', () => {
     ['NaN number', encode({ t: 'pose', time: 1, x: NaN, y: 0, angle: 0, floor: 0 })],
     ['Infinity number', '{"t":"finish","total":1e999,"time":3}'],
     ['non-boolean ready', '{"t":"ready","ready":1}'],
-    ['long map name', JSON.stringify({ t: 'map', map: 'x'.repeat(65) })],
+    ['long map name', JSON.stringify({ t: 'map', map: 'x'.repeat(65), hazards: true })],
+    ['map without hazards', '{"t":"map","map":"Harbor"}'],
+    ['non-boolean map hazards', '{"t":"map","map":"Harbor","hazards":1}'],
+    ['start without hazards', '{"t":"start","map":"Harbor","delay":3000}'],
+    ['non-boolean start hazards', '{"t":"start","map":"Harbor","delay":3000,"hazards":"true"}'],
     ['long version', JSON.stringify({ t: 'hello', v: 'x'.repeat(65), info })],
     ['lowercase name', hello({ name: 'drift' })],
     ['empty name', hello({ name: '' })],
@@ -100,7 +106,7 @@ describe('protocol', () => {
   });
 
   it('keeps a long but valid map name at the limit', () => {
-    const m: Msg = { t: 'map', map: 'x'.repeat(64) };
+    const m: Msg = { t: 'map', map: 'x'.repeat(64), hazards: true };
     expect(decode(encode(m))).toEqual(m);
   });
 });
