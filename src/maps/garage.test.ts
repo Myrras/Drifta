@@ -334,16 +334,17 @@ describe('garage (B2 MEET)', () => {
     );
   });
 
-  it('has exactly 2 boom cars on B2, both near the route', () => {
-    const boom = carsOf(floors[1]).filter((c) => c.boom);
-    expect(boom.length).toBe(2);
-    expect(floors.flatMap(carsOf).filter((c) => c.boom).length).toBe(2);
-    for (const c of boom) {
-      const d = Math.min(
-        ...garageRoute[1].points.map((p) => Math.hypot(p.x - center(c).x, p.y - center(c).y)),
-      );
-      console.log(center(c), d); expect(d).toBeLessThan(15);
-    }
+  it('has exactly 2 boom cars on every floor, each near the route', () => {
+    floors.forEach((f, i) => {
+      const boom = carsOf(f).filter((c) => c.boom);
+      expect(boom.length).toBe(2);
+      for (const c of boom) {
+        const d = Math.min(
+          ...garageRoute[i].points.map((p) => Math.hypot(p.x - center(c).x, p.y - center(c).y)),
+        );
+        expect(d).toBeLessThan(15);
+      }
+    });
   });
 
   it('lights about 1 in 5 other cars, aimed down the course at open floor', () => {

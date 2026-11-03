@@ -523,6 +523,14 @@ const b1 = floor(
   { pillarShare: 0.35 },
 );
 
+// B1 boom cars: the parked car nearest the route at 1/4 and 3/4 of its length (within 15 m, apart).
+for (const t of [0.25, 0.75]) {
+  const pts = garageRoute[0].points;
+  const q = pts[Math.floor(t * pts.length)];
+  const d = (c: Solid) => Math.hypot(c.x + c.w / 2 - q.x, c.y + c.h / 2 - q.y);
+  b1.solids.filter((c) => c.kind === 'car').reduce((a, b) => (d(b) < d(a) ? b : a)).boom = true;
+}
+
 // B2: rim over the helix, a sealed block south of it (no cut to the exit), the meet spine with a
 // line-up on both faces, the pocket's east wall, the spectator deck on the north wall.
 const north = meetRow(60, 116, 41, -1, 3);
