@@ -728,6 +728,7 @@ describe('main menu, garage, settings', () => {
       'CAMERA SHAKE',
       'CLIP QUALITY',
       'MENU THEME',
+      'GHOST',
       'BACK',
     ]);
     tap({ down: true });

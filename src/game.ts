@@ -17,6 +17,7 @@ import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContex
 import type { createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
+import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
 import { createAttractDriver } from './attract';
@@ -114,7 +115,7 @@ const TITLE_ROWS = 3;
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
-  { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
+  { name: 'VIDEO', ids: ['shake', 'clips', 'theme', 'ghost'] },
   { name: 'GAME', ids: ['reset'] },
 ] as const;
 const REDLINE_BELOW_LIMIT = 200; // rpm; profiles only store the limiter (Celica 7200 -> 7000)
@@ -185,6 +186,8 @@ export function createGame(
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   let comboIds = 0;
+  let rec = createRecorder();
+  let ghost: Ghost | null = null;
   const ui: Pick<UiContext, 'device' | 'padStyle'> = { device: 'kb', padStyle: 'xbox' };
 
   /** menu background: an AI car drifting the docks. Silent, own state, never touches the run. */
@@ -251,6 +254,8 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+    rec = createRecorder();
+    ghost = loadGhost(map.name);
     clips?.begin(cfg.clips);
   };
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
@@ -350,7 +355,10 @@ export function createGame(
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
-    if (newBest) stores[sel].set((bests[sel] = total));
+    if (newBest) {
+      stores[sel].set((bests[sel] = total));
+      saveGhost(map.name, { car: cfg.car, look: { color: cfg.color }, frames: rec.frames });
+    }
     s.results = {
       comboPoints,
       timeBonus: bonus,
@@ -422,6 +430,7 @@ export function createGame(
   function run(input: InputState, dt: number): void {
     track();
     s.time += dt;
+    rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
     const floor = map.floors[s.floorIndex];
@@ -582,6 +591,9 @@ export function createGame(
     } else if (id === 'shake' && act) {
       cfg.shake = !cfg.shake;
       save();
+    } else if (id === 'ghost' && act) {
+      cfg.ghost = !cfg.ghost;
+      save();
     } else if (id === 'clips' && act) {
       const n = CLIP_QUALITIES.length;
       cfg.clips = CLIP_QUALITIES[cycle(CLIP_QUALITIES.indexOf(cfg.clips), dir || 1, n)];
@@ -624,6 +636,8 @@ export function createGame(
         switch (id) {
           case 'shake':
             return { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' };
+          case 'ghost':
+            return { label: 'GHOST', value: cfg.ghost ? 'ON' : 'OFF' };
           case 'track':
             return {
               label: 'MUSIC',
@@ -768,6 +782,13 @@ export function createGame(
     },
 
     view(): FrameView {
+      const ghostView = () => {
+        const g = cfg.ghost && ghost && sample(ghost, s.time);
+        if (!g || !ghost || g.floor !== s.floorIndex) return null;
+        const model = Object.hasOwn(PLAYER_MODELS, ghost.car) ? ghost.car : cfg.car;
+        const c = ghost.look?.color;
+        return { ...g, model, color: typeof c === 'string' ? c : PLAYER_MODELS[model].colors[0] };
+      };
       const { car, scoring } = s;
       const speed = Math.hypot(car.vel.x, car.vel.y);
       const drift =
@@ -815,6 +836,7 @@ export function createGame(
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
+            ghost: ghostView(),
           };
       return {
         render,

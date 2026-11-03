@@ -1812,6 +1812,16 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.drawImage(spr.car, -spr.w / 2, -spr.h / 2, spr.w, spr.h);
     ctx.restore();
 
+    if (v.ghost) {
+      const gs = spritesFor(v.ghost.model, v.ghost.color);
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.translate(v.ghost.x, v.ghost.y);
+      ctx.rotate(v.ghost.angle);
+      ctx.drawImage(gs.car, -gs.w / 2, -gs.h / 2, gs.w, gs.h);
+      ctx.restore();
+    }
+
     drawSmoke(ctx, smoke, puffs, visible); // under the darkness: lit by the same lights
 
     // lighting: each floor's lights weighted by its own share of the crossfade, (1-t) and t

@@ -27,6 +27,8 @@ export interface RenderView {
   clip: Rect | null;
   /** live traffic and its city graph (signal heads), null on maps without traffic */
   traffic: { sim: Traffic; city: CityGraph } | null;
+  /** best-run ghost pose, only set when on the shown floor */
+  ghost?: { x: number; y: number; angle: number; model: PlayerModel; color: string } | null;
 }
 
 export interface Popup {
