@@ -38,6 +38,8 @@ export interface Floor {
   lights: Vec[];
   /** round solids, e.g. helix cores */
   circles: Circle[];
+  /** clipping zones: drifting inside scores faster; first entry per combo gives a CLIP bonus */
+  clipZones?: Rect[];
 }
 export interface Circle {
   x: number;
@@ -62,6 +64,8 @@ export interface Helix {
 export interface GameMap {
   name: string;
   parTime: number;
+  /** total-score thresholds [bronze, silver, gold]; absent on free-roam maps */
+  medals?: [number, number, number];
   floors: Floor[];
   helixes: Helix[];
   start: { floor: number } & Spawn;
@@ -72,6 +76,7 @@ export interface InputState {
   /** 0..1 */ throttle: number;
   /** 0..1, also reverse when stopped */ brake: number;
   handbrake: boolean;
+  /** held: drive disconnected, revs climb; release at high rpm kicks the rear out */ clutch?: boolean;
   /** edge-triggered: true for one poll on press */ pause: boolean;
   restart: boolean;
   confirm: boolean;
@@ -87,6 +92,9 @@ export interface CarState {
   angle: number;
   angVel: number;
   rpm: number;
+  /** clutch state, set by stepCar */ clutchHeld?: boolean;
+  clutchKick?: number; // s of rear burst left
+  clutchPower?: number; // 0..1 burst strength from rpm at release
   stats?: CarStats;
 }
 /** slip: signed angle between heading and velocity, radians */
@@ -100,7 +108,8 @@ export interface Hit {
   normal: Vec;
   depth: number;
 }
-export type Trick = 'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT';
+export type Trick =
+  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP';
 /** frozen = floor fade in progress: grace timer paused, no scoring */
 export interface ScoreFrame {
   drift: DriftInfo;
@@ -109,6 +118,8 @@ export interface ScoreFrame {
   hit: boolean;
   rampDrift: boolean;
   frozen: boolean;
+  /** clipping zone the car is in, if any */
+  clip?: Rect | null;
 }
 export interface Combo {
   points: number;

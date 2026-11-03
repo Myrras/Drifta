@@ -48,6 +48,13 @@ export const TUNING = {
   assistYawDamp: 1, // 1/s, light pull of yaw rate toward the path's turn rate; higher = safer but slidier
   maxAngVel: 4.5, // rad/s cap
 
+  // clutch kick: hold clutch + throttle to rev with the drive cut, release at high rpm for a rear burst
+  clutchRevRate: 1.2, // rpm (0..1) per second climbing while the clutch is held on throttle (falls at the same rate off throttle)
+  clutchMinRpm: 0.5, // rpm below which a release does nothing; the burst scales from 0 here to full at redline
+  clutchKickTime: 0.25, // s, length of the rear burst
+  clutchAccel: 22, // m/s², extra rear drive at full burst (engineAccel is 11)
+  clutchGrip: 0.3, // rear grip multiplier at full burst
+
   // rpm: upper speed of each gear, m/s
   gearTops: [10, 18, 27, 37],
 };
@@ -84,11 +91,21 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   let vl = -car.vel.x * sin + car.vel.y * cos;
   const speed = Math.hypot(vf, vl);
   const slip = Math.abs(slipOf(vf, vl, speed));
-  const throttle = clamp(input.throttle, 0, 1);
+  const rawThrottle = clamp(input.throttle, 0, 1);
+  const clutch = !!input.clutch;
+  const throttle = clutch ? 0 : rawThrottle; // clutch in: no drive, no power oversteer
+  if (car.clutchHeld && !clutch) {
+    car.clutchKick = T.clutchKickTime;
+    car.clutchPower = clamp((car.rpm - T.clutchMinRpm) / (1 - T.clutchMinRpm), 0, 1);
+  }
+  car.clutchHeld = clutch;
+  const kick = (car.clutchKick ?? 0) > 0 ? (car.clutchPower ?? 0) : 0;
+  car.clutchKick = Math.max(0, (car.clutchKick ?? 0) - dt);
   const brake = clamp(input.brake, 0, 1);
 
   // longitudinal
   let drive = (throttle * T.engineAccel * power) / mass;
+  drive += kick * T.clutchAccel;
   let stop = 0; // decel opposing vf, cannot reverse direction
   if (vf < -T.reverseEngageSpeed) {
     drive = 0;
@@ -110,6 +127,7 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   let rearGrip = 1 + (T.powerOversteerGrip - 1) * throttle * loose;
   const bite = clamp((slip - T.rearBiteSlip) / T.rearBiteRamp, 0, 1);
   rearGrip += (1 - rearGrip) * T.rearBite * bite;
+  rearGrip *= 1 - (1 - T.clutchGrip) * kick;
   if (input.handbrake) rearGrip = T.handbrakeGrip;
 
   // lateral (bicycle model)
@@ -165,7 +183,9 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
     }
     lo = hi;
   }
-  car.rpm = clamp(0.15 + 0.75 * t + 0.1 * throttle, 0, 1);
+  car.rpm = clutch
+    ? clamp(car.rpm + (rawThrottle > 0 ? 1 : -1) * T.clutchRevRate * dt, 0.15, 1)
+    : clamp(0.15 + 0.75 * t + 0.1 * throttle, 0, 0.97); // <1: only clutch revving reaches the limiter
 
   return driftInfo(car);
 }

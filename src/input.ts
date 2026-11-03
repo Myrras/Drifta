@@ -14,6 +14,7 @@ export interface RawInput {
   throttle: number;
   brake: number;
   handbrake: boolean;
+  clutch: boolean;
   pause: boolean;
   restart: boolean;
   confirm: boolean;
@@ -25,6 +26,7 @@ export function mergeInput(a: RawInput, b: RawInput): RawInput {
     throttle: Math.max(a.throttle, b.throttle),
     brake: Math.max(a.brake, b.brake),
     handbrake: a.handbrake || b.handbrake,
+    clutch: a.clutch || b.clutch,
     pause: a.pause || b.pause,
     restart: a.restart || b.restart,
     confirm: a.confirm || b.confirm,
@@ -68,6 +70,7 @@ export function keyboardInput(k: Set<string>): RawInput {
     throttle: any(k, 'KeyW', 'ArrowUp') ? 1 : 0,
     brake: any(k, 'KeyS', 'ArrowDown') ? 1 : 0,
     handbrake: k.has('Space'),
+    clutch: any(k, 'ShiftLeft', 'ShiftRight'),
     pause: k.has('Escape'),
     restart: k.has('KeyR'),
     confirm: any(k, 'Enter', 'NumpadEnter'),
@@ -109,6 +112,7 @@ export function gamepadInput(p: Gamepad | null): RawInput {
     throttle: b(7)?.value ?? 0,
     brake: b(6)?.value ?? 0,
     handbrake: b(0)?.pressed ?? false,
+    clutch: b(4)?.pressed ?? false, // LB
     pause: (b(9)?.pressed ?? false) || (b(1)?.pressed ?? false),
     restart: b(8)?.pressed ?? false,
     confirm: (b(9)?.pressed ?? false) || (b(0)?.pressed ?? false),
@@ -125,6 +129,8 @@ const MAPPED = new Set([
   'KeyS',
   'ArrowDown',
   'Space',
+  'ShiftLeft',
+  'ShiftRight',
   'Escape',
   'KeyR',
   'Enter',

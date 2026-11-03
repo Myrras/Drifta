@@ -27,7 +27,7 @@ const START = v(32, 196);
 type Sample = { p: Vec; s: number };
 /** Route samples (arcs every ≤ 10°) and the apex of every arc. */
 const samples: Sample[] = [{ p: START, s: 0 }];
-const apexes: { s: number; r: number; side: number }[] = [];
+const apexes: { s: number; r: number; side: number; deg: number }[] = [];
 {
   let p = START;
   let h = 0;
@@ -45,7 +45,7 @@ const apexes: { s: number; r: number; side: number }[] = [];
     const c = v(p.x + r * Math.cos(h + (side * PI) / 2), p.y + r * Math.sin(h + (side * PI) / 2));
     const n = Math.ceil(Math.abs(deg) / 10);
     const [h0, s0] = [h, s];
-    apexes.push({ s: s0 + (r * Math.abs(turn)) / 2, r, side });
+    apexes.push({ s: s0 + (r * Math.abs(turn)) / 2, r, side, deg });
     for (let i = 1; i <= n; i++) {
       h = h0 + (turn * i) / n;
       s = s0 + (r * Math.abs(turn) * i) / n;
@@ -171,6 +171,14 @@ const apexBait = apexes.map(({ s, r, side }) => {
   return [box(off(s, side * 8.6), h, false)];
 });
 
+/** Clipping zones: 5 m squares on the outside of the big turns, against the parked outline. */
+const clipZones = apexes
+  .filter(({ deg }) => Math.abs(deg) >= 100)
+  .map(({ s, side }) => {
+    const c = off(s, -side * 4.5);
+    return { x: c.x - 2.5, y: c.y - 2.5, w: 5, h: 5 };
+  });
+
 const crane = (s: number) => [s, s + 14].flatMap((q) => [-12, 12].map((d) => pillar(off(q, d), 2)));
 
 const groups: Solid[][] = [
@@ -289,6 +297,8 @@ const lights = [
 export const docks: GameMap = {
   name: 'WANGAN DOCKS',
   parTime: Math.round(ROUTE_LENGTH / 17),
+  // tuning values: total score for bronze, silver, gold; ~+10% for clipping zones
+  medals: [3300, 7700, 14500],
   floors: [
     {
       name: 'WANGAN DOCKS',
@@ -304,6 +314,7 @@ export const docks: GameMap = {
       bays: [],
       lights,
       circles: [],
+      clipZones,
     },
   ],
   helixes: [],

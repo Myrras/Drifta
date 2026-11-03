@@ -1,5 +1,8 @@
-import type { Combo, ScoreEvent, ScoreFrame, ScoringState, Trick } from './types';
+import type { Combo, Rect, ScoreEvent, ScoreFrame, ScoringState, Trick, Vec } from './types';
+import { inRect } from './collision';
 import {
+  CLIP_BONUS,
+  CLIP_RATE,
   CLOSE_CALL_BONUS,
   CLOSE_CALL_COOLDOWN,
   CLOSE_CALL_DIST,
@@ -24,6 +27,7 @@ export interface Scoring extends ScoringState {
   segTime: number; // s of current unbroken drift
   closeCooldown: number;
   yawAccum: number;
+  clipped: Rect[]; // zones already clipped this combo
 }
 
 export function createScoring(): Scoring {
@@ -36,6 +40,7 @@ export function createScoring(): Scoring {
     segTime: 0,
     closeCooldown: 0,
     yawAccum: 0,
+    clipped: [],
   };
 }
 
@@ -47,6 +52,13 @@ export function timeBonus(time: number, par: number): number {
   return Math.max(0, Math.round((par - time) * TIME_BONUS_PER_SEC));
 }
 
+export const MEDAL_NAMES = ['', 'BRONZE', 'SILVER', 'GOLD'];
+
+/** Medals earned (0 none .. 3 gold) for a total score. */
+export function medalFor(total: number, medals?: readonly number[]): number {
+  return medals ? medals.filter((m) => total >= m).length : 0;
+}
+
 function resetBook(s: Scoring): void {
   s.wasDrifting = false;
   s.lastSign = 0;
@@ -54,6 +66,12 @@ function resetBook(s: Scoring): void {
   s.segTime = 0;
   s.closeCooldown = 0;
   s.yawAccum = 0;
+  s.clipped = [];
+}
+
+/** Clipping zone containing p, or null. */
+export function zoneAt(p: Vec, zones: readonly Rect[] = []): Rect | null {
+  return zones.find((z) => inRect(p, z)) ?? null;
 }
 
 function addTrick(s: Scoring, ev: ScoreEvent[], trick: Trick, bonus = 0): void {
@@ -108,8 +126,15 @@ export function stepScoring(s: Scoring, f: ScoreFrame, dt: number): ScoreEvent[]
     if (sign !== 0) s.lastSign = sign;
 
     const c = s.combo;
-    c.points += Math.abs((d.slip * 180) / Math.PI) * d.speedKmh * DRIFT_POINT_SCALE * dt;
+    const rate = f.clip ? CLIP_RATE : 1;
+    c.points += Math.abs((d.slip * 180) / Math.PI) * d.speedKmh * DRIFT_POINT_SCALE * rate * dt;
     c.grace = COMBO_GRACE;
+    if (f.clip && !s.clipped.includes(f.clip)) {
+      s.clipped.push(f.clip);
+      c.points += CLIP_BONUS; // points only, no multiplier step
+      c.tricks.push('CLIP');
+      ev.push({ type: 'trick', trick: 'CLIP' });
+    }
 
     const before = Math.floor(s.segTime / LONG_DRIFT_INTERVAL);
     s.segTime += dt;

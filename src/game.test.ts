@@ -19,6 +19,7 @@ const audio: AudioLike = {
   music: noop,
   setIntensity: noop,
   setVolumes: noop,
+  setTrack: noop,
 };
 const IDLE: InputState = {
   steer: 0,
@@ -381,6 +382,18 @@ describe('menu', () => {
     expect(game.view().render.map).toBe(testpad);
   });
 
+  it('clears clutch state on pause resume', () => {
+    const { game, step } = rig();
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    step({ throttle: 1, clutch: true }, 60);
+    expect(game.debug.car.clutchHeld).toBe(true);
+    step({ pause: true });
+    step({ confirm: true });
+    expect(game.debug.car.clutchHeld).toBe(false);
+    expect(game.debug.car.clutchKick).toBe(0);
+  });
+
   it('paused: enter resumes, esc goes to the title', () => {
     const { game, step } = rig();
     step({ confirm: true });
@@ -415,6 +428,7 @@ describe('main menu, garage, settings', () => {
       music: vi.fn(),
       setVolumes: vi.fn(),
       setIntensity: vi.fn(),
+      setTrack: vi.fn(),
     };
     const stores = [memBest(50), memBest(70)];
     const game = createGame(
@@ -518,11 +532,23 @@ describe('main menu, garage, settings', () => {
     expect(game.view().render.impact).toBe(0);
   });
 
+  it('music row toggles the track and persists', () => {
+    const { game, a, tap, mem } = rig();
+    expect(a.setTrack).toHaveBeenLastCalledWith('tokyo');
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 5; i++) tap({ down: true });
+    tap({ right: true });
+    expect(a.setTrack).toHaveBeenLastCalledWith('eurobeat');
+    expect(game.view().hud.menu!.rows[5].value).toBe('EUROBEAT');
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).track).toBe('eurobeat');
+  });
+
   it('reset best scores needs a second enter', () => {
     const { game, tap, stores } = rig();
     tap({ up: true });
     tap({ confirm: true });
-    for (let i = 0; i < 5; i++) tap({ down: true });
+    for (let i = 0; i < 6; i++) tap({ down: true });
     tap({ confirm: true });
     expect(stores[0].get()).toBe(50);
     tap({ confirm: true });
@@ -565,6 +591,14 @@ describe('main menu, garage, settings', () => {
         f.solids.length = n;
       }
     };
+
+    it('revving with the clutch held does not count as stuck', () => {
+      wedge(garage, ({ game, step }) => {
+        const { x, y } = garage.start.pos;
+        step({ throttle: 1, clutch: true }, Math.round(3 / DT));
+        expect(Math.hypot(game.debug.car.pos.x - x, game.debug.car.pos.y - y)).toBeLessThan(0.5);
+      });
+    });
 
     it('puts a wedged car on the route, heading along it, and loses the combo', () => {
       wedge(garage, ({ game, step }) => {

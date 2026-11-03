@@ -1,7 +1,7 @@
-import type { CarState, DriftInfo } from './types';
-import { engineRpm } from './engine';
+import type { CarState, DriftInfo, PlayerModel } from './types';
+import { ENGINE_PROFILES, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
-import { createMusic } from './music';
+import { createMusic, type Track } from './music';
 
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
@@ -45,6 +45,7 @@ export function createAudio() {
   let sqGain: GainNode;
   let engNode: AudioWorkletNode | null = null;
   let lastPost = -1;
+  let engCar: PlayerModel | null = null; // car whose profile the worklet has
   let sqSrc: AudioBufferSourceNode | null = null;
   const bufs: Partial<Record<Name, AudioBuffer>> = {};
   let started = false;
@@ -54,6 +55,7 @@ export function createAudio() {
   let mus: ReturnType<typeof createMusic> | null = null;
   let musicOn = false;
   let intensity = 0.15;
+  let track: Track = 'tokyo';
   let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
 
   function applyVolumes(): void {
@@ -111,6 +113,7 @@ export function createAudio() {
     musicBus = c.createGain();
     musicBus.connect(master);
     mus = createMusic(c, musicBus);
+    mus.setTrack(track);
     mus.setIntensity(intensity);
     applyVolumes();
     sqGain = c.createGain();
@@ -167,11 +170,16 @@ export function createAudio() {
         ctx = null;
       }
     },
-    update(car: CarState, drift: DriftInfo, throttle: number): void {
+    update(car: CarState, drift: DriftInfo, throttle: number, model: PlayerModel): void {
       if (!ctx) return;
       if (engNode && ctx.currentTime - lastPost >= 1 / 60) {
         lastPost = ctx.currentTime;
-        engNode.port.postMessage({ rpm: engineRpm(car.rpm), throttle });
+        const prof = ENGINE_PROFILES[model];
+        if (model !== engCar) {
+          engCar = model;
+          engNode.port.postMessage({ profile: prof });
+        }
+        engNode.port.postMessage({ rpm: engineRpm(car.rpm, prof), throttle });
         set(engGain.gain, 0.35, 0.05);
       }
       if (sqSrc) {
@@ -201,6 +209,10 @@ export function createAudio() {
     setIntensity(x: number): void {
       intensity = x;
       mus?.setIntensity(x);
+    },
+    setTrack(t: Track): void {
+      track = t;
+      mus?.setTrack(t);
     },
     setVolumes(v: typeof vols): void {
       vols = { ...v };

@@ -6,6 +6,7 @@ import type {
   Phase,
   Vec,
   PlayerModel,
+  Rect,
   ScoreEvent,
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
@@ -17,7 +18,16 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { PLAYER_MODELS, type CarStats } from './models';
 import { loadSettings, saveSettings, type SettingsStorage } from './settings';
-import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
+import {
+  comboValue,
+  createScoring,
+  forceBank,
+  MEDAL_NAMES,
+  medalFor,
+  stepScoring,
+  timeBonus,
+  zoneAt,
+} from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
 export interface BestStore {
@@ -47,7 +57,7 @@ const statRange = (k: keyof CarStats) => {
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
-const SETTINGS_ROWS = 7; // 4 volumes, shake, reset, back
+const SETTINGS_ROWS = 8; // 4 volumes, shake, music, reset, back
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
@@ -62,6 +72,7 @@ export function createGame(
     audio.setVolumes({ master, music, sfx, engine });
   };
   applyVolumes();
+  audio.setTrack(cfg.track);
   let row = 0;
   let confirmReset = false;
   let gCar = cfg.car;
@@ -88,6 +99,7 @@ export function createGame(
     results: null as Results | null,
     resultsAge: 0,
     stuck: 0,
+    clip: null as Rect | null,
   });
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
@@ -164,7 +176,15 @@ export function createGame(
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
     if (newBest) stores[sel].set((bests[sel] = total));
-    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bests[sel], newBest };
+    s.results = {
+      comboPoints,
+      timeBonus: bonus,
+      total,
+      time: s.time,
+      best: bests[sel],
+      newBest,
+      medals: map.medals,
+    };
     s.phase = 'results';
     audio.stop();
     audio.music(false);
@@ -173,6 +193,7 @@ export function createGame(
   /** put the car on the route (or start) nearest to it, heading along it, clear of solids */
   function recover(): void {
     const car = s.car;
+    Object.assign(car, { clutchHeld: false, clutchKick: 0 });
     const floor = map.floors[s.floorIndex];
     const clear = () => !collide(car, floor.solids, floor.circles);
     const place = (pos: Vec, angle: number) =>
@@ -229,7 +250,7 @@ export function createGame(
     const car = s.car;
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
-    audio.update(car, s.drift, input.throttle);
+    audio.update(car, s.drift, input.throttle, cfg.car);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const near = (x: number, y: number, r: number) =>
@@ -250,7 +271,7 @@ export function createGame(
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
     const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
-    const pushing = Math.max(input.throttle, input.brake) > STUCK_INPUT;
+    const pushing = Math.max(input.clutch ? 0 : input.throttle, input.brake) > STUCK_INPUT;
     const touching = hit !== null || nearestDistance(car, solids, circles) < STUCK_NEAR;
     const slow = Math.hypot(car.vel.x, car.vel.y) < STUCK_SPEED;
     s.stuck = pushing && slow && touching && !s.helix ? s.stuck + dt : 0;
@@ -260,11 +281,12 @@ export function createGame(
     }
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
+    const clip = (s.clip = zoneAt(car.pos, map.floors[s.floorIndex].clipZones));
 
     handle(
       stepScoring(
         s.scoring,
-        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false },
+        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false, clip },
         dt,
       ),
     );
@@ -320,20 +342,25 @@ export function createGame(
     } else if (row === 4 && (dir || input.confirm)) {
       cfg.shake = !cfg.shake;
       save();
-    } else if (row === 5 && input.confirm) {
+    } else if (row === 5 && (dir || input.confirm)) {
+      audio.setTrack((cfg.track = cfg.track === 'tokyo' ? 'eurobeat' : 'tokyo'));
+      save();
+    } else if (row === 6 && input.confirm) {
       if (confirmReset) {
         stores.forEach((b, i) => b.set((bests[i] = 0)));
         confirmReset = false;
       } else confirmReset = true;
-    } else if ((row === 6 && input.confirm) || input.pause) go('title', 2);
+    } else if ((row === 7 && input.confirm) || input.pause) go('title', 2);
   }
+
+  const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
 
   function menuView(): MenuView | null {
     const base = { row, items: maps.map((m) => m.name), selected: sel, garage: null };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     if (s.phase === 'title') {
       const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶` },
+        { label: 'PLAY', value: `◀ ${map.name} ▶${medalTag(medalFor(bests[sel], map.medals))}` },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
       ];
@@ -347,6 +374,7 @@ export function createGame(
           bar: cfg[k],
         })),
         { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' },
+        { label: 'MUSIC', value: cfg.track.toUpperCase() },
         { label: 'RESET BEST SCORES', value: confirmReset ? 'ENTER TO CONFIRM' : undefined },
         { label: 'BACK' },
       ];
@@ -428,8 +456,10 @@ export function createGame(
           } else run(input, dt);
           break;
         case 'paused':
-          if (input.confirm) s.phase = 'run';
-          else if (input.pause) toTitle();
+          if (input.confirm) {
+            s.phase = 'run';
+            Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
+          } else if (input.pause) toTitle();
           break;
         case 'results':
           s.resultsAge += dt;
@@ -466,6 +496,7 @@ export function createGame(
           scrape: s.scrape,
           impact: cfg.shake ? s.shake : 0,
           runId: s.runId,
+          clip: drift.drifting ? s.clip : null,
         },
         hud: {
           phase: s.phase,

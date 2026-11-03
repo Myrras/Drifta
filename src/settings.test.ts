@@ -27,6 +27,10 @@ describe('settings', () => {
       '#ff7a00',
     );
   });
+  it('validates the track', () => {
+    expect(loadSettings(fake(JSON.stringify({ track: 'eurobeat' }))).track).toBe('eurobeat');
+    expect(loadSettings(fake(JSON.stringify({ track: 'polka' }))).track).toBe('tokyo');
+  });
   it('persists', () => {
     const st = fake();
     saveSettings(
