@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest';
+import { APP_VERSION, decode, encode, type Msg } from './protocol';
+
+const info = { name: 'DRIFT_99', car: 'ae86' as const, color: '#ff0044', look: { wheels: 'rays' } };
+
+const all: Msg[] = [
+  { t: 'hello', v: '1.0.2', info },
+  { t: 'hello', v: '1.0.2', info: { name: 'A', car: 'celica', color: '#fff' } },
+  { t: 'ping', id: 3, at: 1234.5 },
+  { t: 'pong', id: 3, at: 1234.5 },
+  { t: 'map', map: 'Harbor' },
+  { t: 'ready', ready: true },
+  { t: 'ready', ready: false },
+  { t: 'start', map: 'Harbor', delay: 3000 },
+  { t: 'pose', time: 12.5, x: -40.25, y: 300, angle: 1.57, floor: 1 },
+  { t: 'score', banked: 12000, combo: 450 },
+  { t: 'finish', total: 54321, time: 88.2 },
+  { t: 'lobby' },
+  { t: 'leave' },
+];
+
+const hello = (i: Record<string, unknown>) =>
+  JSON.stringify({ t: 'hello', v: '1', info: { ...info, ...i } });
+
+describe('protocol', () => {
+  it('exposes the app version', () => {
+    expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('roundtrips every message kind', () => {
+    for (const m of all) expect(decode(encode(m))).toEqual(m);
+  });
+
+  it('drops unknown extra fields', () => {
+    expect(decode('{"t":"leave","x":1}')).toEqual({ t: 'leave' });
+  });
+
+  it.each([
+    ['bad JSON', '{"t":"ping",'],
+    ['non-string input', { t: 'leave' }],
+    ['non-object JSON', '[1,2]'],
+    ['null JSON', 'null'],
+    ['unknown t', '{"t":"teleport"}'],
+    ['missing field', '{"t":"ping","id":1}'],
+    ['string number', '{"t":"ping","id":"1","at":2}'],
+    ['NaN number', encode({ t: 'pose', time: 1, x: NaN, y: 0, angle: 0, floor: 0 })],
+    ['Infinity number', '{"t":"finish","total":1e999,"time":3}'],
+    ['non-boolean ready', '{"t":"ready","ready":1}'],
+    ['long map name', JSON.stringify({ t: 'map', map: 'x'.repeat(65) })],
+    ['long version', JSON.stringify({ t: 'hello', v: 'x'.repeat(65), info })],
+    ['lowercase name', hello({ name: 'drift' })],
+    ['empty name', hello({ name: '' })],
+    ['too long name', hello({ name: 'ABCDEFGHIJKLM' })],
+    ['unknown car', hello({ car: 'f40' })],
+    ['inherited car key', hello({ car: 'toString' })],
+    ['long color', hello({ color: '#'.repeat(65) })],
+    ['array look', hello({ look: ['rays'] })],
+    ['string look', hello({ look: 'rays' })],
+    ['null look', hello({ look: null })],
+    ['missing info', '{"t":"hello","v":"1"}'],
+  ])('rejects %s', (_, raw) => {
+    expect(decode(raw)).toBeNull();
+  });
+
+  it('keeps a long but valid map name at the limit', () => {
+    const m: Msg = { t: 'map', map: 'x'.repeat(64) };
+    expect(decode(encode(m))).toEqual(m);
+  });
+});

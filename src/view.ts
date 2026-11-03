@@ -3,6 +3,16 @@ import type { DailyResult } from './daily';
 import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
+export interface RivalView {
+  x: number;
+  y: number;
+  angle: number;
+  model: PlayerModel;
+  color: string;
+  look?: Look;
+  name: string;
+}
+
 export interface RenderView {
   map: GameMap;
   floorIndex: number;
@@ -42,6 +52,8 @@ export interface RenderView {
     color: string;
     look?: Look;
   } | null;
+  /** multiplayer rivals on the shown floor, drawn as ghosts with a name tag */
+  rivals?: RivalView[];
   /** photo camera: world centre, view-height multiplier, rotation (rad) */
   photo?: { x: number; y: number; zoom: number; rot: number };
 }
@@ -91,6 +103,8 @@ export interface Results {
   drifts: TopDrift[];
   /** selected index in drifts */
   driftRow: number;
+  /** multiplayer: rival's result; total null = disconnected before finishing */
+  rival?: { name: string; total: number | null; time: number | null };
 }
 
 /** Look and input hints for the UI. */
@@ -109,7 +123,7 @@ export interface MenuRow {
 
 /** Title, garage and settings screens. */
 export interface MenuView {
-  screen: 'starter' | 'title' | 'garage' | 'settings';
+  screen: 'starter' | 'title' | 'garage' | 'settings' | 'mplobby';
   /** short notice over the menu, e.g. the cheat */
   toast?: string;
   rows: MenuRow[];
@@ -142,6 +156,20 @@ export interface MenuView {
     /** locked car: null when drivable; offer = confirm again spends a car pick */
     lock?: { offer: boolean; picks: number } | null;
   } | null;
+  /** mplobby only */
+  mp?: { role: 'host' | 'guest'; rival: string; ready: boolean; rivalReady: boolean };
+}
+
+export interface MpHud {
+  rival: string;
+  /** banked + live combo value */
+  rivalScore: number;
+  /** rival's final total once finished */
+  rivalTotal: number | null;
+  connected: boolean;
+  /** you finished, rival still driving */
+  waiting: boolean;
+  toast?: string;
 }
 
 export interface HudView {
@@ -171,6 +199,7 @@ export interface HudView {
   gear: string;
   /** photo mode: this frame is being saved, draw no hint */
   photoShot?: boolean;
+  mp?: MpHud;
 }
 
 export interface FrameView {
