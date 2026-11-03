@@ -447,7 +447,8 @@ export function createGame(
       ...s.drifts,
       { id: live.id, amount, tricks: live.combo.tricks, saved: false, late: s.locked !== null },
     ];
-    list.sort((a, b) => b.amount - a.amount);
+    // counted drifts first: a late one never evicts a counted one
+    list.sort((a, b) => +a.late - +b.late || b.amount - a.amount);
     for (const d of list.splice(TOP_DRIFTS)) clips?.drop(d.id);
     s.drifts = list;
     if (list.some((d) => d.id === live.id)) clips?.keep(live.id);
