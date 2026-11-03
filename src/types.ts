@@ -98,6 +98,11 @@ export interface InputState {
   /** edge-triggered: save the selected drift clip on results (S / pad X) */ save?: boolean;
   /** edge-triggered: settings tab prev / next (Q / E, pad LB / RB) */ tabPrev?: boolean;
   tabNext?: boolean;
+  /** edge-triggered: photo mode (P / pad R3); levels: pan, rotate, zoom-in */ photo?: boolean;
+  photoPan?: Vec;
+  photoRot?: number;
+  photoZoom?: number;
+  /** edge-triggered: Konami code finished on the pad (never from the keyboard) */ cheat?: boolean;
   /** last-used device, for button prompts */ device?: 'kb' | 'pad';
   padStyle?: 'ps' | 'xbox';
 }
@@ -157,4 +162,13 @@ export type ScoreEvent =
   | { type: 'trick'; trick: Trick }
   | { type: 'bank'; amount: number }
   | { type: 'fail'; lost: number };
-export type Phase = 'title' | 'garage' | 'settings' | 'countdown' | 'run' | 'paused' | 'results';
+export type Phase =
+  | 'starter'
+  | 'title'
+  | 'garage'
+  | 'settings'
+  | 'countdown'
+  | 'run'
+  | 'paused'
+  | 'photo'
+  | 'results';

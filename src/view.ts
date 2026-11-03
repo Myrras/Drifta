@@ -37,6 +37,8 @@ export interface RenderView {
     color: string;
     look?: Look;
   } | null;
+  /** photo camera: world centre, view-height multiplier, rotation (rad) */
+  photo?: { x: number; y: number; zoom: number; rot: number };
 }
 
 export interface Popup {
@@ -97,7 +99,9 @@ export interface MenuRow {
 
 /** Title, garage and settings screens. */
 export interface MenuView {
-  screen: 'title' | 'garage' | 'settings';
+  screen: 'starter' | 'title' | 'garage' | 'settings';
+  /** short notice over the menu, e.g. the cheat */
+  toast?: string;
   rows: MenuRow[];
   /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
   tabs?: { names: string[]; active: number };
@@ -119,10 +123,12 @@ export interface MenuView {
     /** customise slots; `row` 0 is the car, row n is slots[n - 1] */
     slots: { label: string; name: string; color?: string; locked: boolean }[];
     /** how to earn the highlighted option, '' when it is owned */
-    lock: string;
+    slotLock: string;
     index: number;
     count: number;
     stats: { power: number; grip: number; weight: number };
+    /** locked car: null when drivable; offer = confirm again spends a car pick */
+    lock?: { offer: boolean; picks: number } | null;
   } | null;
 }
 
@@ -151,6 +157,8 @@ export interface HudView {
   redline: number;
   /** 'N', 'R', '1'..'4' */
   gear: string;
+  /** photo mode: this frame is being saved, draw no hint */
+  photoShot?: boolean;
 }
 
 export interface FrameView {

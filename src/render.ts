@@ -1655,14 +1655,17 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const kl = 1 - Math.exp(-2 * step);
     look.x += (lx - look.x) * kl;
     look.y += (ly - look.y) * kl;
-    const tx = car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
-    const ty = car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
+    const ph = v.photo;
+    const rot = ph?.rot ?? 0;
+    const tx = ph ? ph.x : car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
+    const ty = ph ? ph.y : car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
     // game.ts gives the menu attract scene negative run ids
     const attract = v.runId < 0;
-    const tvh =
-      (VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1)) *
-      (attract ? ATTRACT_ZOOM : 1);
-    if (snap) {
+    const tvh = ph
+      ? VIEW_H_REST * ph.zoom
+      : (VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1)) *
+        (attract ? ATTRACT_ZOOM : 1);
+    if (snap || ph) {
       cam.x = tx;
       cam.y = ty;
       cam.viewH = tvh;
@@ -1676,8 +1679,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const dip = v.blend ? 1 - DIP * Math.sin(Math.PI * v.blend.t) : 1;
     const punch = punchT < 0.05 ? punchT / 0.05 : Math.exp(-(punchT - 0.05) * 7);
     const scale = (cssH / cam.viewH) * dip * (1 + PUNCH * punch); // CSS px per meter
-    const halfW = cssW / 2 / scale;
-    const halfH = cssH / 2 / scale;
+    // rotated view: cull against the bounding circle of the screen
+    const halfW = (rot ? Math.hypot(cssW, cssH) / 2 : cssW / 2) / scale;
+    const halfH = (rot ? Math.hypot(cssW, cssH) / 2 : cssH / 2) / scale;
     // attract: pin the car in the clear band right of the menu column (min(72u, 0.94w) wide)
     const u = Math.min(cssW, cssH) / 100;
     const ax = attract ? (cssW * 1.5 + Math.min(36 * u, 0.47 * cssW)) / 2 : cssW / 2;
@@ -1770,9 +1774,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const ws = dpr * scale;
-    const ox = dpr * (cssW / 2 + sx - vx * scale);
-    const oy = dpr * (cssH / 2 + sy - vy * scale);
-    ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    // world -> device, rotated by `rot` about the screen centre
+    const rc = Math.cos(rot) * ws;
+    const rs = Math.sin(rot) * ws;
+    const ox = dpr * (cssW / 2 + sx) - (rc * vx - rs * vy);
+    const oy = dpr * (cssH / 2 + sy) - (rs * vx + rc * vy);
+    const worldXf = (g: Ctx, k = 1) =>
+      g.setTransform(rc * k, rs * k, -rs * k, rc * k, ox * k, oy * k);
+    worldXf(ctx);
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
     const floors: [number, number][] = [[v.floorIndex, 1]];
@@ -1878,7 +1887,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     m.clearRect(0, 0, shade.c.width, shade.c.height);
     m.fillStyle = `rgba(0,0,0,${layers.reduce((s, x) => s + x.w * x.amb, 0)})`;
     m.fillRect(0, 0, shade.c.width, shade.c.height);
-    m.setTransform(ws * k, 0, 0, ws * k, ox * k, oy * k);
+    worldXf(m, k);
     m.globalCompositeOperation = 'destination-out';
     for (const { fl, l, w } of layers) {
       m.globalAlpha = w;
@@ -1892,7 +1901,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
-    ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    worldXf(ctx);
     for (const { fl, l, w } of layers) {
       ctx.globalAlpha = w;
       ctx.drawImage(l.rim, 0, 0, fl.w, fl.h);

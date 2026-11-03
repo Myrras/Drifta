@@ -137,9 +137,26 @@ const MAPPED = new Set([
   'KeyN',
   'KeyQ',
   'KeyE',
+  'KeyP',
+  'KeyZ',
+  'KeyX',
   'Enter',
   'NumpadEnter',
 ]);
+
+export const KONAMI = ['up', 'up', 'down', 'down', 'left', 'right', 'left', 'right', 'a'];
+
+/** Konami matcher fed with pad presses; true when the sequence completes. A wrong press resets. */
+export function konami(): (press: string) => boolean {
+  let i = 0;
+  return (p) => {
+    if (p === KONAMI[i]) i++;
+    else i = p === 'up' ? (i === 2 ? 2 : 1) : 0; // a stray 'up' may still start (or keep) the run
+    if (i < KONAMI.length) return false;
+    i = 0;
+    return true;
+  };
+}
 
 export type InputDevice = 'kb' | 'pad';
 export type PadStyle = 'ps' | 'xbox';
@@ -171,6 +188,7 @@ export function createInput(
     skip: latchedEdge(),
     tabPrev: latchedEdge(),
     tabNext: latchedEdge(),
+    photo: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -187,6 +205,7 @@ export function createInput(
     KeyN: kbEdge.skip,
     KeyQ: kbEdge.tabPrev,
     KeyE: kbEdge.tabNext,
+    KeyP: kbEdge.photo,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
@@ -214,7 +233,10 @@ export function createInput(
     skip: edgeTracker(),
     tabPrev: edgeTracker(),
     tabNext: edgeTracker(),
+    photo: edgeTracker(),
   };
+  const cheat = konami();
+  let prevButtons: boolean[] = [];
 
   return {
     poll() {
@@ -234,6 +256,23 @@ export function createInput(
         if (active) device = 'pad';
       }
       const m = mergeInput(kb, gp);
+      const padLeft = padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5);
+      const padRight = padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5);
+      const padUp = padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5);
+      const padDown = padEdge.down(
+        (pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5,
+      );
+      // the cheat reads pad presses only: d-pad / stick edges and A; any other button resets it
+      const presses: string[] = [];
+      if (padUp) presses.push('up');
+      if (padDown) presses.push('down');
+      if (padLeft) presses.push('left');
+      if (padRight) presses.push('right');
+      const buttons = pad ? Array.from(pad.buttons, (x) => x.pressed) : [];
+      buttons.forEach((on, i) => {
+        if (on && !prevButtons[i] && (i < 12 || i > 15)) presses.push(i === 0 ? 'a' : 'other');
+      });
+      prevButtons = buttons;
       return {
         ...m,
         device,
@@ -251,21 +290,45 @@ export function createInput(
           kbEdge.tabNext.poll(held.has('KeyE')),
           padEdge.tabNext(pad?.buttons[5]?.pressed ?? false),
         ),
+        photo: pick(
+          kbEdge.photo.poll(held.has('KeyP')),
+          padEdge.photo(pad?.buttons[11]?.pressed ?? false), // R3
+        ),
+        photoPan: {
+          x: clamp(
+            gp.steer +
+              (any(held, 'KeyD', 'ArrowRight') ? 1 : 0) -
+              (any(held, 'KeyA', 'ArrowLeft') ? 1 : 0),
+            -1,
+            1,
+          ),
+          y: clamp(
+            deadzone(pad?.axes[1] ?? 0, 0.15) +
+              (any(held, 'KeyS', 'ArrowDown') ? 1 : 0) -
+              (any(held, 'KeyW', 'ArrowUp') ? 1 : 0),
+            -1,
+            1,
+          ),
+        },
+        photoRot: clamp(
+          deadzone(pad?.axes[2] ?? 0, 0.15) +
+            (held.has('KeyX') ? 1 : 0) -
+            (held.has('KeyZ') ? 1 : 0),
+          -1,
+          1,
+        ),
+        photoZoom: clamp(
+          gp.throttle - gp.brake + (held.has('KeyE') ? 1 : 0) - (held.has('KeyQ') ? 1 : 0),
+          -1,
+          1,
+        ),
         pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
         restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),
         confirm: pick(kbEdge.confirm.poll(kbRaw.confirm), padEdge.confirm(gp.confirm)),
-        left: pick(
-          kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')),
-          padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5),
-        ),
-        right: pick(
-          kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')),
-          padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5),
-        ),
-        up: pick(
-          kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')),
-          padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5),
-        ),
+        cheat: presses.map(cheat).includes(true),
+        left: pick(kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')), padLeft),
+        right: pick(kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')), padRight),
+        up: pick(kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')), padUp),
         rev: held.has('KeyR') || (pad?.buttons[7]?.value ?? 0) > 0.5,
         tune: pick(
           kbEdge.tune.poll(held.has('KeyT')),
@@ -275,10 +338,7 @@ export function createInput(
           kbEdge.save.poll(held.has('KeyS')),
           padEdge.save(pad?.buttons[2]?.pressed ?? false),
         ),
-        down: pick(
-          kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')),
-          padEdge.down((pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5),
-        ),
+        down: pick(kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')), padDown),
       };
     },
   };

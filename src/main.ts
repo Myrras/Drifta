@@ -1,6 +1,8 @@
+import { savePhoto } from './photo';
 import { createRenderer } from './render';
 import { drawHud } from './hud';
 import { createGame } from './game';
+import { loadProgress } from './progress';
 import { createInput } from './input';
 import { createAudio } from './audio';
 import { createClipRecorder } from './clips';
@@ -73,6 +75,7 @@ const game = createGame(
   undefined,
   clips,
   musicHost,
+  loadProgress(),
 );
 
 const resume = () => audio.resume();
@@ -97,6 +100,8 @@ const EDGES = [
   'tabPrev',
   'tabNext',
   'skip',
+  'photo',
+  'cheat',
 ] as const;
 const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
   (typeof EDGES)[number],
@@ -117,6 +122,7 @@ function frame(now: number) {
   const v = game.view();
   renderer.draw(v.render, frameDt);
   drawHud(renderer.ctx, v.hud, renderer.width(), renderer.height());
+  if (game.takeShot()) savePhoto(canvas, game.mapName()); // hud drew no hint: photoShot
   clips.frame();
   requestAnimationFrame(frame);
 }

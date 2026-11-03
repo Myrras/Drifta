@@ -17,7 +17,10 @@ export type Action =
   | 'tabs'
   | 'rev'
   | 'pick'
-  | 'save';
+  | 'save'
+  | 'photo'
+  | 'rotate'
+  | 'zoom';
 
 // Keyboard bindings mirror keyboardInput()/createInput() in input.ts.
 const KB: Record<Action, string> = {
@@ -38,6 +41,9 @@ const KB: Record<Action, string> = {
   rev: 'R',
   pick: '←→',
   save: 'S', // results: save the selected clip
+  photo: 'P',
+  rotate: 'Z/X',
+  zoom: 'Q/E',
 };
 
 // Pad mapping mirrors gamepadInput()/createInput(): [xbox, ps].
@@ -59,6 +65,9 @@ const PAD: Record<Action, [string, string]> = {
   rev: ['RT', 'R2'], // garage rev reads pad button 7
   pick: ['D-PAD ←→', 'D-PAD ←→'],
   save: ['X', '□'],
+  photo: ['R3', 'R3'],
+  rotate: ['R-STICK', 'R-STICK'],
+  zoom: ['LT/RT', 'L2/R2'],
 };
 
 export function glyph(a: Action, device: InputDevice, padStyle: PadStyle): string {
