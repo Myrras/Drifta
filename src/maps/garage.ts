@@ -458,7 +458,7 @@ function floor(
     ...joined.flatMap((h) => helixGuards(h, h.from === idx)),
     ...extra,
   ];
-  const { placed, bays } = furnish(idx, solids, keep, o.pillarShare ?? 0, o.edge ?? 7.4);
+  const { placed, bays } = furnish(idx, solids, [...keep, ...(o.bays ?? [])], o.pillarShare ?? 0, o.edge ?? 7.4);
   return {
     name,
     w: W,
@@ -487,7 +487,7 @@ function meetRow(x0: number, x1: number, wallY: number, side: number, seed: numb
     const { length, width, colors } = CAR_MODELS[model];
     const facing = (side * PI) / 2;
     const cx = x + BAY_W / 2;
-    const cy = wallY + side * (0.35 + length / 2);
+    const cy = wallY + (side * D) / 2; // centred in the bay
     cars.push({
       kind: 'car',
       x: cx - length / 2,
