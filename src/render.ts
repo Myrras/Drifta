@@ -104,6 +104,18 @@ const STREAKS = 48;
 const PUNCH = 0.04; // zoom-in on impact
 const DRIFT_LOOK = 3; // m extra look-ahead toward the nose while drifting
 
+const ANGLE_MIN_KMH = 25; // no indicator below this speed
+const ANGLE_MAX = 0.2; // peak alpha
+const ANGLE_R = CAR_LENGTH * 0.8; // arc radius, m
+
+/** Drift-angle arc: target alpha (0 when not drifting or too slow) and color band by |slip| rad. */
+export function angleArc(drifting: boolean, slip: number, kmh: number) {
+  const a = Math.abs(slip);
+  const on = drifting && kmh >= ANGLE_MIN_KMH && a > 0.05;
+  const color = a < 0.35 ? '235,235,230' : a < 0.7 ? '255,176,40' : '255,60,50';
+  return { alpha: on ? ANGLE_MAX * Math.min(1, 0.4 + a) : 0, color };
+}
+
 const DOCKS = 'WANGAN DOCKS';
 const TESTPAD = 'TEST PAD';
 /** Per-map darkness: docks and test pad are lit up so obstacles read at speed. */
@@ -1350,6 +1362,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   }));
 
   const cam = { x: 0, y: 0, viewH: VIEW_H_REST };
+  let arcA = 0; // smoothed drift-arc alpha
+  let arcD = 0; // last heading-to-velocity angle
   const look = { x: 0, y: 0 }; // extra drift look-ahead, smoothed
   let lastFloor = -1;
   let lastRun = NaN;
@@ -1673,6 +1687,22 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     drawSparks(ctx, sparks, visible);
+
+    // drift angle arc, heading to velocity; world space, above the darkness
+    const arc = angleArc(v.drift.drifting, v.drift.slip, v.drift.speedKmh);
+    arcA += (arc.alpha - arcA) * (1 - Math.exp(-10 * step));
+    if (arc.alpha > 0 && speed > 1) {
+      const d = Math.atan2(car.vel.y, car.vel.x) - car.angle;
+      arcD = Math.atan2(Math.sin(d), Math.cos(d));
+    }
+    if (arcA > 0.005) {
+      ctx.strokeStyle = `rgba(${arc.color},${arcA})`;
+      ctx.lineWidth = 0.08;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(car.pos.x, car.pos.y, ANGLE_R, car.angle, car.angle + arcD, arcD < 0);
+      ctx.stroke();
+    }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // speed: dark vignette + faint lines streaming past the screen edges
