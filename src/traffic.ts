@@ -23,6 +23,8 @@ export interface Walkway {
   pts: Vec[];
   /** if set, peds only start walking while the signal phase has ped=true */
   crossing?: { signal: string };
+  /** side of the pts order (a -> b) where the road is, -1 = left: peds dodge away from it */
+  kerb?: -1 | 1;
 }
 export interface CityGraph {
   lanes: Lane[];
@@ -40,6 +42,8 @@ export interface TrafficCar {
   width: number;
   color: string;
   hazardsUntil: number;
+  /** slowing down or standing: brake lights */
+  braking: boolean;
 }
 export interface Ped {
   id: number;
@@ -74,6 +78,7 @@ const DODGE_R = 6; // m
 const DODGE_UP = 4; // per s
 const DODGE_DOWN = 1.5; // per s
 const DODGE_STEP = 1.5; // m sideways at dodge = 1
+const CROSS_MARGIN = 0.5; // s of ped phase a crossing must leave spare
 
 const CAR_COLORS = ['#e8e8ea', '#1b1c20', '#9aa0a8', '#c0392b', '#2c5aa0', '#f2c230', '#3d6b4f'];
 const PED_COLORS = ['#22252b', '#3a3f4a', '#d9d4c7', '#8a2f3c', '#2f4f7a', '#c78a3b', '#e6e1f0'];
@@ -137,6 +142,7 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
   const walkSig = g.walkways.map((w) =>
     w.crossing ? find(sigIdx, w.crossing.signal, 'signal') : -1,
   );
+  const kerb = g.walkways.map((w) => w.kerb ?? 0);
   const walkLoop = g.walkways.map((w) => {
     const a = w.pts[0];
     const b = w.pts[w.pts.length - 1];
@@ -147,6 +153,7 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
     return s.cycle.reduce((t, p) => t + p.dur, 0);
   });
   const phase = g.signals.map((s) => s.cycle[0]);
+  const phaseLeft = new Float64Array(g.signals.length); // s left of the current phase
 
   const pickNext = (lane: number): number => {
     const n = laneNext[lane];
@@ -195,6 +202,7 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
       width: 1.7 + rng() * 0.15,
       color: CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)],
       hazardsUntil: -Infinity,
+      braking: false,
     };
     car.heading = pointAt(lanePaths[lane], cS[i], car.pos);
     cars.push(car);
@@ -211,18 +219,20 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
   spread(walkPaths, g.peds, (w, s) => {
     const i = peds.length;
     pWalk[i] = w;
-    pS[i] = s;
     pDir[i] = rng() < 0.5 ? 1 : -1;
     pSpeed[i] = 1.1 + rng() * 0.5;
+    const cross = walkSig[w] >= 0;
+    // crossers spawn waiting at a kerb, never mid-road
+    pS[i] = cross ? (pDir[i] > 0 ? 0 : walkPaths[w].len) : s;
     const ped: Ped = {
       id: i,
       pos: { x: 0, y: 0 },
       heading: 0,
-      walking: true,
+      walking: !cross,
       dodge: 0,
       color: PED_COLORS[Math.floor(rng() * PED_COLORS.length)],
     };
-    ped.heading = pointAt(walkPaths[w], s, ped.pos) + (pDir[i] < 0 ? Math.PI : 0);
+    ped.heading = pointAt(walkPaths[w], pS[i], ped.pos) + (pDir[i] < 0 ? Math.PI : 0);
     peds.push(ped);
   });
 
@@ -235,6 +245,7 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
       let p = 0;
       while (p < cyc.length - 1 && u >= cyc[p].dur) u -= cyc[p++].dur;
       phase[k] = cyc[p];
+      phaseLeft[k] = cyc[p].dur - u;
     }
   };
 
@@ -308,9 +319,11 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
         if (cStop[i] > 0) {
           cStop[i] -= dt;
           c.speed = 0;
+          c.braking = true;
           continue;
         }
         c.speed = Math.max(0, c.speed + cAcc[i] * dt);
+        c.braking = cAcc[i] < -0.5 || c.speed < 0.3;
         cS[i] += c.speed * dt;
         let len = lanePaths[cLane[i]].len;
         while (cS[i] > len) {
@@ -336,7 +349,9 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
         const w = pWalk[i];
         const path = walkPaths[w];
         const k = walkSig[w];
-        if (!p.walking && k >= 0 && phase[k].ped) p.walking = true;
+        // only start a crossing the ped phase still covers: once on the road, never turn back
+        if (!p.walking && k >= 0 && phase[k].ped)
+          p.walking = path.len / pSpeed[i] + CROSS_MARGIN <= phaseLeft[k];
         if (p.walking) {
           pS[i] += pDir[i] * pSpeed[i] * (1 - p.dodge) * dt;
           if (walkLoop[w]) pS[i] = ((pS[i] % path.len) + path.len) % path.len;
@@ -354,7 +369,10 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
         const d2 = dx * dx + dy * dy;
         const closing = d2 < DODGE_R * DODGE_R && vx * dx + vy * dy > 0.5 * Math.sqrt(d2);
         if (closing) {
-          if (p.dodge === 0) {
+          // the dodge offset is along the left-hand normal of the path heading h (pts order),
+          // so the road side is fixed by the kerb hint whichever way the ped walks
+          if (p.dodge === 0 && kerb[w]) pSide[i] = -kerb[w];
+          else if (p.dodge === 0) {
             // step to whichever side of the player's path the ped is already on
             const v2 = vx * vx + vy * vy;
             const along = (dx * vx + dy * vy) / v2;

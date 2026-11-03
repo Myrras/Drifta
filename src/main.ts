@@ -7,7 +7,9 @@ import { createClipRecorder } from './clips';
 import { garage } from './maps/garage';
 import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
+import { tokyo } from './maps/tokyo';
 import { BEST_SCORE_KEY, DT } from './config';
+import { clearLibrary, importFiles, libraryBytes, MAX_BYTES } from './musicLibrary';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = createRenderer(canvas);
@@ -41,7 +43,35 @@ const bestFor = (name: string) => {
   };
 };
 const clips = createClipRecorder(canvas, () => audio.stream());
-const game = createGame([garage, docks, testpad], audio, bestFor, undefined, clips);
+const picker = document.createElement('input');
+picker.type = 'file';
+picker.multiple = true;
+picker.accept = '.mp3,audio/mpeg';
+let pickDone: (summary: string) => void = () => {};
+picker.addEventListener('change', async () => {
+  const files = [...(picker.files ?? [])];
+  picker.value = '';
+  if (!files.length) return;
+  const r = await importFiles(files);
+  pickDone(r.reason ?? (r.added ? `+${r.added} ADDED` : `${r.skipped} SKIPPED`));
+});
+const musicHost = {
+  // runs in the frame loop right after the keydown; transient user activation still holds
+  pick(done: (summary: string) => void) {
+    pickDone = done;
+    picker.click();
+  },
+  clear: clearLibrary,
+  size: async () => `${Math.round((await libraryBytes()) / 2 ** 20)} / ${MAX_BYTES / 2 ** 20} MB`,
+};
+const game = createGame(
+  [garage, docks, tokyo, testpad],
+  audio,
+  bestFor,
+  undefined,
+  clips,
+  musicHost,
+);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
@@ -64,6 +94,7 @@ const EDGES = [
   'tune',
   'tabPrev',
   'tabNext',
+  'skip',
 ] as const;
 const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
   (typeof EDGES)[number],

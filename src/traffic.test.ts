@@ -26,13 +26,13 @@ const phases = (green: string, len = 36): Signal['cycle'] =>
         { car: 'green', ped: false, dur: 12 },
         { car: 'amber', ped: false, dur: 3 },
         { car: 'red', ped: false, dur: len - 21 },
-        { car: 'red', ped: true, dur: 6 },
+        { car: 'red', ped: true, dur: 24 },
       ]
     : [
         { car: 'red', ped: false, dur: 15 },
         { car: 'green', ped: false, dur: 12 },
         { car: 'amber', ped: false, dur: 3 },
-        { car: 'red', ped: true, dur: 6 },
+        { car: 'red', ped: true, dur: 24 },
       ];
 
 /** 4-way: an east ring and a south ring cross at the origin, east can turn right; scramble crossing */
@@ -218,6 +218,82 @@ describe('traffic', () => {
     // far away again: dodge decays
     for (let n = 0; n < 240; n++) t.step(DT, IDLE);
     expect(p.dodge).toBe(0);
+  });
+
+  it('with a kerb hint the ped dodges away from the road, either way it walks', () => {
+    // road on the left of the pts order: north (-y) of a walkway running east
+    const g = (kerb?: -1 | 1): CityGraph => ({
+      lanes: [],
+      signals: [],
+      walkways: [{ id: 'w', pts: [P(0, 0), P(100, 0)], kerb }],
+      cars: 0,
+      peds: 1,
+    });
+    const dodgeY = (kerb: -1 | 1 | undefined, seed: number) => {
+      const t = createTraffic(g(kerb), seed);
+      const p = t.peds[0];
+      t.step(DT, IDLE);
+      // player comes along the sidewalk side (+y), so its path alone says "step toward the road"
+      const player = { pos: { x: p.pos.x - 5, y: 0.8 }, vel: { x: 10, y: 0 } };
+      let y = 0;
+      for (let n = 0; n < 40; n++) {
+        t.step(DT, player);
+        player.pos.x += player.vel.x * DT;
+        if (Math.abs(p.pos.y) > Math.abs(y)) y = p.pos.y;
+      }
+      return { y, east: Math.cos(p.heading) > 0 };
+    };
+    const dirs = new Set<boolean>();
+    for (let seed = 1; seed <= 8; seed++) {
+      const { y, east } = dodgeY(-1, seed);
+      dirs.add(east);
+      expect(y).toBeGreaterThan(0.5);
+      expect(dodgeY(undefined, seed).y).toBeLessThan(-0.5);
+    }
+    expect(dirs.size).toBe(2);
+  });
+
+  it('peds only start a crossing the ped phase covers and never turn back mid-road', () => {
+    const graph = (ped: number): CityGraph => ({
+      lanes: [],
+      signals: [
+        {
+          id: 'L',
+          offset: 0,
+          cycle: [
+            { car: 'green', ped: false, dur: 20 },
+            { car: 'red', ped: true, dur: ped },
+          ],
+        },
+      ],
+      walkways: [{ id: 'x', pts: [P(0, 0), P(20, 0)], crossing: { signal: 'L' } }],
+      cars: 0,
+      peds: 12,
+    });
+    // 20 m at 1.1..1.6 m/s takes 12.5..18 s: a 10 s phase is never enough
+    const short = createTraffic(graph(10), 4);
+    for (let n = 0; n < 120 * 90; n++) {
+      short.step(DT, IDLE);
+      for (const p of short.peds) expect(p.walking).toBe(false);
+    }
+    const t = createTraffic(graph(30), 4);
+    const dir = t.peds.map(() => 0);
+    const prev = t.peds.map((p) => p.pos.x);
+    let crossed = 0;
+    for (let n = 0; n < 120 * 150; n++) {
+      t.step(DT, IDLE);
+      t.peds.forEach((p, k) => {
+        const mid = p.pos.x > 0.01 && p.pos.x < 19.99;
+        if (mid) expect(t.signalState('L').ped).toBe(true);
+        const d = Math.sign(p.pos.x - prev[k]);
+        if (!mid) dir[k] = 0;
+        else if (!dir[k]) dir[k] = d;
+        else if (d) expect(d).toBe(dir[k]);
+        if (!mid && prev[k] > 0.01 && prev[k] < 19.99) crossed++;
+        prev[k] = p.pos.x;
+      });
+    }
+    expect(crossed).toBeGreaterThan(6);
   });
 
   it('same seed gives the same state', () => {

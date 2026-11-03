@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createGame, type AudioLike, type BestStore, type ClipRecorder } from './game';
+import {
+  createGame,
+  type AudioLike,
+  type BestStore,
+  type ClipRecorder,
+  type MusicHost,
+} from './game';
 import { garage, garageRoute } from './maps/garage';
-import { collide } from './collision';
+import { CAR_LENGTH, collide } from './collision';
 import { testpad } from './maps/testpad';
 import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
@@ -9,6 +15,7 @@ import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
 import { settingsLayout } from './ui/menu';
 import { docks, docksRoute } from './maps/docks';
+import { tokyo } from './maps/tokyo';
 import { ENGINE_PROFILES } from './engine';
 
 const noop = () => {};
@@ -515,7 +522,7 @@ describe('menu', () => {
 });
 
 describe('main menu, garage, settings', () => {
-  const rig = (saved?: object) => {
+  const rig = (saved?: object, host?: MusicHost) => {
     const mem = new Map<string, string>(saved ? [[SETTINGS_KEY, JSON.stringify(saved)]] : []);
     const storage = {
       getItem: (k: string) => mem.get(k) ?? null,
@@ -527,6 +534,9 @@ describe('main menu, garage, settings', () => {
       setVolumes: vi.fn(),
       setIntensity: vi.fn(),
       setTrack: vi.fn(),
+      skipTrack: vi.fn(),
+      refreshMyMusic: vi.fn(async () => 0),
+      myMusicCount: () => 0,
     };
     const stores = [memBest(50), memBest(70)];
     const game = createGame(
@@ -534,8 +544,10 @@ describe('main menu, garage, settings', () => {
       a,
       (n) => stores[n === garage.name ? 0 : 1],
       storage,
+      undefined,
+      host,
     );
-    const tap = (input: Partial<InputState>) => {
+    const tap = (input: Partial<InputState> & { skip?: boolean }) => {
       game.update({ ...IDLE, ...input }, DT);
       game.update(IDLE, DT);
     };
@@ -707,7 +719,7 @@ describe('main menu, garage, settings', () => {
     tap({ up: true });
     tap({ confirm: true });
     expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
-    expect(menu().rows).toHaveLength(6);
+    expect(menu().rows).toHaveLength(8);
     tap({ right: true });
     expect(menu().tabs!.active).toBe(1);
     expect(menu().rows.map((r) => r.label)).toEqual([
@@ -758,6 +770,59 @@ describe('main menu, garage, settings', () => {
       expect(top + 5 * step + 4 * u).toBeLessThanOrEqual(h - 5 * u);
       expect(step).toBeLessThanOrEqual(7.8 * u + 1e-9);
     }
+  });
+
+  it('MUSIC row cycles three tracks and labels an empty library', () => {
+    const { game, a, tap } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 5; i++) tap({ down: true });
+    const value = () => game.view().hud.menu!.rows[4].value;
+    expect(value()).toBe('TOKYO');
+    tap({ right: true });
+    expect(value()).toBe('EUROBEAT');
+    tap({ right: true });
+    expect(value()).toBe('MY MUSIC (EMPTY)');
+    a.myMusicCount = () => 7;
+    expect(value()).toBe('MY MUSIC (7)');
+    tap({ right: true });
+    expect(value()).toBe('TOKYO');
+    expect(a.setTrack).toHaveBeenLastCalledWith('tokyo');
+  });
+
+  it('skip works in a run but not in settings', () => {
+    const { game, a, tap } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    tap({ skip: true });
+    expect(a.skipTrack).not.toHaveBeenCalled();
+    tap({ pause: true });
+    tap({ up: true });
+    tap({ up: true });
+    tap({ confirm: true }); // PLAY -> countdown
+    tap({ skip: true });
+    expect(a.skipTrack).toHaveBeenCalledTimes(1);
+    expect(game.view().hud.phase).not.toBe('settings');
+  });
+
+  it('clear my music needs a second enter', async () => {
+    const clear = vi.fn(async () => {});
+    const { game, a, tap } = rig(undefined, {
+      pick: vi.fn(),
+      clear,
+      size: async () => '1 / 500 MB',
+    });
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 7; i++) tap({ down: true });
+    tap({ confirm: true });
+    expect(clear).not.toHaveBeenCalled();
+    expect(game.view().hud.menu!.rows[6].value).toBe('ENTER TO CONFIRM');
+    tap({ confirm: true });
+    expect(clear).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(a.refreshMyMusic).toHaveBeenCalled();
   });
 
   it('reset best scores needs a second enter', () => {
@@ -990,5 +1055,74 @@ describe('device, rpm and attract', () => {
     toRun();
     step();
     expect(game.debug.car.clutchHeld).toBeFalsy();
+  });
+});
+
+describe('tokyo traffic', () => {
+  const rig = (hit = vi.fn()) => {
+    const game = createGame([garage, tokyo], { ...audio, hit }, () => memBest());
+    const step = (input: Partial<InputState> = {}, n = 1) => {
+      for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ right: true });
+    step({ confirm: true });
+    return { game, step, hit };
+  };
+
+  it('is selectable and a run there steps traffic from the countdown on', () => {
+    const { game, step } = rig();
+    expect(game.view().hud.menu).toBeNull();
+    expect(game.view().render.map).toBe(tokyo);
+    const sim = game.view().render.traffic!.sim;
+    expect(sim).toBe(game.debug.traffic);
+    expect(sim.cars.length).toBeGreaterThan(0);
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    expect(game.view().hud.phase).toBe('run');
+    expect(sim.time).toBeCloseTo(COUNTDOWN_SECONDS, 1);
+    const at = sim.cars.map((c) => ({ ...c.pos }));
+    step({}, 60);
+    expect(sim.time).toBeCloseTo(COUNTDOWN_SECONDS + 60 * DT, 1);
+    expect(sim.cars.some((c, i) => c.pos.x !== at[i].x || c.pos.y !== at[i].y)).toBe(true);
+    // restart: fresh traffic
+    step({ restart: true });
+    expect(game.debug.traffic).not.toBe(sim);
+    expect(game.debug.traffic!.time).toBe(0);
+  });
+
+  it('hitting a traffic car breaks the combo and puts it on hazards', () => {
+    const { game, step, hit } = rig();
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    const sim = game.debug.traffic!;
+    const c = sim.cars[0];
+    startCombo(game);
+    // nose into its tail, closing at 8 m/s
+    const [ux, uy] = [Math.cos(c.heading), Math.sin(c.heading)];
+    const back = c.length / 2 + CAR_LENGTH / 2 - 0.3;
+    Object.assign(game.debug.car, {
+      pos: { x: c.pos.x - ux * back, y: c.pos.y - uy * back },
+      angle: c.heading,
+      vel: { x: ux * (c.speed + 8), y: uy * (c.speed + 8) },
+      angVel: 0,
+    });
+    step();
+    expect(game.debug.scoring.combo).toBeNull();
+    expect(game.view().hud.popups.some((p) => p.kind === 'fail')).toBe(true);
+    expect(hit).toHaveBeenCalledTimes(1);
+    expect(c.hazardsUntil).toBeGreaterThan(sim.time);
+    expect(c.speed).toBe(0);
+    step({}, 10); // still touching: a solid now, no second hit
+    expect(hit).toHaveBeenCalledTimes(1);
+  });
+
+  it('other maps have no traffic', () => {
+    const { game, toRun } = setup();
+    toRun();
+    expect(game.debug.traffic).toBeNull();
+    expect(game.view().render.traffic).toBeNull();
+    // the attract scene neither
+    const g2 = createGame([tokyo], audio, () => memBest());
+    g2.update(IDLE, DT);
+    expect(g2.view().render.map).toBe(docks);
+    expect(g2.view().render.traffic).toBeNull();
   });
 });

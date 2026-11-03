@@ -15,6 +15,7 @@ import type {
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContext } from './view';
 import type { createAudio } from './audio';
+import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
@@ -23,6 +24,8 @@ import { engineProfile, engineRpm } from './engine';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
+import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
+import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
 import {
   CLIP_QUALITIES,
@@ -44,6 +47,14 @@ import {
 } from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
+/** MY MUSIC library hooks (browser side, see main.ts). */
+export interface MusicHost {
+  /** open the file picker; must run inside a user gesture. done gets a short result */
+  pick(done: (summary: string) => void): void;
+  clear(): Promise<void>;
+  /** e.g. '84 / 500 MB' */
+  size(): Promise<string>;
+}
 export interface BestStore {
   get(): number;
   set(v: number): void;
@@ -85,7 +96,10 @@ const STUCK_TIME = 2.5; // s
 const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
+  [tokyo, tokyoRoute],
 ]);
+/** maps with live traffic */
+const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
 const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
@@ -99,7 +113,7 @@ const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
-  { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track'] },
+  { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
   { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
   { name: 'GAME', ids: ['reset'] },
 ] as const;
@@ -139,6 +153,7 @@ export function createGame(
   best: (mapName: string) => BestStore,
   storage?: SettingsStorage,
   clips?: ClipRecorder,
+  host?: MusicHost,
 ) {
   const cfg = loadSettings(storage);
   const applyVolumes = () => {
@@ -149,6 +164,14 @@ export function createGame(
   audio.setTrack(cfg.track);
   let row = 0;
   let confirmReset = false;
+  let confirmClear = false;
+  let note = ''; // transient result in the IMPORT row
+  let noteT = 0;
+  let usage = '';
+  const afterChange = () => {
+    void audio.refreshMyMusic();
+    void host?.size().then((v) => (usage = v));
+  };
   let tab = 0;
   let gCar = cfg.car;
   let gColor = cfg.color;
@@ -198,6 +221,10 @@ export function createGame(
     drift: IDLE,
     time: 0,
     countdown: COUNTDOWN_SECONDS,
+    /** live traffic, new seed every run */
+    traffic: CITIES.has(map)
+      ? createTraffic(CITIES.get(map)!, (Math.random() * 2 ** 32) >>> 0)
+      : null,
     popups: [] as Popup[],
     shake: 0,
     scrape: 0,
@@ -412,6 +439,30 @@ export function createGame(
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
+    const tr = s.traffic;
+    if (tr) {
+      tr.step(dt, car);
+      for (const c of tr.cars) {
+        if ((c.pos.x - car.pos.x) ** 2 + (c.pos.y - car.pos.y) ** 2 > 49) continue;
+        const box = { kind: 'car' as const, angle: c.heading, w: c.length, h: c.width };
+        const th = collide(car, [{ ...box, x: c.pos.x - c.length / 2, y: c.pos.y - c.width / 2 }]);
+        if (!th) continue;
+        // bounce in the traffic car's frame: it is a moving solid
+        const vx = c.speed * Math.cos(c.heading);
+        const vy = c.speed * Math.sin(c.heading);
+        const impact = -((car.vel.x - vx) * th.normal.x + (car.vel.y - vy) * th.normal.y);
+        car.vel.x -= vx;
+        car.vel.y -= vy;
+        bounce(car, th);
+        car.vel.x += vx;
+        car.vel.y += vy;
+        if (c.hazardsUntil > tr.time) continue; // already hit: just a solid now
+        hard = true;
+        audio.hit();
+        s.shake = Math.max(s.shake, Math.min(1, Math.max(impact, HARD_HIT_SPEED) / 10));
+        tr.hit(c.id, tr.time);
+      }
+    }
     const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
     const pushing = Math.max(input.clutch ? 0 : input.throttle, input.brake) > STUCK_INPUT;
     const touching = hit !== null || nearestDistance(car, solids, circles) < STUCK_NEAR;
@@ -447,8 +498,9 @@ export function createGame(
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
     row = at;
-    confirmReset = false;
+    confirmReset = confirmClear = false;
     tab = 0;
+    if (phase === 'settings') afterChange();
     s.phase = phase;
   };
 
@@ -483,7 +535,7 @@ export function createGame(
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (dv) {
       row = cycle(row, dv, back + 1);
-      confirmReset = false;
+      confirmReset = confirmClear = false;
     }
     const td = (input.tabNext ? 1 : 0) - (input.tabPrev ? 1 : 0) || (row === 0 ? dir : 0);
     if (td) {
@@ -491,7 +543,7 @@ export function createGame(
       tab = cycle(tab, td, TABS.length);
       const last = TABS[tab].ids.length + 1;
       row = was ? last : Math.min(row, last - 1);
-      confirmReset = false;
+      confirmReset = confirmClear = false;
       return;
     }
     const id = row > 0 && row < back ? TABS[tab].ids[row - 1] : undefined;
@@ -502,8 +554,23 @@ export function createGame(
       applyVolumes();
       save();
     } else if (id === 'track' && act) {
-      audio.setTrack((cfg.track = cfg.track === 'tokyo' ? 'eurobeat' : 'tokyo'));
+      audio.setTrack(
+        (cfg.track = TRACKS[cycle(TRACKS.indexOf(cfg.track), dir || 1, TRACKS.length)]),
+      );
       save();
+    } else if (id === 'import' && input.confirm) {
+      // a pad press is no browser user gesture, so the picker would be blocked
+      if (ui.device === 'pad' || !host) [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
+      else
+        host.pick((m) => {
+          [note, noteT] = [m, 4];
+          afterChange();
+        });
+    } else if (id === 'clear' && input.confirm) {
+      if (confirmClear) {
+        confirmClear = false;
+        void (host?.clear() ?? Promise.resolve()).then(afterChange);
+      } else confirmClear = true;
     } else if (id === 'shake' && act) {
       cfg.shake = !cfg.shake;
       save();
@@ -547,7 +614,20 @@ export function createGame(
           case 'shake':
             return { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' };
           case 'track':
-            return { label: 'MUSIC', value: cfg.track.toUpperCase() };
+            return {
+              label: 'MUSIC',
+              value:
+                cfg.track === 'mine'
+                  ? `${TRACK_LABELS.mine} (${audio.myMusicCount() || 'EMPTY'})`
+                  : TRACK_LABELS[cfg.track],
+            };
+          case 'import':
+            return { label: 'IMPORT MP3', value: (noteT > 0 ? note : usage) || undefined };
+          case 'clear':
+            return {
+              label: 'CLEAR MY MUSIC',
+              value: confirmClear ? 'ENTER TO CONFIRM' : undefined,
+            };
           case 'clips':
             return { label: 'CLIP QUALITY', value: cfg.clips.toUpperCase() };
           case 'theme':
@@ -594,7 +674,8 @@ export function createGame(
   }
 
   return {
-    update(input: InputState, dt: number): void {
+    update(input: InputState & { skip?: boolean }, dt: number): void {
+      noteT = Math.max(0, noteT - dt);
       if (input.device) ui.device = input.device;
       if (input.padStyle) ui.padStyle = input.padStyle;
       s.handbrake = input.handbrake;
@@ -605,6 +686,7 @@ export function createGame(
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
+      if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
       if (input.restart && !inMenu) {
         newRun();
         return;
@@ -640,6 +722,7 @@ export function createGame(
             break;
           }
           s.countdown -= dt;
+          s.traffic?.step(dt, s.car);
           if (s.countdown <= EPS) s.phase = 'run';
           break;
         case 'run':
@@ -700,6 +783,7 @@ export function createGame(
             impact: 0,
             runId: a.runId,
             clip: null,
+            traffic: null,
           }
         : {
             map,
@@ -716,6 +800,7 @@ export function createGame(
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
+            traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
           };
       return {
         render,
