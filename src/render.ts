@@ -42,6 +42,8 @@ const PILLAR_TOP = '#b3b0a7';
 const STATIC_SHADOW = 'rgba(0,0,0,0.55)';
 const RAMP = '#37383d'; // helix ring: smooth ramp concrete
 const LABEL = 'rgba(240,240,230,0.8)';
+const CLIP_RGB = '255,70,140'; // clipping zone paint
+const CLIP_IDLE = 0.4; // share of darkness lifted off an idle zone
 const DIP = 0.1; // camera zoom-out at mid helix crossfade
 const PARKED_COLORS = [
   '#5a6470',
@@ -827,6 +829,25 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     g.stroke();
     g.fillStyle = PAINT_YELLOW;
     g.fillRect(d - 0.82, -0.75, 0.22, 1.5);
+    g.restore();
+  }
+
+  // clipping zones: tinted pad with diagonal stripes and an outline, under the solids
+  for (const z of f.clipZones ?? []) {
+    g.save();
+    g.beginPath();
+    g.rect(z.x, z.y, z.w, z.h);
+    g.clip();
+    g.fillStyle = `rgba(${CLIP_RGB},0.16)`;
+    g.fillRect(z.x, z.y, z.w, z.h);
+    g.strokeStyle = `rgba(${CLIP_RGB},0.6)`;
+    g.lineWidth = 0.35;
+    g.beginPath();
+    for (let d = 0; d < z.w + z.h; d += 1.2)
+      (g.moveTo(z.x + d, z.y), g.lineTo(z.x + d - z.h, z.y + z.h));
+    g.stroke();
+    g.lineWidth = 0.3;
+    g.strokeRect(z.x, z.y, z.w, z.h);
     g.restore();
   }
 
@@ -1661,6 +1682,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       m.drawImage(l.mask, 0, 0, fl.w, fl.h);
     }
     for (const [l, a] of dyn) drawLamp(m, l, true, a);
+    // clipping zones glow through the darkness, fully while being clipped
+    for (const z of f.clipZones ?? []) {
+      m.globalAlpha = z === v.clip ? 1 : CLIP_IDLE;
+      m.fillRect(z.x, z.y, z.w, z.h);
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(shade.c, 0, 0, canvas.width, canvas.height);
     ctx.setTransform(ws, 0, 0, ws, ox, oy);

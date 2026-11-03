@@ -450,6 +450,19 @@ function furnish(idx: number, solids: Solid[], keep: Rect[], pillarShare: number
   return { placed, bays };
 }
 
+/** Clipping zones: 5 m squares on the outside of the 3 sharpest corners, against the outline. */
+function clipZones(idx: number): Rect[] {
+  return [...courses[idx].corners]
+    .sort((a, b) => Math.abs(b.turn) - Math.abs(a.turn))
+    .slice(0, 3)
+    .map(({ turn, mid }) => {
+      const g = Math.sign(turn);
+      const x = mid.x + g * 4.5 * Math.sin(mid.a);
+      const y = mid.y - g * 4.5 * Math.cos(mid.a);
+      return { x: x - 2.5, y: y - 2.5, w: 5, h: 5 };
+    });
+}
+
 function floor(
   name: string,
   idx: number,
@@ -473,6 +486,7 @@ function floor(
     bays,
     lights: lightsAlong(garageRoute[idx].points),
     circles: joined.map((h) => ({ ...h.center, r: h.rCore })),
+    clipZones: clipZones(idx),
   };
 }
 
@@ -486,7 +500,8 @@ const total = garageRoute.reduce((sum, r) => sum + routeLength(r.points), 0);
 export const garage: GameMap = {
   name: 'JAPAN GARAGE',
   parTime: Math.round(total / 17),
-  medals: [4000, 9000, 16000], // tuning values: total score for bronze, silver, gold
+  // tuning values: total score for bronze, silver, gold; ~+10% for clipping zones
+  medals: [4500, 10000, 17500],
   floors: [roof, level2, ground],
   helixes,
   start: { floor: 0, pos: v(10, 58), angle: 0 },
