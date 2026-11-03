@@ -125,6 +125,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
 ]);
 /** maps with live traffic */
 const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
+const AWAY = { pos: { x: 1e9, y: 1e9 }, vel: { x: 0, y: 0 } }; // a player peds never dodge
 const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
@@ -592,9 +593,11 @@ export function createGame(
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
     const tr = s.traffic;
+    // traffic drives the start floor; up on an elevated deck the car passes over it
+    const street = s.floorIndex === map.start.floor;
     if (tr) {
-      tr.step(dt, car);
-      for (const c of tr.cars) {
+      tr.step(dt, street ? car : AWAY);
+      for (const c of street ? tr.cars : []) {
         if ((c.pos.x - car.pos.x) ** 2 + (c.pos.y - car.pos.y) ** 2 > 49) continue;
         const box = { kind: 'car' as const, angle: c.heading, w: c.length, h: c.width };
         const th = collide(car, [{ ...box, x: c.pos.x - c.length / 2, y: c.pos.y - c.width / 2 }]);

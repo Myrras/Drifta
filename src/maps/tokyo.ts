@@ -1,14 +1,15 @@
 import { CAR_MODELS } from '../models';
 import type { CityGraph, Lane, Signal, Walkway } from '../traffic';
-import type { BonusZone, CarModel, Floor, Rect, Solid, Vec } from '../types';
+import type { BonusZone, CarModel, Floor, Helix, Rect, Solid, Vec } from '../types';
 import type { Decor, DecoratedMap } from './decor';
 
-// TOKYO NIGHTS: a neon district at night inside an expressway loop. One flowing two-way street
+// TOKYO NIGHTS: a neon district at night under an elevated expressway. One flowing two-way street
 // loops the district; the run starts on a dead-end stub off its south side and forks. Route A
 // (downtown) sweeps east, up a hairpin and right over the scramble crossing; route B (canal) runs
 // the canal bank under the train viaduct and flicks through a chicane under the station. Both meet
-// on the frontage road under the expressway, climb the on-ramp past the parked police and lap three
-// sweepers of the deck to the finish on its west side. Side streets are closed off.
+// on the frontage road, pass the parked police and climb the on-ramp helix onto the expressway: an
+// upper floor that floats over the city in sweepers and S-bends to the finish over the east side.
+// Side streets are closed off.
 const W = 400;
 const H = 300;
 const PI = Math.PI;
@@ -17,9 +18,9 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const headOf = (a: Vec, b: Vec) => Math.atan2(b.y - a.y, b.x - a.x);
 const dist = (a: Vec, b: Vec) => Math.hypot(b.x - a.x, b.y - a.y);
 
-// --- expressway ring ---
-// Deck centerline at inset 10 (deck 1..19, barrier 19..23), corner radii of that centerline:
-// nw, ne, se, sw. The deck, its barrier and the canal are concentric with these corners.
+// --- the district's boundary wall ---
+// Ring at inset 10, corner radii nw, ne, se, sw; the wall runs at inset 19..23 and the city
+// outside it is scenery. The canal is concentric with these corners.
 const R = [55, 60, 45, 75];
 const CORNER = [
   v(10 + R[0], 10 + R[0]),
@@ -29,11 +30,11 @@ const CORNER = [
 ];
 /** Radius of the concentric curve at inset d around corner k. */
 const rAt = (k: number, d: number) => R[k] + 10 - d;
-/** On-ramp: opening in the north barrier, x range. */
-const GAP: [number, number] = [266, 306];
-const DECK_HALF = 9;
+/** On-ramp helix: opening in the north wall, x range (its core to its rim). */
+const GAP: [number, number] = [300, 320];
+const DECK_HALF = 7;
 
-/** Closed clockwise loop at inset d (deck centerline: d = 10), corners every 3°. */
+/** Closed clockwise loop at inset d, corners every 3°. */
 function ring(d: number): Vec[] {
   const out: Vec[] = [];
   for (let k = 0; k < 4; k++) {
@@ -46,8 +47,27 @@ function ring(d: number): Vec[] {
   out.push({ ...out[0] });
   return out;
 }
-/** Deck centerline and half width, for tests and the wiring (no traffic up here). */
-export const tokyoDeck = { center: ring(10), half: DECK_HALF };
+
+// --- the on-ramp helix: frontage road (floor 0) up to the deck (floor 1) ---
+// Entered at its south point heading east, round its east side, out of its north point heading
+// west onto the deck. Its lane is as wide as the deck.
+const helix: Helix = {
+  from: 0,
+  center: v(302, 20),
+  rCore: 4,
+  rOuter: 4 + 2 * DECK_HALF,
+  enterAngle: PI / 2,
+  sweep: -PI,
+};
+const RMID = (helix.rCore + helix.rOuter) / 2;
+const onHelix = (p: number, r = RMID) => {
+  const a = helix.enterAngle + helix.sweep * p;
+  return v(helix.center.x + r * Math.cos(a), helix.center.y + r * Math.sin(a));
+};
+/** Lane centre from progress t0 to t1 (7 points, as B2 MEET). */
+const spiral = (t0: number, t1: number) =>
+  Array.from({ length: 7 }, (_, i) => onHelix(t0 + ((t1 - t0) * i) / 6));
+const CORE = { x: helix.center.x, y: helix.center.y, r: helix.rCore };
 
 // --- polylines ---
 type Path = { pts: Vec[]; cum: number[]; len: number; closed: boolean };
@@ -220,33 +240,9 @@ const curb = (pts: Vec[], t = 1.2): Solid[] =>
     const c = v((a.x + b.x) / 2 - (Math.sin(h) * t) / 2, (a.y + b.y) / 2 + (Math.cos(h) * t) / 2);
     return box(c, dist(a, b) + 0.1, t, h);
   });
-const cornersOf = (s: Solid): Vec[] => {
-  const a = s.angle ?? 0;
-  const c = v(s.x + s.w / 2, s.y + s.h / 2);
-  return [
-    [1, 1],
-    [1, -1],
-    [-1, -1],
-    [-1, 1],
-  ].map(([i, j]) => {
-    const u = (i * s.w) / 2;
-    const w = (j * s.h) / 2;
-    return v(c.x + u * Math.cos(a) - w * Math.sin(a), c.y + u * Math.sin(a) + w * Math.cos(a));
-  });
-};
-const inMap = (s: Solid) => cornersOf(s).every((p) => p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H);
 
-const expressway: Solid[] = [
-  // perimeter; outer deck edge round each corner (end pieces poking off the map are dropped:
-  // the perimeter wall covers them)
-  wall(0, 0, W, 1),
-  wall(0, H - 1, W, 1),
-  wall(0, 1, 1, H - 2),
-  wall(W - 1, 1, 1, H - 2),
-  ...CORNER.flatMap((o, k) =>
-    arcWall(o, rAt(k, 0), 1, ((k + 2) * PI) / 2, ((k + 3) * PI) / 2).filter(inMap),
-  ),
-  // inner barrier, open for the on-ramp
+const boundary: Solid[] = [
+  // the wall, open for the helix: its west piece runs into the core, the east one into the rim
   wall(CORNER[0].x, 19, GAP[0] - CORNER[0].x, 4),
   wall(GAP[1], 19, CORNER[1].x - GAP[1], 4),
   wall(W - 23, CORNER[1].y, 4, CORNER[2].y - CORNER[1].y),
@@ -258,8 +254,17 @@ const expressway: Solid[] = [
     ...arcWall(o, rAt(k, 23) + 1.2, 1.2, ((k + 2) * PI) / 2, ((k + 3) * PI) / 2),
   ]),
 ];
-/** The deck runs one way: closed west of the on-ramp. Road works on the south straight. */
-const BARRIERS: Solid[] = [wall(258, 1, 2, 18), wall(243, H - 19, 8, 7), wall(200, H - 8, 7, 7)];
+/**
+ * Helix rim from polar angle a0 to a1, fine pieces so the lane keeps its full width. Floor 0
+ * rims all but the way in (the frontage road); the deck rims the way up and blocks the lane at
+ * p = 0.25, where nobody up there is ever still on it.
+ */
+const rim = (a0: number, a1: number) => arcWall(helix.center, helix.rOuter + 1.1, 1, a0, a1, 3);
+const helixCity: Solid[] = rim(-PI, PI / 4);
+const helixDeck: Solid[] = [
+  ...rim(-PI / 2, PI / 4),
+  box(onHelix(0.25), helix.rOuter - helix.rCore + 1, 1, PI / 4),
+];
 
 // --- courses ---
 type Pose = Vec & { a: number };
@@ -518,59 +523,71 @@ const blocks = BLOCKS.map(({ kind, spec }) => {
 
 // --- routes ---
 const START = v(F.x, 268);
-const DECK = [
-  [272, 31, 30], // on-ramp: bear left...
-  [302, 10, 30], // ...and right onto the deck
-  [390, 10, 60], // NE sweeper
-  [390, 290, 45], // SE sweeper, tighter
-  [272, 290, 40], // road works: shift out past the inner block...
-  [257, 293.5, 40],
-  [236, 293.5, 40],
-  [215, 286.5, 40], // ...and in past the outer one
-  [194, 286.5, 40],
-  [179, 290, 40],
-  [10, 290, 75], // SW sweeper, the widest
-  [10, 192], // finish on the west deck
-];
+const UP = onHelix(0); // the helix mouth on the frontage road
 const A = course([
   [START.x, START.y],
   [F.x, F.y, 18], // fork right
   ...LOOP.slice(1, 9), // S-bend, SE sweeper, S-bend, hairpin, right
   [SCRAMBLE.x, SCRAMBLE.y, 20], // right through the scramble
   [J.x, J.y, 16], // right onto the frontage road
-  ...DECK,
+  [UP.x, UP.y],
 ]);
 const B = course([
   [START.x, START.y],
   [F.x, F.y, 19], // fork left
   ...LOOP.slice(11, 17).reverse(), // SW sweeper, chicane, NW sweeper, S-bend
-  ...DECK,
+  [UP.x, UP.y],
 ]);
-/** Fillet radius and signed turn of every corner, per route (see tokyo.test). */
-export const tokyoCorners = [A, B].map((c) => c.corners.map(({ r, turn }) => ({ r, turn })));
-/** Route A (downtown, over the scramble) and route B (canal); par runs on A. */
+/** The expressway: no corner twice, no right angles, off the map past the finish. */
+const DECK = course([
+  [302, 9], // off the helix, west
+  [258, 9, 62], // a long left...
+  [180, 86, 44], // ...and right: an S over the north blocks
+  [122, 86, 34], // the tightest left, south
+  [100, 134, 80], // a kink left...
+  [100, 170, 90], // ...and right down the west side
+  [60, 268, 50], // the long banked left over the south-west
+  [170, 258, 110], // a fast kink over the start
+  [255, 272, 46], // S-bend: left...
+  [318, 222, 38], // ...right onto the finish straight
+  [W - 0.1, 222],
+]);
+const FINISH: Rect = { x: 366, y: 222 - DECK_HALF + 0.2, w: 14, h: 2 * DECK_HALF - 0.4 };
+/** Deck centerline and half width (floor 1), for tests. */
+export const tokyoDeck = { center: DECK.fine, half: DECK_HALF };
+/** Fillet radius and signed turn of every corner: route A, route B, the deck (see tokyo.test). */
+export const tokyoCorners = [A, B, DECK].map((c) => c.corners.map(({ r, turn }) => ({ r, turn })));
+/**
+ * Route A (downtown, over the scramble) and route B (canal) up to the helix midpoint, then the
+ * deck both share from there to the finish; par runs on A.
+ */
 export const tokyoRoute: { floor: number; points: Vec[] }[] = [
-  { floor: 0, points: A.line },
-  { floor: 0, points: B.line },
+  { floor: 0, points: [...A.line, ...spiral(0, 0.5).slice(1)] },
+  { floor: 0, points: [...B.line, ...spiral(0, 0.5).slice(1)] },
+  { floor: 1, points: [...spiral(0.5, 1), ...DECK.line.slice(1, -1), v(373, 222)] },
 ];
-const FINISH: Rect = { x: 1.5, y: 184, w: 17, h: 14 };
 
-/** Clipping zones: 5 m squares outside a corner of each route and two deck sweepers. */
+/** Clipping zones: 5 m squares outside a corner. */
 const cornerNear = (c: typeof A, x: number, y: number) =>
   c.corners.reduce((a, b) => (dist(b.mid, v(x, y)) < dist(a.mid, v(x, y)) ? b : a));
-const clipZones: Rect[] = [
+const clip = (cs: ReturnType<typeof cornerNear>[]): Rect[] =>
+  cs.map(({ turn, mid }) => {
+    const g = Math.sign(turn);
+    const x = mid.x + g * 4.5 * Math.sin(mid.a);
+    const y = mid.y - g * 4.5 * Math.cos(mid.a);
+    return { x: x - 2.5, y: y - 2.5, w: 5, h: 5 };
+  });
+const clipZones = clip([
   cornerNear(A, 330, 200), // SE sweeper
   cornerNear(A, 300, 70), // hairpin
   cornerNear(B, 75, 220), // SW sweeper
   cornerNear(B, 65, 60), // NW sweeper
-  cornerNear(A, 375, 25), // NE deck sweeper
-  cornerNear(A, 30, 270), // SW deck sweeper
-].map(({ turn, mid }) => {
-  const g = Math.sign(turn);
-  const x = mid.x + g * 4.5 * Math.sin(mid.a);
-  const y = mid.y - g * 4.5 * Math.cos(mid.a);
-  return { x: x - 2.5, y: y - 2.5, w: 5, h: 5 };
-});
+]);
+const deckClips = clip([
+  cornerNear(DECK, 122, 86), // the tightest left
+  cornerNear(DECK, 60, 268), // the long banked left
+  cornerNear(DECK, 255, 272), // the S-bend into the finish
+]);
 /** The scramble: drift its way in and its way out in one combo. */
 const bonusZones: BonusZone[] = [
   { x: 213, y: 115, w: 20, h: 18, id: 'scramble', trick: 'SCRAMBLE' },
@@ -606,11 +623,11 @@ const atCurb = (x0: Vec, h: number, along: number, model: CarModel) => {
     x0.y + Math.sin(h) * along - Math.cos(h) * d,
   );
 };
-// police by the on-ramp: two on the frontage road's curb, one across its dead end
+// police by the on-ramp: two on the frontage road's south curb, one against the wall by the helix
 const police: Solid[] = [
   parked(atCurb(v(236, 39), 0, 0, 'r32'), PI, 'r32', '#16171b', { police: true }),
   parked(atCurb(v(236, 39), 0, 6.5, 'wrx'), PI, 'wrx', '#16171b', { police: true }),
-  parked(v(314, 31), PI / 2 - 0.35, 'r32', '#16171b', { police: true }),
+  parked(atCurb(v(272, 23), PI, 0, 'r32'), PI, 'r32', '#16171b', { police: true }),
 ];
 // taxi rank on route B's south straight, vans with hazards up route A's hairpin
 const TAXI = ['#f2c230', '#f2c230', '#2e7d4f', '#1b1c20', '#f2c230'];
@@ -673,8 +690,8 @@ for (let s = 0, last = -Infinity; s < loopPath.len; s += 1) {
 }
 
 const solids: Solid[] = [
-  ...expressway,
-  ...BARRIERS,
+  ...boundary,
+  ...helixCity,
   ...blocks.flatMap((b) => runs(b.q, b.q.solid).flatMap((r) => curb(simplify(r, 0.05)))),
   ...closureSolids,
   ...columns,
@@ -780,7 +797,7 @@ export const tokyoCity: CityGraph = {
   lanes,
   signals: program('S', 28),
   walkways: [...sidewalks, ...crossings],
-  cars: 30,
+  cars: 21,
   peds: 56,
 };
 
@@ -808,7 +825,7 @@ const floor: Floor = {
   solids,
   bays: [],
   lights,
-  circles: [],
+  circles: [CORE],
   clipZones,
   bonusZones,
 };
@@ -850,7 +867,8 @@ const NAMES = [
 ];
 const decor: Decor[] = [];
 type Item<D = Decor> = D extends unknown ? Omit<D, 'floor'> : never;
-const add = (d: Item) => decor.push({ floor: 0, ...d } as Decor);
+let level = 0; // the floor decor is added to: the city, then the deck
+const add = (d: Item) => decor.push({ floor: level, ...d } as Decor);
 const paint = (pts: Vec[], w: number, color?: string, dash?: number[], top?: boolean) => {
   if (pts.length > 1)
     add({ kind: 'paint', x: pts[0].x, y: pts[0].y, to: pts.slice(1), w, color, dash, top });
@@ -877,85 +895,8 @@ const say = (p: Vec, h: number, text: string, size = 2.2) =>
 
 // street lamps light the road well past the render's ceiling-lamp pools: drivable reads lighter
 for (const l of lamps) add({ kind: 'pool', ...l, r: 12, color: '#1e222b' });
-// ground: wet asphalt, the deck a smoother tone, the ramp up to it
+// ground: wet asphalt
 add({ kind: 'asphalt', x: 0, y: 0, w: W, h: H, seed: 1 });
-paint(ring(10), 18, '#34353b');
-paint([v(256, 31), v(272, 31), v(302, 10), v(318, 10)], 13, '#34353b');
-// shadow cast by the deck along the frontage road, with pillar shadows
-for (const run of cut(ring(24.5), inGap)) paint(run, 3, 'rgba(0,0,0,0.2)');
-for (const run of cut(ring(24), inGap)) paint(run, 2, 'rgba(0,0,0,0.18)');
-for (const run of cut(ring(26), inGap)) paint(run, 6, 'rgba(0,0,0,0.16)', [2.5, 15.5]);
-// deck paint: lane dashes, edge lines, expansion joints, sodium lamps on the barrier
-paint(ring(7), 0.15, PAINT_W, [5, 7]);
-paint(ring(13), 0.15, PAINT_W, [5, 7]);
-paint(ring(2.3), 0.18, PAINT_W);
-for (const run of cut(ring(17.7), (p) => inGap(p) && p.x > GAP[0] + 4)) paint(run, 0.18, PAINT_W);
-{
-  const p = path(ring(10), true);
-  for (let s = 20; s < p.len; s += 45) {
-    const q = at(p, s);
-    const n = v(-Math.sin(q.h), Math.cos(q.h));
-    paint(
-      [v(q.x - n.x * 8.8, q.y - n.y * 8.8), v(q.x + n.x * 8.8, q.y + n.y * 8.8)],
-      0.35,
-      '#131417',
-    );
-  }
-  // sodium lamps on the barrier, their light out over the deck
-  const b = path(ring(15), true);
-  for (let s = 10; s < b.len; s += 30) {
-    const q = at(b, s);
-    if (!inGap(q)) add({ kind: 'pool', x: q.x, y: q.y, r: 12, color: '#9a5a22' });
-  }
-  // old tire marks round the three sweepers
-  for (const k of [1, 2, 3])
-    for (const dr of [-2.5, 1.5, 4]) {
-      const a0 = ((k + 2) * PI) / 2;
-      const points = Array.from({ length: 31 }, (_, i) => {
-        const a = a0 + 0.1 + (i / 30) * (PI / 2 - 0.2);
-        const r = rAt(k, 10) + dr + Math.sin(i * 0.5 + k) * 0.8;
-        return v(CORNER[k].x + r * Math.cos(a), CORNER[k].y + r * Math.sin(a));
-      });
-      add({ kind: 'skid', points });
-    }
-}
-add({
-  kind: 'text',
-  x: 340,
-  y: 10,
-  angle: PI / 2,
-  text: '80',
-  size: 4,
-  color: 'rgba(225,225,215,0.45)',
-});
-add({
-  kind: 'text',
-  x: 390,
-  y: 120,
-  angle: PI,
-  text: '80',
-  size: 4,
-  color: 'rgba(225,225,215,0.45)',
-});
-add({
-  kind: 'text',
-  x: 250,
-  y: 10,
-  angle: -PI / 2,
-  text: 'CLOSED',
-  size: 3,
-  color: 'rgba(230,80,60,0.6)',
-});
-add({ kind: 'hatch', x: 246, y: 2, w: 11, h: 16, color: '230,80,60' });
-add({ kind: 'hatch', x: 239, y: H - 19, w: 16, h: 8 });
-add({ kind: 'hatch', x: 196, y: H - 9, w: 15, h: 8 });
-add({ kind: 'arrow', x: 287, y: 21, angle: -0.61 });
-add({ kind: 'arrow', x: 300, y: 290, angle: PI - 0.25 });
-add({ kind: 'arrow', x: 226, y: 290, angle: PI + 0.32 });
-// finish line across the west deck
-paint([v(1.2, 197.5), v(18.8, 197.5)], 1, '#e8e8e2');
-paint([v(1.2, 197.25), v(18.8, 197.25)], 0.5, '#111', [0.5, 0.5]);
-paint([v(1.2, 197.75), v(18.8, 197.75)], 0.5, '#111', [0, 0.5, 0.5, 0]);
 
 // streets: double yellow down the loop, edge lines, dashed side streets
 const loopC = ROAD.loop.c;
@@ -1020,21 +961,20 @@ for (let s = 15; s < loopPath.len; s += 25 + rand() * 30) {
   }
 }
 
-// pockets beyond the deck: the city goes on
-CORNER.forEach((o, k) => {
-  const sx = k === 0 || k === 3 ? 0 : o.x;
-  const sy = k < 2 ? 0 : o.y;
-  add({
-    kind: 'block',
-    x: sx,
-    y: sy,
-    w: k === 0 || k === 3 ? o.x : W - o.x,
-    h: k < 2 ? o.y : H - o.y,
-    walk: 0,
-    seed: 50 + k,
-    round: { corner: (k + 2) % 4, r: rAt(k, 0), concave: true },
+// beyond the wall the city goes on: one block round the map, a hole for the district and the helix
+{
+  const r = helix.rOuter + 1.2;
+  const lo = Math.asin((helix.center.y - 19) / r); // where the rim crosses the wall's face
+  const arc = Array.from({ length: 25 }, (_, i) => {
+    const a = PI + lo + ((PI - 2 * lo) * i) / 24;
+    return v(helix.center.x + r * Math.cos(a), helix.center.y + r * Math.sin(a));
   });
-});
+  const edge = ring(19);
+  const k = edge.findIndex((p, i) => i > 0 && p.y === 19 && p.x > helix.center.x);
+  const hole = [...edge.slice(0, k), ...arc, ...edge.slice(k)].reverse();
+  const outer = [v(0, 0), v(W, 0), v(W, H), v(0, H), v(0, 0)];
+  add({ kind: 'block', x: 0, y: 0, w: W, h: H, walk: 0, seed: 50, pts: [...outer, ...hole] });
+}
 
 // blocks: plazas at the scramble corners, the canal quay paved
 const PLAZA: Rect[] = [-1, 1].flatMap((i) =>
@@ -1444,49 +1384,124 @@ for (const c of closures) {
   });
 }
 
-// expressway tops: parapet and rails on the barrier, sound wall on the outside, works barriers
-for (const run of cut(ring(21), inGap)) {
-  paint(run, 4, '#3d3e44', undefined, true);
-}
+// the wall's tops: parapet, rails and reflectors, open for the helix
+for (const run of cut(ring(21), inGap)) paint(run, 4, '#3d3e44', undefined, true);
 for (const d of [19.35, 22.65])
   for (const run of cut(ring(d), inGap)) paint(run, 0.3, '#8b949e', undefined, true);
 for (const run of cut(ring(19.5), inGap)) paint(run, 0.22, '#ffb030', [0.25, 3.75], true);
-paint(ring(0.5), 1.1, '#3d3e44', undefined, true);
-paint(ring(1.1), 0.25, '#8b949e', undefined, true);
-paint(ring(1), 0.2, '#ffb030', [0.25, 3.75], true);
-for (const s of BARRIERS) {
-  const horiz = s.w >= s.h;
-  const a = horiz ? v(s.x, s.y + s.h / 2) : v(s.x + s.w / 2, s.y);
-  const b = horiz ? v(s.x + s.w, s.y + s.h / 2) : v(s.x + s.w / 2, s.y + s.h);
-  paint([a, b], horiz ? s.h : s.w, '#e8e6e0', undefined, true);
-  paint([a, b], horiz ? s.h : s.w, '#c0392b', [1, 1], true);
-  add({ kind: 'neon', a, b, color: '#ffb03a', flicker: 1 });
-}
-// overhead signs over the deck
-add({
-  kind: 'sign',
-  x: 322,
-  y: 10,
-  w: 16,
-  h: 1.8,
-  angle: PI / 2,
-  color: '#3fbf7f',
-  text: 'NEON LOOP',
-  seed: 0,
-});
-add({
-  kind: 'sign',
-  x: 390,
-  y: 150,
-  w: 16,
-  h: 1.8,
-  angle: 0,
-  color: '#3fbf7f',
-  text: 'EXIT 7',
-  seed: 0,
-});
+add({ kind: 'arrow', x: 276, y: 31, angle: 0 });
 
-const total = A.line.slice(1).reduce((sum, b, i) => sum + dist(A.line[i], b), 0);
+// --- the expressway (floor 1) ---
+const deckPath = path(DECK.fine);
+/** Point d m right of the deck centerline, s m along it, with the heading there. */
+const onDeck = (s: number, d = 0) => {
+  const q = at(deckPath, s);
+  return { x: q.x - Math.sin(q.h) * d, y: q.y + Math.cos(q.h) * d, h: q.h };
+};
+const nearHelix = (p: Vec, pad: number) => dist(p, helix.center) < helix.rOuter + pad;
+// on the city below: the deck's shadow and its piers, clear of the streets
+const SHADE = v(3.5, 5);
+const shadow = DECK.fine.map((p) => v(p.x + SHADE.x, p.y + SHADE.y));
+for (const run of cut(shadow, (p) => p.x > W || p.y > H || nearHelix(p, 1)))
+  paint(run, 2 * DECK_HALF + 2, 'rgba(0,0,0,0.42)', undefined, true);
+const streets = Object.values(ROAD) as Road[];
+for (let s = 24; s < deckPath.len; s += 34) {
+  const q = onDeck(s);
+  if (!inCity(q) || nearHelix(q, 3) || streets.some((r) => polyDist(q, r.c) < r.half + 2)) continue;
+  const f = v(Math.cos(q.h) * 1.3, Math.sin(q.h) * 1.3);
+  const [a, b] = [v(q.x - f.x, q.y - f.y), v(q.x + f.x, q.y + f.y)];
+  paint([v(a.x + 1, a.y + 1.4), v(b.x + 1, b.y + 1.4)], 2.6, 'rgba(0,0,0,0.4)', undefined, true);
+  paint([a, b], 2.6, '#4b4d54', undefined, true);
+  const c = [v(q.x - f.x * 0.7, q.y - f.y * 0.7), v(q.x + f.x * 0.7, q.y + f.y * 0.7)];
+  paint(c, 1.8, '#5d6068', undefined, true);
+}
+
+level = 1;
+// surface, worn tracks down both lanes, lane and edge lines, expansion joints
+paint(DECK.fine, 2 * DECK_HALF + 0.3, '#34353b');
+for (const o of [-5, -2, 2, 5]) paint(offset(DECK.fine, o), 1.1, 'rgba(0,0,0,0.13)');
+paint(DECK.fine, 0.15, PAINT_W, [5, 7]);
+for (const o of [-6.2, 6.2]) paint(offset(DECK.fine, o), 0.18, PAINT_W);
+for (let s = 15; s < deckPath.len; s += 30)
+  paint([onDeck(s, -DECK_HALF), onDeck(s, DECK_HALF)], 0.35, '#131417');
+// parapets on the rails: concrete, a steel rail, amber reflectors
+for (const o of [-1, 1]) {
+  paint(offset(DECK.fine, o * (DECK_HALF + 0.6)), 1.2, '#3d3e44', undefined, true);
+  paint(offset(DECK.fine, o * (DECK_HALF + 0.2)), 0.25, '#8b949e', undefined, true);
+  paint(offset(DECK.fine, o * (DECK_HALF + 0.15)), 0.2, '#ffb030', [0.25, 3.75], true);
+}
+// lamp posts on alternate rails, sodium light out over the lanes
+const deckLights: Vec[] = [];
+for (let s = 10, k = 0; s < deckPath.len - 5; s += 32, k++) {
+  const side = k % 2 ? 1 : -1;
+  const [post, head] = [onDeck(s, side * (DECK_HALF + 0.6)), onDeck(s, side * (DECK_HALF - 1.4))];
+  paint([post, head], 0.25, '#6a6d76', undefined, true);
+  paint([head, onDeck(s + 0.6, side * (DECK_HALF - 1.4))], 0.5, '#d9c9a0', undefined, true);
+  const l = onDeck(s, side * 3.5);
+  deckLights.push(v(l.x, l.y));
+  add({ kind: 'pool', x: l.x, y: l.y, r: 11, color: '#9a5a22' });
+}
+// sign gantries: a beam across the deck and a board over the lanes
+for (const [s, text, color] of [
+  [45, 'NEON LOOP', '#3fbf7f'],
+  [330, 'EXIT 7', '#3fbf7f'],
+  [deckPath.len - 34, 'FINISH', '#ff2d95'],
+] as [number, string, string][]) {
+  const q = onDeck(s);
+  paint([onDeck(s, -DECK_HALF - 1), onDeck(s, DECK_HALF + 1)], 0.5, '#6a6d76', undefined, true);
+  add({ kind: 'sign', x: q.x, y: q.y, w: 9, h: 1.8, angle: q.h + PI / 2, color, text, seed: 0 });
+}
+// old tire marks round the corners, arrows and the limit painted on the lanes
+for (const c of DECK.corners) {
+  if (Math.abs(c.turn) < PI / 5) continue;
+  const g = Math.sign(c.turn);
+  for (const dr of [-1.5, 1.5])
+    add({
+      kind: 'skid',
+      points: Array.from({ length: 25 }, (_, i) => {
+        const k = -0.1 + (i / 24) * 1.2;
+        const a = c.a1 + c.turn * k;
+        const r = c.r + dr + Math.sin(k * 7 + c.r) * 0.8;
+        return v(c.o.x + g * r * Math.sin(a), c.o.y - g * r * Math.cos(a));
+      }),
+    });
+}
+for (const s of [22, 150, 420])
+  for (const o of [-3.5, 3.5]) {
+    const q = onDeck(s, o);
+    add({ kind: 'arrow', x: q.x, y: q.y, angle: q.h });
+  }
+for (const o of [-3.5, 3.5]) say(onDeck(70, o), onDeck(70).h, '80', 3);
+// finish line, run-off and the closed end
+const FX = FINISH.x;
+const [y0, y1] = [222 - DECK_HALF, 222 + DECK_HALF];
+paint([v(FX, y0), v(FX, y1)], 1, '#e8e8e2');
+paint([v(FX - 0.25, y0), v(FX - 0.25, y1)], 0.5, '#111', [0.5, 0.5]);
+paint([v(FX + 0.25, y0), v(FX + 0.25, y1)], 0.5, '#111', [0, 0.5, 0.5, 0]);
+add({ kind: 'hatch', x: 386, y: y0 + 0.5, w: 12, h: 2 * DECK_HALF - 1 });
+paint([v(W - 0.6, y0 - 1.2), v(W - 0.6, y1 + 1.2)], 1.2, '#e8e6e0', undefined, true);
+paint([v(W - 0.6, y0 - 1.2), v(W - 0.6, y1 + 1.2)], 1.2, '#c0392b', [1, 1], true);
+add({ kind: 'neon', a: v(W - 0.6, y0), b: v(W - 0.6, y1), color: '#ffb03a', flicker: 1 });
+
+const deck: Floor = {
+  name: 'EXPWY',
+  w: W,
+  h: H,
+  solids: [
+    ...helixDeck,
+    ...curb(simplify(offset(DECK.fine, DECK_HALF), 0.05)),
+    ...curb(simplify(offset(DECK.fine, -DECK_HALF).reverse(), 0.05)),
+    wall(W - 1.3, y0 - 1.2, 1.2, 2 * DECK_HALF + 2.4),
+  ],
+  bays: [],
+  lights: deckLights,
+  circles: [CORE],
+  clipZones: deckClips,
+  below: 0,
+};
+
+const lengthOf = (pts: Vec[]) => path(pts).len;
+const total = lengthOf(tokyoRoute[0].points) + lengthOf(tokyoRoute[2].points);
 // same scale as B2 MEET: the old 812 m route ran medals [4500, 10000, 17500]
 const OLD_LEN = 812;
 
@@ -1498,9 +1513,9 @@ export const tokyo: DecoratedMap = {
     number,
     number,
   ],
-  floors: [floor],
-  helixes: [],
+  floors: [floor, deck],
+  helixes: [helix],
   start: { floor: 0, pos: START, angle: -PI / 2 },
-  finish: { floor: 0, zone: FINISH },
+  finish: { floor: 1, zone: FINISH },
   decor,
 };

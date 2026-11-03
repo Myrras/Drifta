@@ -47,6 +47,8 @@ export interface Floor {
   clipZones?: Rect[];
   /** bonus zones: drift through every rect sharing an id within one combo to fire its trick once */
   bonusZones?: BonusZone[];
+  /** elevated deck over floor `below`: no ground of its own (its decor paints the deck), that floor shows dimmed beneath */
+  below?: number;
 }
 export interface BonusZone extends Rect {
   id: string;

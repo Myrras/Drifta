@@ -1329,6 +1329,41 @@ describe('tokyo traffic', () => {
     expect(hit).toHaveBeenCalledTimes(1);
   });
 
+  it('the on-ramp helix lifts the car onto the deck, where it passes over traffic', () => {
+    const { game, step, hit } = rig();
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    const h = tokyo.helixes[0];
+    const r = (h.rCore + h.rOuter) / 2;
+    for (let p = 0.02; p <= 1.1; p += 0.01) {
+      const a = h.enterAngle + h.sweep * p;
+      const heading = a - Math.PI / 2; // sweep < 0: counterclockwise round the core
+      Object.assign(game.debug.car, {
+        pos: { x: h.center.x + r * Math.cos(a), y: h.center.y + r * Math.sin(a) },
+        angle: heading,
+        vel: { x: 8 * Math.cos(heading), y: 8 * Math.sin(heading) },
+        angVel: 0,
+      });
+      step();
+      expect(game.debug.floorIndex).toBe(p < 0.49 ? 0 : p > 0.51 ? 1 : game.debug.floorIndex);
+    }
+    expect(game.view().render.floorIndex).toBe(1);
+    expect(game.view().hud.floorName).toBe('EXPWY');
+    // a traffic car right under the car: no hit up here
+    const sim = game.debug.traffic!;
+    const c = sim.cars[0];
+    startCombo(game);
+    Object.assign(game.debug.car, {
+      pos: { ...c.pos },
+      angle: c.heading,
+      vel: { x: 0, y: 0 },
+      angVel: 0,
+    });
+    step();
+    expect(hit).not.toHaveBeenCalled();
+    expect(game.debug.scoring.combo).not.toBeNull();
+    expect(c.hazardsUntil).toBeLessThanOrEqual(sim.time);
+  });
+
   it('other maps have no traffic', () => {
     const { game, toRun } = setup();
     toRun();
