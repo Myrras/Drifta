@@ -736,7 +736,13 @@ export function createGame(
             toTitle();
             break;
           }
-          s.countdown -= dt;
+          {
+            const was = s.countdown;
+            s.countdown -= dt;
+            const n = Math.ceil(s.countdown - 1e-6); // displayed number, as in hud
+            if (was === COUNTDOWN_SECONDS) audio.ui('count');
+            if (n < Math.ceil(was - 1e-6)) audio.ui(n > 0 && s.countdown > EPS ? 'count' : 'go');
+          }
           s.traffic?.step(dt, s.car);
           if (s.countdown <= EPS) s.phase = 'run';
           break;

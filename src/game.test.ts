@@ -81,6 +81,18 @@ describe('game', () => {
     expect(game.view().hud.phase).toBe('run');
   });
 
+  it('beeps once per countdown number and once for go', () => {
+    const ui = vi.fn();
+    const game = createGame([garage], { ...audio, ui }, () => memBest());
+    const press = (i: Partial<InputState>, n = 1) => {
+      for (let k = 0; k < n; k++) game.update({ ...IDLE, ...i }, DT);
+    };
+    press({ confirm: true });
+    ui.mockClear(); // title confirm blip
+    press({}, Math.round(COUNTDOWN_SECONDS / DT) + 5);
+    expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'go']);
+  });
+
   it('keeps the car frozen during countdown', () => {
     const { game, step } = setup();
     step({ confirm: true });
