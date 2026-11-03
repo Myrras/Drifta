@@ -38,6 +38,7 @@ import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
+import { drivethru, drivethruRoute } from './maps/drivethru';
 import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
 import {
@@ -121,6 +122,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
   [tokyo, tokyoRoute],
+  [drivethru, drivethruRoute],
 ]);
 /** maps with live traffic */
 const CITIES = new Map<GameMap, CityGraph>([[tokyo, tokyoCity]]);
