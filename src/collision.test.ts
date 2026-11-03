@@ -93,4 +93,33 @@ describe('circle solids', () => {
     const d = nearestDistance(car(0, 0), [wall(20, -5, 2, 10)], [circ(10, 0, 2), circ(0, 6, 1)]);
     expect(d).toBeCloseTo(6 - 1 - CAR_WIDTH / 2);
   });
+  describe('rotated solids', () => {
+    const rot = (x: number, y: number, w: number, h: number, angle: number): Solid => ({
+      ...wall(x, y, w, h),
+      angle,
+    });
+    // 2x2 square centered (10,0) rotated 45deg: left vertex at x = 10 - sqrt2
+    const diamond = [rot(9, -1, 2, 2, Math.PI / 4)];
+    it('45deg hit from the left: unit normal toward car, depth', () => {
+      const h = collide(car(10 - Math.SQRT2 - CAR_LENGTH / 2 + 0.2, 0), diamond)!;
+      expect(h).not.toBeNull();
+      expect(Math.hypot(h.normal.x, h.normal.y)).toBeCloseTo(1);
+      expect(h.normal.x).toBeLessThan(0);
+      expect(h.depth).toBeGreaterThan(0);
+    });
+    it('no hit when separated diagonally; gap hand-computed', () => {
+      expect(collide(car(5, 0), diamond)).toBeNull();
+      expect(nearestDistance(car(5, 0), diamond)).toBeCloseTo(10 - Math.SQRT2 - 5 - CAR_LENGTH / 2);
+      expect(collide(car(10, 4.5), diamond)).toBeNull();
+    });
+    it('angle 0 equals AABB', () => {
+      const a = collide(car(7.8, 0.3), [wall(10, -5, 2, 10)])!;
+      expect(collide(car(7.8, 0.3), [rot(10, -5, 2, 10, 0)])).toEqual(a);
+    });
+    it('mixed: deepest wins', () => {
+      const h = collide(car(7, 0), [...diamond, wall(8.5, -5, 2, 10)])!;
+      expect(h.depth).toBeCloseTo(0.5);
+      expect(h.normal.x).toBeCloseTo(-1);
+    });
+  });
 });
