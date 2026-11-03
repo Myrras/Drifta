@@ -686,22 +686,10 @@ function policeLivery(g: Ctx, len: number, wid: number) {
   g.fillRect(-0.26, 0.04, 0.32, wid / 2 - 0.4);
 }
 
-/** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
-function drawBoomCar(
-  g: Ctx,
-  { p, color }: { p: ParkedPose; color: string },
-  t: number,
-  k: number,
-  age: number,
-  a: number,
-) {
-  const c = Math.cos(p.facing);
-  const s = Math.sin(p.facing);
-  const jit = k * 0.06 * Math.sin(t * 90); // m, sideways
-  // shock rings + flash: that patch of the screen visibly thumps with each kick
+/** Shock rings + radial flash of a boom car; drawn above the darkness (caller sets 'lighter'). */
+function drawBoomShock(g: Ctx, p: ParkedPose, k: number, age: number, a: number) {
   g.save();
   g.globalAlpha = a;
-  g.globalCompositeOperation = 'lighter';
   const fadeOut = Math.max(0, 1 - age / 0.5);
   g.strokeStyle = `rgba(255,70,210,${0.8 * fadeOut * fadeOut})`;
   for (const [r0, speed] of [
@@ -719,6 +707,19 @@ function drawBoomCar(
   g.fillStyle = flash;
   g.fillRect(p.x - 6, p.y - 6, 12, 12);
   g.restore();
+}
+
+/** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
+function drawBoomCar(
+  g: Ctx,
+  { p, color }: { p: ParkedPose; color: string },
+  t: number,
+  k: number,
+  a: number,
+) {
+  const c = Math.cos(p.facing);
+  const s = Math.sin(p.facing);
+  const jit = k * 0.06 * Math.sin(t * 90); // m, sideways
   g.save();
   g.globalAlpha = a * 0.35; // ground shadow, offset like the static layer's
   g.translate(p.x + 0.3, p.y + 0.4);
@@ -1926,7 +1927,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const age = boomAge(bt);
     for (const [idx, a] of floors)
       for (const b of lightLayer(v.map, idx).boom)
-        if (visible(b.p.x, b.p.y, 10)) drawBoomCar(ctx, b, clock, pulse, age, a);
+        if (visible(b.p.x, b.p.y, 10)) drawBoomCar(ctx, b, clock, pulse, a);
 
     // traffic cars under the darkness: lit by street lights and headlights like the player
     const sim = v.traffic?.sim;
@@ -2087,6 +2088,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       drawDecor(ctx, decorOf(v.map), 'over', idx, clock); // neon flicker, phone screens
     }
     for (const [l, a] of dyn) drawLamp(ctx, l, false, a);
+    for (const { l, w } of layers)
+      for (const b of l.boom) if (visible(b.p.x, b.p.y, 10)) drawBoomShock(ctx, b.p, pulse, age, w);
     ctx.restore();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
