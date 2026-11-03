@@ -6,6 +6,7 @@ import type {
   Phase,
   Vec,
   PlayerModel,
+  Rect,
   ScoreEvent,
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
@@ -25,6 +26,7 @@ import {
   medalFor,
   stepScoring,
   timeBonus,
+  zoneAt,
 } from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
@@ -97,6 +99,7 @@ export function createGame(
     results: null as Results | null,
     resultsAge: 0,
     stuck: 0,
+    clip: null as Rect | null,
   });
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
@@ -277,11 +280,12 @@ export function createGame(
     }
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
+    const clip = (s.clip = zoneAt(car.pos, map.floors[s.floorIndex].clipZones));
 
     handle(
       stepScoring(
         s.scoring,
-        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false },
+        { drift: s.drift, yawDelta, nearDist, hit: hard, rampDrift, frozen: false, clip },
         dt,
       ),
     );
@@ -489,6 +493,7 @@ export function createGame(
           scrape: s.scrape,
           impact: cfg.shake ? s.shake : 0,
           runId: s.runId,
+          clip: drift.drifting ? s.clip : null,
         },
         hud: {
           phase: s.phase,

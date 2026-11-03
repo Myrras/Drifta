@@ -38,6 +38,8 @@ export interface Floor {
   lights: Vec[];
   /** round solids, e.g. helix cores */
   circles: Circle[];
+  /** clipping zones: drifting inside scores faster; first entry per combo gives a CLIP bonus */
+  clipZones?: Rect[];
 }
 export interface Circle {
   x: number;
@@ -106,7 +108,8 @@ export interface Hit {
   normal: Vec;
   depth: number;
 }
-export type Trick = 'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT';
+export type Trick =
+  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP';
 /** frozen = floor fade in progress: grace timer paused, no scoring */
 export interface ScoreFrame {
   drift: DriftInfo;
@@ -115,6 +118,8 @@ export interface ScoreFrame {
   hit: boolean;
   rampDrift: boolean;
   frozen: boolean;
+  /** clipping zone the car is in, if any */
+  clip?: Rect | null;
 }
 export interface Combo {
   points: number;

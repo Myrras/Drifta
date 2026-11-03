@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { CLOSE_CALL_COOLDOWN, COMBO_GRACE, DRIFT_POINT_SCALE } from './config';
-import { comboValue, createScoring, forceBank, medalFor, stepScoring, timeBonus } from './scoring';
+import {
+  CLIP_BONUS,
+  CLIP_RATE,
+  CLOSE_CALL_COOLDOWN,
+  COMBO_GRACE,
+  DRIFT_POINT_SCALE,
+} from './config';
+import {
+  comboValue,
+  createScoring,
+  forceBank,
+  medalFor,
+  stepScoring,
+  timeBonus,
+  zoneAt,
+} from './scoring';
 import type { ScoreEvent, ScoreFrame } from './types';
 
 const DEG = Math.PI / 180;
@@ -14,6 +28,7 @@ const F = (o: Opts = {}): ScoreFrame => {
     hit: o.hit ?? false,
     rampDrift: o.rampDrift ?? false,
     frozen: o.frozen ?? false,
+    clip: o.clip ?? null,
   };
 };
 const run = (s: ReturnType<typeof createScoring>, f: ScoreFrame, secs: number, dt = 0.1) => {
@@ -163,6 +178,43 @@ describe('scoring', () => {
     const b = run(s, F({ drifting: true }), 1.0, 0.5);
     expect(tricks([...a, ...b]).filter((t) => t === 'LONG DRIFT')).toHaveLength(1);
     expect(tricks(b)).not.toContain('DRIFT');
+  });
+});
+
+describe('clipping zones', () => {
+  const A = { x: 0, y: 0, w: 5, h: 5 };
+  const B = { x: 10, y: 0, w: 5, h: 5 };
+
+  it('zoneAt finds the zone containing a point', () => {
+    expect(zoneAt({ x: 2, y: 5 }, [A, B])).toBe(A);
+    expect(zoneAt({ x: 12, y: 1 }, [A, B])).toBe(B);
+    expect(zoneAt({ x: 7, y: 1 }, [A, B])).toBeNull();
+    expect(zoneAt({ x: 1, y: 1 })).toBeNull();
+  });
+
+  it('multiplies drift points only while drifting inside', () => {
+    const base = createScoring();
+    const clip = createScoring();
+    stepScoring(base, F({ drifting: true }), 0.5);
+    stepScoring(clip, F({ drifting: true, clip: A }), 0.5);
+    expect(clip.combo!.points - CLIP_BONUS).toBeCloseTo(base.combo!.points * CLIP_RATE);
+    const before = clip.combo!.points;
+    stepScoring(clip, F({ clip: A }), 0.5); // inside but not drifting
+    expect(clip.combo!.points).toBe(before);
+  });
+
+  it('gives the clip bonus once per zone per combo', () => {
+    const s = createScoring();
+    const a = run(s, F({ drifting: true, clip: A }), 1);
+    expect(s.combo!.multiplier).toBe(1); // bonus points only
+    const b = run(s, F({ drifting: true }), 0.5);
+    const c = run(s, F({ drifting: true, clip: A }), 0.5);
+    const d = run(s, F({ drifting: true, clip: B }), 0.5);
+    expect([a, b, c, d].map((e) => tricks(e).filter((t) => t === 'CLIP').length)).toEqual([
+      1, 0, 0, 1,
+    ]);
+    forceBank(s);
+    expect(tricks(stepScoring(s, F({ drifting: true, clip: A }), 0.1))).toContain('CLIP');
   });
 });
 

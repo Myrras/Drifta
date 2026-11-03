@@ -1,4 +1,4 @@
-import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel } from './types';
+import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect } from './types';
 
 export interface RenderView {
   map: GameMap;
@@ -22,6 +22,8 @@ export interface RenderView {
   impact: number;
   /** increments on every (re)start; renderer clears skid marks + smoke when it changes */
   runId: number;
+  /** clipping zone the player is drifting in, lit up */
+  clip: Rect | null;
 }
 
 export interface Popup {
