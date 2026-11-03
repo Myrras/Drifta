@@ -67,6 +67,7 @@ export interface MenuView {
     name: string;
     color: string;
     colors: string[];
+    tune: 'performance' | 'street';
     index: number;
     count: number;
     stats: { power: number; grip: number; weight: number };

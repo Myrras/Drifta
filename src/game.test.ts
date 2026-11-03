@@ -493,6 +493,42 @@ describe('main menu, garage, settings', () => {
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS.wrx.stats);
   });
 
+  it('garage: T toggles the tune, enter saves it and applies the stat boost', () => {
+    const { game, tap, mem } = rig();
+    tap({ down: true });
+    tap({ confirm: true });
+    tap({ tune: true });
+    expect(game.view().hud.menu!.garage!.tune).toBe('performance');
+    tap({ confirm: true });
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({ tune: 'performance' });
+    const base = PLAYER_MODELS.mx5.stats;
+    expect(game.debug.car.stats).toEqual({
+      ...base,
+      power: base.power * 1.05,
+      grip: base.grip * 1.03,
+    });
+  });
+
+  it('garage: rev drives the engine preview and leaving stops it', () => {
+    const update = vi.fn();
+    const stop = vi.fn();
+    const game = createGame([garage], { ...audio, update, stop }, () => memBest());
+    const step = (i: Partial<InputState>) => {
+      game.update({ ...IDLE, ...i }, DT);
+      game.update(IDLE, DT);
+    };
+    step({ down: true });
+    step({ confirm: true });
+    update.mockClear();
+    game.update({ ...IDLE, rev: true }, 0.5);
+    expect(update.mock.calls[0][2]).toBe(1);
+    expect(update.mock.calls[0][0].rpm).toBeGreaterThan(0.5);
+    expect(update.mock.calls[0][4]).toBe('street');
+    stop.mockClear();
+    step({ pause: true });
+    expect(stop).toHaveBeenCalled();
+  });
+
   it('garage stat bars are normalised 0..1', () => {
     const { game, tap } = rig();
     tap({ down: true });

@@ -13,11 +13,12 @@ import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
 import type { createAudio } from './audio';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar } from './car';
+import { rampToward } from './input';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { PLAYER_MODELS, type CarStats } from './models';
-import { loadSettings, saveSettings, type SettingsStorage } from './settings';
+import { loadSettings, saveSettings, type SettingsStorage, type Tune } from './settings';
 import {
   comboValue,
   createScoring,
@@ -58,6 +59,12 @@ const statRange = (k: keyof CarStats) => {
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
 const SETTINGS_ROWS = 8; // 4 volumes, shake, music, reset, back
+/** Stats with the tune applied. */
+export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
+  const st = PLAYER_MODELS[m].stats;
+  // tuning values
+  return tune === 'performance' ? { ...st, power: st.power * 1.05, grip: st.grip * 1.03 } : st;
+};
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
@@ -77,13 +84,15 @@ export function createGame(
   let confirmReset = false;
   let gCar = cfg.car;
   let gColor = cfg.color;
+  let gTune = cfg.tune;
+  const gCarState = createCar(maps[0].start); // garage engine preview; only rpm is used
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   const fresh = () => ({
-    car: createCar(map.start, PLAYER_MODELS[cfg.car].stats),
+    car: createCar(map.start, tunedStats(cfg.car, cfg.tune)),
     floorIndex: map.start.floor,
     scoring: createScoring(),
     drift: IDLE,
@@ -250,7 +259,7 @@ export function createGame(
     const car = s.car;
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
-    audio.update(car, s.drift, input.throttle, cfg.car);
+    audio.update(car, s.drift, input.throttle, cfg.car, cfg.tune);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const near = (x: number, y: number, r: number) =>
@@ -307,7 +316,10 @@ export function createGame(
     s.phase = phase;
   };
 
-  function garageInput(input: InputState, dir: number): void {
+  function garageInput(input: InputState, dir: number, dt: number): void {
+    if (input.tune) gTune = gTune === 'street' ? 'performance' : 'street';
+    gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
+    audio.update(gCarState, IDLE, input.rev ? 1 : 0, gCar, gTune);
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (dir) {
       gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
@@ -318,12 +330,14 @@ export function createGame(
       gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
     }
     if (input.confirm) {
-      Object.assign(cfg, { car: gCar, color: gColor });
+      Object.assign(cfg, { car: gCar, color: gColor, tune: gTune });
       save();
       Object.assign(s, fresh());
+      audio.stop();
       go('title', 1);
     } else if (input.pause) {
-      [gCar, gColor] = [cfg.car, cfg.color];
+      [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+      audio.stop();
       go('title', 1);
     }
   }
@@ -384,7 +398,8 @@ export function createGame(
       const m = PLAYER_MODELS[gCar];
       const n = (k: keyof CarStats) => {
         const [lo, hi] = statRange(k);
-        return hi > lo ? (m.stats[k] - lo) / (hi - lo) : 0.5;
+        const v = tunedStats(gCar, gTune)[k];
+        return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
       };
       return {
         ...base,
@@ -394,6 +409,7 @@ export function createGame(
           model: gCar,
           name: m.name,
           color: gColor,
+          tune: gTune,
           colors: m.colors,
           index: MODEL_IDS.indexOf(gCar),
           count: MODEL_IDS.length,
@@ -430,13 +446,14 @@ export function createGame(
             audio.resume();
             if (row === 0) newRun();
             else {
-              [gCar, gColor] = [cfg.car, cfg.color];
+              [gCar, gColor, gTune] = [cfg.car, cfg.color, cfg.tune];
+              gCarState.rpm = 0;
               go(row === 1 ? 'garage' : 'settings');
             }
           }
           break;
         case 'garage':
-          garageInput(input, dir);
+          garageInput(input, dir, dt);
           break;
         case 'settings':
           settingsInput(input, dir);

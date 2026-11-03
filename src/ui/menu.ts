@@ -203,7 +203,12 @@ function drawGarage(
   bar(g, 'POWER', m.stats.power, sx, h * 0.8, u);
   bar(g, 'GRIP', m.stats.grip, sx, h * 0.8 + 4 * u, u);
   bar(g, 'WEIGHT', m.stats.weight, sx, h * 0.8 + 8 * u, u);
-  hints(g, '←/→ car · ↑/↓ paint · ENTER select · ESC back', w, h, u);
+  text(g, `TUNE  ◀ ${m.tune.toUpperCase()} ▶  (T)`, cx, h * 0.72 - 5 * u, 2.8 * u, '#fff', {
+    align: 'center',
+    weight: 700,
+  });
+  text(g, 'HOLD R TO REV', cx, h - 9 * u, 2.4 * u, '#ffd23f', { align: 'center', weight: 700 });
+  hints(g, '←/→ car · ↑/↓ paint · T tune · ENTER select · ESC back', w, h, u);
 }
 
 /** Draws title / garage / settings; returns false when no menu is active. */
