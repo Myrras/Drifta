@@ -526,14 +526,20 @@ export function createGame(
   const limitOf = () => (map.medals ? map.parTime * 1.3 : 0);
 
   /** advance the run clock, beep the last 5 s, lock the score at the limit */
-  function clock(dt: number): void {
+  function clock(dt: number, lock = true): void {
     const was = s.time;
     s.time += dt;
     const limit = limitOf();
     if (!limit) return;
     const n = Math.ceil(limit - s.time - 1e-6); // whole seconds left, as in hud
-    if (n > 0 && n <= 5 && n < Math.ceil(limit - was - 1e-6)) audio.ui('count');
-    if (n <= 0 && s.locked === null) s.locked = s.scoring.banked;
+    if (n > 0 && n <= 5 && n < Math.ceil(limit - was - 1e-6) && s.phase !== 'paused')
+      audio.ui('count');
+    if (lock) lockAtLimit();
+  }
+  /** `run` locks after scoring, so a combo banking in the frame time runs out still counts */
+  function lockAtLimit(): void {
+    const limit = limitOf();
+    if (limit && s.time >= limit - 1e-6 && s.locked === null) s.locked = s.scoring.banked;
   }
 
   /** the run goes on past the limit, but only what was banked before it counts */
@@ -658,7 +664,7 @@ export function createGame(
 
   function run(input: InputState, dt: number): void {
     track();
-    clock(dt);
+    clock(dt, false);
     rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
@@ -677,7 +683,7 @@ export function createGame(
       bounce(car, hit);
       if (impact > HARD_HIT_SPEED) {
         hard = true;
-        s.wallHits++;
+        if (s.locked === null) s.wallHits++; // after time up the run only drives to the finish
         audio.hit();
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
@@ -714,6 +720,7 @@ export function createGame(
     const slow = Math.hypot(car.vel.x, car.vel.y) < STUCK_SPEED;
     s.stuck = pushing && slow && touching && !s.helix ? s.stuck + dt : 0;
     if (s.stuck >= STUCK_TIME) {
+      lockAtLimit();
       recover();
       return;
     }
@@ -748,6 +755,7 @@ export function createGame(
         dt,
       ),
     );
+    lockAtLimit();
     track();
 
     if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
