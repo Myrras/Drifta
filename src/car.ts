@@ -195,7 +195,8 @@ export function bounce(car: CarState, hit: Hit): void {
     const tx = car.vel.x - vn * n.x;
     const ty = car.vel.y - vn * n.y;
     const restitution = 0.3;
-    const tangentKeep = 0.6;
+    // wall friction scales with impact speed: a per-frame flat loss pinned the car to walls it scraped at shallow angles
+    const tangentKeep = 1 - 0.4 * Math.min(1, -vn / 4);
     car.vel.x = tx * tangentKeep - vn * restitution * n.x;
     car.vel.y = ty * tangentKeep - vn * restitution * n.y;
   }
