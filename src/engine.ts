@@ -96,7 +96,7 @@ const TU_PL = 8;
 const TU_SPREAD = [2.8, 0.23, 6.9];
 const TU_GAIN = 0.21; // recording level -> turbo layer (TURBO_MIX and the output drive)
 const TU_AIR = 1.6; // air pulse over its recorded level: our engine is louder under it than the recording's
-const TU_FLUTE = 0.26; // bypass whistle under the chirp hiss: ~14 dB below its peak
+const TU_FLUTE = 0.412; // bypass whistle under the chirp hiss: ~10 dB below its peak
 
 export interface TurboProfile {
   /** rpm where boost starts / is full */
