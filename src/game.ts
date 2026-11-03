@@ -155,6 +155,7 @@ const MP_ROW = 2;
 const GARAGE_ROW = 3;
 const SETTINGS_ROW = 4;
 const USERNAME_ROW = TITLE_ROWS - 1;
+type LobbyId = 'map' | 'ready' | 'garage' | 'start' | 'leave';
 const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
@@ -226,6 +227,7 @@ export function createGame(
   let mpMode: 'host' | 'join' = 'host';
   let mpWait = -1;
   let mpOpen = false; // connect overlay is up: title ignores input
+  let garageFromMp = false; // garage opened from the lobby: exits back to it
   const inMp = () => mp !== null;
   let mpGone = false; // rival dropped during the race: toast shown once
   let mpToast = '';
@@ -721,6 +723,7 @@ export function createGame(
     mp?.leave();
     mp = null;
     mpWait = -1;
+    garageFromMp = false;
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
@@ -735,6 +738,7 @@ export function createGame(
 
   /** back to the title on the MULTIPLAYER row, with an optional toast */
   function exitMp(msg = ''): void {
+    if (s.phase === 'garage') prog.looks = structuredClone(savedLooks); // drop the draft
     toTitle();
     go('title', MP_ROW);
     if (msg) [toastMsg, toastT] = [msg, 3];
@@ -749,18 +753,18 @@ export function createGame(
     Object.assign(s, fresh(), { runId: s.runId + 1 });
     go('mplobby');
   }
+  const meInfo = (): PlayerInfo => ({
+    name: cfg.name,
+    car: cfg.car,
+    color: cfg.color,
+    look: { ...raceLook, color: cfg.color } as Record<string, unknown>,
+  });
   function joinMp(r: { link: Link; role: 'host' | 'guest' } | null): void {
     mpOpen = false;
     editEnded = true; // the key that closed the overlay may still be latched
     if (!r) return;
     [mpGone, mpToastT] = [false, 0];
-    const me: PlayerInfo = {
-      name: cfg.name,
-      car: cfg.car,
-      color: cfg.color,
-      look: { ...raceLook, color: cfg.color } as Record<string, unknown>,
-    };
-    const m = (mp = createSession(r.link, r.role, me));
+    const m = (mp = createSession(r.link, r.role, meInfo()));
     m.onStart((name, inMs) => {
       if (mp !== m) return;
       const i = maps.findIndex((x) => x.name === name);
@@ -770,12 +774,16 @@ export function createGame(
     });
     go('mplobby');
   }
-  const lobbyIds = (m: Session) =>
+  const lobbyIds = (m: Session): LobbyId[] =>
     m.phase === 'handshake'
-      ? (['leave'] as const)
-      : m.role === 'host'
-        ? (['map', 'ready', 'start', 'leave'] as const)
-        : (['map', 'ready', 'leave'] as const);
+      ? ['leave']
+      : [
+          'map',
+          'ready',
+          ...(m.phase === 'lobby' && mpWait < 0 ? (['garage'] as const) : []),
+          ...(m.role === 'host' ? (['start'] as const) : []),
+          'leave',
+        ];
 
   function mpLobbyInput(m: Session, input: InputState, dir: number, dv: number, dt: number): void {
     if (mpWait >= 0) {
@@ -805,12 +813,29 @@ export function createGame(
     } else if (id === 'ready' && (input.confirm || dir)) {
       audio.ui('confirm');
       m.setReady(!m.ready);
+    } else if (id === 'garage' && input.confirm) {
+      audio.ui('confirm');
+      if (m.ready) m.setReady(false);
+      openGarage();
+      garageFromMp = true;
+      go('garage');
     } else if (id === 'start' && input.confirm) {
       audio.ui(m.canStart() ? 'confirm' : 'back');
       m.start();
     }
   }
 
+  function openGarage(): void {
+    gTune = cfg.tune;
+    gLoad(cfg.car, cfg.color);
+    gCarState.rpm = 0;
+  }
+  /** back to where the garage was opened from */
+  function leaveGarage(): void {
+    if (garageFromMp && mp) go('mplobby', Math.max(0, lobbyIds(mp).indexOf('garage')));
+    else go('title', GARAGE_ROW);
+    garageFromMp = false;
+  }
   function garageInput(input: InputState, dir: number, dt: number): void {
     if (input.tune) gTune = gTune === 'street' ? 'performance' : 'street';
     gCarState.rpm = rampToward(gCarState.rpm, input.rev ? 0.9 : 0, 1.5, 3, dt);
@@ -855,14 +880,15 @@ export function createGame(
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
-      go('title', GARAGE_ROW);
+      if (garageFromMp) mp?.setInfo(meInfo());
+      leaveGarage();
     } else if (input.pause) {
       prog.looks = structuredClone(savedLooks); // drop the draft
       gTune = cfg.tune;
       gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
-      go('title', GARAGE_ROW);
+      leaveGarage();
     }
   }
 
@@ -989,6 +1015,7 @@ export function createGame(
             value: m.map === null ? '-' : m.role === 'host' ? `◀ ${m.map} ▶` : m.map,
           };
         if (id === 'ready') return { label: 'READY', value: m.ready ? 'YES' : 'NO' };
+        if (id === 'garage') return { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name };
         return { label: id.toUpperCase() };
       });
       const i = maps.findIndex((x) => x.name === m.map);
@@ -1118,7 +1145,10 @@ export function createGame(
       if (mp) {
         mp.tick();
         const name = mp.rival.info?.name ?? 'RIVAL';
-        if (mp.phase === 'closed' && s.phase === 'mplobby')
+        if (
+          mp.phase === 'closed' &&
+          (s.phase === 'mplobby' || (s.phase === 'garage' && garageFromMp))
+        )
           exitMp(mp.error === 'version' ? 'VERSION MISMATCH - REFRESH' : `${name} LEFT`);
         else if (mp.phase === 'closed' && mpRace() && !mpGone) {
           mpGone = true;
@@ -1179,9 +1209,7 @@ export function createGame(
               if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
               else [draft, caretT, noteT] = [cfg.name, 0, 0];
             } else {
-              gTune = cfg.tune;
-              gLoad(cfg.car, cfg.color);
-              gCarState.rpm = 0;
+              openGarage();
               go(row === GARAGE_ROW ? 'garage' : 'settings');
             }
           }

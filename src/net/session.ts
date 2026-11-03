@@ -35,6 +35,8 @@ export interface Session {
   readonly ready: boolean;
   readonly rtt: number;
   readonly error: 'version' | null;
+  /** Replaces my info; re-sent as hello before the race. */
+  setInfo(info: PlayerInfo): void;
   pickMap(name: string): void;
   setReady(r: boolean): void;
   canStart(): boolean;
@@ -200,6 +202,11 @@ export function createSession(
     },
     get error() {
       return error;
+    },
+    setInfo(info) {
+      me = info;
+      if (link.state === 'open' && (phase === 'handshake' || phase === 'lobby'))
+        link.send({ t: 'hello', v: APP_VERSION, info });
     },
     pickMap(name) {
       if (role !== 'host' || phase !== 'lobby') return;

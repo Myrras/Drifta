@@ -280,6 +280,26 @@ describe('session', () => {
     expect(h.rival.total).toBe(200);
   });
 
+  it('setInfo re-sends hello in the lobby without resetting map or ready', () => {
+    connect();
+    h.pickMap('Harbor');
+    h.setReady(true);
+    g.setReady(true);
+    const civic: PlayerInfo = { ...guestInfo, car: 'civic', color: '#00f' };
+    g.setInfo(civic);
+    expect(h.rival.info).toEqual(civic);
+    expect([h.phase, h.map, h.ready, h.rival.ready]).toEqual(['lobby', 'Harbor', true, true]);
+    expect([g.map, g.ready, g.rival.ready]).toEqual(['Harbor', true, true]);
+  });
+
+  it('setInfo is not sent during the race', () => {
+    toRace();
+    const n = a.inbox.length;
+    g.setInfo({ ...guestInfo, car: 'civic' });
+    expect(a.inbox).toHaveLength(n);
+    expect(h.rival.info?.car).toBe('celica');
+  });
+
   it('leave closes both sides', () => {
     connect();
     g.leave();

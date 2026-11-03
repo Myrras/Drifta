@@ -1925,7 +1925,7 @@ describe('multiplayer entry and lobby', () => {
 
     guest.enter('join');
     expect(guest.open).toHaveBeenCalledWith('join', expect.any(Function));
-    expect(guest.menu().rows.map((r) => r.label)).toEqual(['MAP', 'READY', 'LEAVE']);
+    expect(guest.menu().rows.map((r) => r.label)).toEqual(['MAP', 'READY', 'GARAGE', 'LEAVE']);
     expect(value(guest, 'MAP')).toBe('-');
     expect(guest.menu().mp).toEqual({
       role: 'guest',
@@ -1935,7 +1935,14 @@ describe('multiplayer entry and lobby', () => {
     });
 
     host.tap({}); // host picks the first map on entering the lobby
-    expect(host.menu().rows.map((r) => r.label)).toEqual(['MAP', 'READY', 'START', 'LEAVE']);
+    expect(host.menu().rows.map((r) => r.label)).toEqual([
+      'MAP',
+      'READY',
+      'GARAGE',
+      'START',
+      'LEAVE',
+    ]);
+    expect(value(host, 'GARAGE')).toBe(PLAYER_MODELS.mx5.name);
     expect(host.menu().note).toBe(PLAYER_MODELS.mx5.name);
     expect(host.menu().mp!.rival).toBe('GUESTY');
     expect(value(host, 'MAP')).toBe(`◀ ${garage.name} ▶`);
@@ -1951,6 +1958,7 @@ describe('multiplayer entry and lobby', () => {
     expect(value(host, 'READY')).toBe('YES');
     expect(guest.menu().mp!.rivalReady).toBe(true);
     host.tap({ down: true });
+    host.tap({ down: true });
     host.tap({ confirm: true }); // START: guest not ready yet
     expect(guest.menu().note).not.toBe('GET READY');
     guest.tap({ down: true });
@@ -1960,6 +1968,8 @@ describe('multiplayer entry and lobby', () => {
     host.game.update({ ...IDLE, confirm: true }, DT); // START
     expect(host.menu().note).toBe('GET READY');
     expect(guest.menu().note).toBe('GET READY');
+    for (const p of [host, guest])
+      expect(p.menu().rows.find((r) => r.label === 'GARAGE')).toBeUndefined();
     const n = Math.round(START_DELAY_MS / 1000 / DT);
     const lockstep = (k: number) => {
       for (let i = 0; i < k; i++) {
@@ -1995,6 +2005,82 @@ describe('multiplayer entry and lobby', () => {
     expect(host.menu().row).toBe(2);
   });
 
+  describe('lobby garage', () => {
+    /** both in the lobby; guest opens the GARAGE row */
+    const toGarage = () => {
+      const p = pair();
+      p.host.enter('host');
+      p.guest.enter('join');
+      p.host.tap({});
+      return p;
+    };
+    const openGarage = (guest: ReturnType<typeof player>) => {
+      guest.tap({ down: true });
+      guest.tap({ down: true });
+      guest.tap({ confirm: true });
+      expect(guest.game.debug.phase).toBe('garage');
+    };
+    /** next unlocked car that is not the current one */
+    const nextCar = (guest: ReturnType<typeof player>) => {
+      const from = guest.menu().garage!.model;
+      do guest.tap({ right: true });
+      while (guest.menu().garage!.lock || guest.menu().garage!.model === from);
+      return guest.menu().garage!.model;
+    };
+
+    it('changing car in the garage drops ready and shows the new car to the rival', () => {
+      const { host, guest } = toGarage();
+      guest.tap({ down: true });
+      guest.tap({ confirm: true });
+      expect(host.menu().mp!.rivalReady).toBe(true);
+      guest.tap({ up: true });
+      openGarage(guest);
+      expect(host.menu().mp!.rivalReady).toBe(false);
+      const car = nextCar(guest);
+      guest.tap({ confirm: true });
+      expect(guest.game.debug.phase).toBe('mplobby');
+      expect(guest.menu().row).toBe(2);
+      expect(guest.menu().rows[2]).toEqual({ label: 'GARAGE', value: PLAYER_MODELS[car].name });
+      expect(host.menu().note).toBe(PLAYER_MODELS[car].name);
+
+      guest.tap({ up: true });
+      guest.tap({ confirm: true });
+      host.tap({ down: true });
+      host.tap({ confirm: true });
+      host.tap({ down: true });
+      host.tap({ down: true });
+      host.game.update({ ...IDLE, confirm: true }, DT);
+      const n = Math.round((START_DELAY_MS / 1000 + COUNTDOWN_SECONDS) / DT) + 30;
+      for (let i = 0; i < n; i++) {
+        guest.game.update(IDLE, DT);
+        host.game.update(IDLE, DT);
+      }
+      expect(host.game.view().render.rivals![0]).toMatchObject({ name: 'GUESTY', model: car });
+    });
+
+    it('discarding returns to the lobby without sending a change', () => {
+      const { b, host, guest } = toGarage();
+      openGarage(guest);
+      const send = vi.spyOn(b, 'send');
+      nextCar(guest);
+      guest.tap({ pause: true });
+      expect(guest.game.debug.phase).toBe('mplobby');
+      expect(guest.menu().row).toBe(2);
+      expect(send.mock.calls.filter(([m]) => m.t === 'hello')).toHaveLength(0);
+      expect(host.menu().note).toBe(PLAYER_MODELS.mx5.name);
+    });
+
+    it('the rival leaving while in the garage returns to the title', () => {
+      const { host, guest } = toGarage();
+      openGarage(guest);
+      host.tap({ pause: true });
+      guest.tap({});
+      expect(guest.game.debug.phase).toBe('title');
+      expect(guest.menu().toast).toBe('HOSTY LEFT');
+      expect(guest.menu().row).toBe(2);
+    });
+  });
+
   it('a version mismatch closes the lobby with a refresh hint', () => {
     const { b, host } = pair();
     host.enter('host');
@@ -2017,6 +2103,7 @@ describe('multiplayer entry and lobby', () => {
       host.tap({ confirm: true });
       guest.tap({ down: true });
       guest.tap({ confirm: true });
+      host.tap({ down: true });
       host.tap({ down: true });
       host.game.update({ ...IDLE, confirm: true }, DT);
       const lockstep = (k: number, hi: Partial<InputState> = {}, gi: Partial<InputState> = {}) => {
