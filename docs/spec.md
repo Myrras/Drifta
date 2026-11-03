@@ -23,7 +23,7 @@ Top-down 2D drift game, Tony Hawk-style combos, point-to-point maps.
 - Engine: physically modelled 4-cylinder synth (firing pulses + exhaust resonance).
 - Look: flat vector, dark concrete, painted bays, fluorescent light patches, persistent tire marks per floor, smoke.
 - Audio: CC0 samples (engine loop pitched by rpm, tire squeal loop, hit, bank ding) in public/sounds, sources in CREDITS.md.
-- Input: keyboard (WASD/arrows, Space handbrake, R restart, Esc pause, Enter confirm) + gamepad standard mapping (left stick steer, RT throttle, LT brake/reverse, A handbrake, Start pause/confirm).
+- Input: keyboard (WASD/arrows, Space handbrake, R restart, Esc pause, Enter confirm) + gamepad standard mapping (left stick steer, RT throttle, LT brake/reverse, A handbrake, Start pause/confirm), N / pad RB skip song (in a run), Q/E / pad LB/RB switch settings tabs.
 
 ## Tech
 
