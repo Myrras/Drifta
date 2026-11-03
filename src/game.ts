@@ -1121,6 +1121,7 @@ export function createGame(
             impact: cfg.shake ? s.shake : 0,
             runId: s.runId,
             boomPhase: audio.boomPhase(),
+            shakeOn: cfg.shake,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
             ghost: ghostView(),

@@ -29,7 +29,7 @@ import { drawCar, drawParkedCar } from './sprites';
 import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
-import { boomPulse } from './audio';
+import { boomAge, boomPulse, boomShake } from './audio';
 
 // --- visual tuning ---
 const STATIC_PX = 10; // px per meter, pre-rendered floor layer
@@ -44,6 +44,7 @@ const CAM_ZOOM_RATE = 1.5;
 const ATTRACT_ZOOM = 0.64; // menu attract scene: view height factor (closer in)
 const ATTRACT_Y = 0.5; // ... and the car's screen height, fraction of the view
 const SHAKE_PX = 7; // CSS px at shake = 1
+const BOOM_SHAKE_PX = 14; // CSS px at full boom shake, on each kick
 
 const BG = '#0a0b0d';
 const CONCRETE = '#2b2c30';
@@ -691,11 +692,33 @@ function drawBoomCar(
   { p, color }: { p: ParkedPose; color: string },
   t: number,
   k: number,
+  age: number,
   a: number,
 ) {
   const c = Math.cos(p.facing);
   const s = Math.sin(p.facing);
-  const jit = k * 0.03 * Math.sin(t * 90); // m, sideways
+  const jit = k * 0.06 * Math.sin(t * 90); // m, sideways
+  // shock rings + flash: that patch of the screen visibly thumps with each kick
+  g.save();
+  g.globalAlpha = a;
+  g.globalCompositeOperation = 'lighter';
+  const fadeOut = Math.max(0, 1 - age / 0.5);
+  g.strokeStyle = `rgba(255,70,210,${0.8 * fadeOut * fadeOut})`;
+  for (const [r0, speed] of [
+    [1, 16],
+    [0.5, 10],
+  ]) {
+    g.lineWidth = 0.35 * fadeOut + 0.05;
+    g.beginPath();
+    g.arc(p.x, p.y, r0 + age * speed, 0, Math.PI * 2);
+    g.stroke();
+  }
+  const flash = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6);
+  flash.addColorStop(0, `rgba(255,90,220,${0.45 * k})`);
+  flash.addColorStop(1, 'rgba(255,90,220,0)');
+  g.fillStyle = flash;
+  g.fillRect(p.x - 6, p.y - 6, 12, 12);
+  g.restore();
   g.save();
   g.globalAlpha = a * 0.35; // ground shadow, offset like the static layer's
   g.translate(p.x + 0.3, p.y + 0.4);
@@ -1868,8 +1891,15 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
-    const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
+    const bt = v.boomPhase ?? clock; // audio's bar phase keeps shake and rings on the thump
+    const pulse = boomPulse(bt);
+    let boomAmt = 0; // nearest boom car on the shown floor
+    if (v.shakeOn)
+      for (const b of lightLayer(v.map, v.floorIndex).boom)
+        boomAmt = Math.max(boomAmt, boomShake(Math.hypot(b.p.x - car.pos.x, b.p.y - car.pos.y)));
+    const shk = SHAKE_PX * v.shake + BOOM_SHAKE_PX * boomAmt * pulse;
+    const sx = (Math.random() * 2 - 1) * shk;
+    const sy = (Math.random() * 2 - 1) * shk;
     const ws = dpr * scale;
     // world -> device, rotated by `rot` about the screen centre
     const rc = Math.cos(rot) * ws;
@@ -1893,10 +1923,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
     }
     ctx.globalAlpha = 1;
-    const pulse = boomPulse(v.boomPhase ?? clock); // audio's bar phase keeps the shake on the thump
+    const age = boomAge(bt);
     for (const [idx, a] of floors)
       for (const b of lightLayer(v.map, idx).boom)
-        if (visible(b.p.x, b.p.y, 5)) drawBoomCar(ctx, b, clock, pulse, a);
+        if (visible(b.p.x, b.p.y, 10)) drawBoomCar(ctx, b, clock, pulse, age, a);
 
     // traffic cars under the darkness: lit by street lights and headlights like the player
     const sim = v.traffic?.sim;
