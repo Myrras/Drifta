@@ -1,6 +1,9 @@
 import { CAR_MODELS } from '../models';
-import type { CarModel, Floor, GameMap, Helix, Rect, Solid, Vec } from '../types';
+import type { CarModel, Floor, Helix, Rect, Solid, Vec } from '../types';
+import type { Decor, DecoratedMap } from './decor';
 
+// B2 MEET: underground drift meet. B1 (upper) is the technical floor, the helix drops to B2, a
+// long sweeper lap around the meet with the exit gate in the SW corner.
 const W = 140;
 const H = 80;
 const BAY_W = 2.5;
@@ -12,20 +15,12 @@ const PI = Math.PI;
 /** Route clearance the outline keeps (m), see garage.test. */
 const LANE = 5.3;
 
-// Helix 0 (NW): enter at the north point driving west, around the west side (ccw), out east.
-// Helix 1 (SE): enter at the east point driving south, around the south side (cw), out north.
+// The helix (west of center): enter at its west point driving north, around the north side (cw),
+// out of its east point driving south.
 const helixes: Helix[] = [
-  {
-    from: 0,
-    center: { x: 17, y: 17 },
-    rCore: R_CORE,
-    rOuter: R_OUTER,
-    enterAngle: -PI / 2,
-    sweep: -PI,
-  },
-  { from: 1, center: { x: 123, y: 63 }, rCore: R_CORE, rOuter: R_OUTER, enterAngle: 0, sweep: PI },
+  { from: 0, center: { x: 40, y: 40 }, rCore: R_CORE, rOuter: R_OUTER, enterAngle: PI, sweep: PI },
 ];
-const [H0, H1] = helixes;
+const [HX] = helixes;
 
 const polar = (h: Helix, a: number, r = R_MID): Vec => ({
   x: h.center.x + r * Math.cos(a),
@@ -106,59 +101,45 @@ function course(ctl: number[][]) {
   return { line, poses, corners };
 }
 
-// Control points [x, y, fillet radius]. Rhythm per floor: a technical linked section, a short
-// straight, a sweeper; corners alternate left/right and open up on exit.
-// ROOF: wide S-curves east along the south, a long left sweeper up the east side, then a
-// right-left esse along the north into helix 0.
+// Control points [x, y, fillet radius].
+// B1 (technical): pillar esse along the north, around the open donut bay on the east, a barrier
+// chicane along the south, then a right-hander north into the helix.
 const C0 = course([
-  [10, 58],
-  [30, 58, 15],
-  [46, 71, 12],
-  [64, 71, 9],
-  [74, 54, 15],
-  [106, 54, 28],
-  [124, 30, 16],
-  [112, 10, 15],
-  [96, 10, 12],
-  [78, 22, 15],
-  [60, 22, 12],
-  [46, 6, 12],
-  [17, 6],
+  [8, 11],
+  [58, 11, 14],
+  [74, 25, 12],
+  [128, 25, 14],
+  [128, 68, 14],
+  [104, 68, 10],
+  [94, 60, 10],
+  [78, 60, 10],
+  [68, 70, 10],
+  [29, 70, 10],
+  [29, 40],
 ]);
-// LEVEL 2: out of helix 0 into a slalom down to the south aisle, a sweeper north through the
-// middle, a pillar chicane along the north, then a right-hander down the east side into helix 1.
+// B2 (the meet): out of the helix south, then a long left-hand lap of the perimeter: a medium
+// left onto the south straight, the SE left, a wide NE sweeper, an esse past the spectator deck
+// along the north, the NW left and a sprint south out of the exit gate.
 const C1 = course([
-  [17, 28],
-  [34, 28, 15],
-  [54, 56, 12],
-  [70, 50, 12],
-  [98, 50, 24],
-  [100, 16, 12],
-  [134, 16, 12],
-  [134, 40],
+  [51, 40],
+  [51, 72, 12],
+  [132, 72, 18],
+  [132, 8, 26],
+  [100, 8, 12],
+  [86, 20, 12],
+  [70, 20, 12],
+  [58, 8, 12],
+  [8, 8, 16],
+  [8, 76],
 ]);
-// GROUND: up out of helix 1, tight linked corners west through the pillar forest, up the west
-// side, then a straight sprint east to the exit gate.
-const C2 = course([
-  [112, 63],
-  [112, 38, 12],
-  [96, 38, 9],
-  [84, 28, 12],
-  [66, 40, 12],
-  [50, 40, 15],
-  [36, 62, 15],
-  [14, 62, 12],
-  [14, 26, 24],
-  [40, 12, 15],
-  [134, 12],
-]);
-const courses = [C0, C1, C2];
+const courses = [C0, C1];
+/** Fillet radius and signed turn of every corner, per floor (see garage.test). */
+export const garageCorners = courses.map((c) => c.corners.map(({ r, turn }) => ({ r, turn })));
 
-/** Hand-tuned driving line per floor; each helix half circle switches floor at its midpoint. */
+/** Hand-tuned driving line per floor; the helix half circle switches floor at its midpoint. */
 export const garageRoute: { floor: number; points: Vec[] }[] = [
-  { floor: 0, points: [...C0.line.slice(0, -1), ...arc(H0, 0, 0.5)] },
-  { floor: 1, points: [...arc(H0, 0.5, 1), ...C1.line.slice(1, -1), ...arc(H1, 0, 0.5)] },
-  { floor: 2, points: [...arc(H1, 0.5, 1), ...C2.line.slice(1)] },
+  { floor: 0, points: [...C0.line.slice(0, -1), ...arc(HX, 0, 0.5)] },
+  { floor: 1, points: [...arc(HX, 0.5, 1), ...C1.line.slice(1)] },
 ];
 
 const wall = (x: number, y: number, w: number, h: number): Solid => ({ kind: 'wall', x, y, w, h });
@@ -179,12 +160,12 @@ function clip(r: Solid): Solid | null {
   return x1 > x0 && y1 > y0 ? { ...r, x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 }
 
-/** Perimeter walls; `gap` opens the east wall between y0 and y1 (exit gate). */
+/** Perimeter walls; `gap` opens the south wall between x0 and x1 (exit gate). */
 function perimeter(gap?: [number, number]): Solid[] {
-  const east = gap
-    ? [wall(W - 1, 1, 1, gap[0] - 1), wall(W - 1, gap[1], 1, H - 1 - gap[1])]
-    : [wall(W - 1, 1, 1, H - 2)];
-  return [wall(0, 0, W, 1), wall(0, H - 1, W, 1), wall(0, 1, 1, H - 2), ...east];
+  const south = gap
+    ? [wall(0, H - 1, gap[0], 1), wall(gap[1], H - 1, W - gap[1], 1)]
+    : [wall(0, H - 1, W, 1)];
+  return [wall(0, 0, W, 1), ...south, wall(0, 1, 1, H - 2), wall(W - 1, 1, 1, H - 2)];
 }
 
 /**
@@ -305,7 +286,7 @@ const ECHELON = (35 * PI) / 180;
  * in echelon, noses down the course, gaps between runs), painted bays along the walls with a
  * few cars in them. Everything keeps LANE + its half-diagonal from the route.
  */
-function furnish(idx: number, solids: Solid[], keep: Rect[], pillarShare: number) {
+function furnish(idx: number, solids: Solid[], keep: Rect[], pillarShare: number, edge: number) {
   const rand = rng(idx * 101 + 7);
   const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
   const { poses, corners: turns } = courses[idx];
@@ -381,7 +362,7 @@ function furnish(idx: number, solids: Solid[], keep: Rect[], pillarShare: number
           ? (length * Math.sin(ECHELON) + width * Math.cos(ECHELON)) / 2
           : width / 2;
         const usePillar = !echelon && rand() < pillarShare;
-        for (let d = 7.4 + (usePillar ? 0.5 : half); d < 11; d += 0.6) {
+        for (let d = edge + (usePillar ? 0.5 : half); d < edge + 3.6; d += 0.6) {
           const c = v(p.x - side * d * Math.sin(p.a), p.y + side * d * Math.cos(p.a));
           // keep each apex bait on its own
           if (baits.some((b) => Math.hypot(b.x + b.w / 2 - c.x, b.y + b.h / 2 - c.y) < 9)) break;
@@ -463,47 +444,261 @@ function clipZones(idx: number): Rect[] {
     });
 }
 
+/** Builds one floor: perimeter, helix guards, `extra` solids, then furnish around the route. */
 function floor(
   name: string,
   idx: number,
   extra: Solid[],
   keep: Rect[],
-  pillarShare = 0,
-  gap?: [number, number],
+  o: { pillarShare?: number; gap?: [number, number]; edge?: number; bays?: Rect[] } = {},
 ): Floor {
   const joined = helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const solids = [
-    ...perimeter(gap),
+    ...perimeter(o.gap),
     ...joined.flatMap((h) => helixGuards(h, h.from === idx)),
     ...extra,
   ];
-  const { placed, bays } = furnish(idx, solids, keep, pillarShare);
+  const { placed, bays } = furnish(idx, solids, keep, o.pillarShare ?? 0, o.edge ?? 7.4);
   return {
     name,
     w: W,
     h: H,
     solids: [...solids, ...placed],
-    bays,
+    bays: [...bays, ...(o.bays ?? [])],
     lights: lightsAlong(garageRoute[idx].points),
     circles: joined.map((h) => ({ ...h.center, r: h.rCore })),
     clipZones: clipZones(idx),
   };
 }
 
-// game.test teleports to (136, 12.5) on the roof for wall hits: keep that corner empty.
-const roof = floor('ROOF', 0, [wall(66, 33, 8, 10)], [{ x: 128, y: 6, w: 11, h: 13 }]);
-const level2 = floor('LEVEL 2', 1, [], []);
-const ground = floor('GROUND', 2, [], [], 0.3, [7, 17]);
+/**
+ * A row of painted bays along a wall face at y = `wallY` (cars on the `side` it faces: -1 north,
+ * +1 south), reverse-parked nose out with hazards on: the meet line-up.
+ */
+function meetRow(x0: number, x1: number, wallY: number, side: number, seed: number) {
+  const rand = rng(seed);
+  const bays: Rect[] = [];
+  const cars: Solid[] = [];
+  const D = 5.2;
+  for (let k = 0, x = x0; x + BAY_W <= x1 + 1e-9; k++, x += BAY_W) {
+    bays.push({ x, y: side < 0 ? wallY - D : wallY, w: BAY_W, h: D });
+    if (rand() < 0.15) continue; // a few gaps
+    const model = MODELS[(k + seed) % MODELS.length];
+    const { length, width, colors } = CAR_MODELS[model];
+    const facing = (side * PI) / 2;
+    const cx = x + BAY_W / 2;
+    const cy = wallY + side * (0.35 + length / 2);
+    cars.push({
+      kind: 'car',
+      x: cx - length / 2,
+      y: cy - width / 2,
+      w: length,
+      h: width,
+      angle: facing,
+      facing,
+      model,
+      color: colors[Math.floor(rand() * colors.length)],
+      ...(rand() < 0.45 && { lights: 'hazard' as const }),
+    });
+  }
+  return { bays, cars };
+}
+
+// B1: rim over the helix's north half, sealed west block (no cut from the start to the helix),
+// center block, the donut bay's north barrier and post, a chicane barrier off the south wall.
+const B1_BAY: Rect = { x: 89, y: 34, w: 34, h: 26 };
+const b1 = floor(
+  'B1',
+  0,
+  [
+    wall(1, 21, 56.2, 1),
+    wall(1, 22, 21.8, 36),
+    wall(58, 31, 30, 23),
+    wall(88, 32, 30, 1),
+    wall(84, 67, 6, 12),
+    pillar(106, 47, 1.4),
+  ],
+  // the bay stays open; game.test teleports to (136, 12.5) on floor 0 for wall hits
+  [B1_BAY, { x: 128, y: 6, w: 11, h: 13 }],
+  { pillarShare: 0.35 },
+);
+
+// B2: rim over the helix, a sealed block south of it (no cut to the exit), the meet spine with a
+// line-up on both faces, the pocket's east wall, the spectator deck on the north wall.
+const north = meetRow(60, 116, 41, -1, 3);
+const south = meetRow(60, 116, 45, 1, 8);
+const b2 = floor(
+  'B2',
+  1,
+  [
+    wall(22.8, 21, 34.4, 1),
+    wall(16, 58.5, 29, 20.5),
+    wall(56.2, 41, 63.8, 4),
+    wall(118, 22, 2, 19),
+    wall(72, 1, 12, 9),
+    ...north.cars,
+    ...south.cars,
+  ],
+  [],
+  { edge: 8.5, gap: [2, 14], bays: [...north.bays, ...south.bays] },
+);
+
+const NEON = { pink: '#ff2d95', cyan: '#2de2ff', violet: '#9b5cff', amber: '#ffb03a' };
+
+/** Painted and lit dressing per floor, derived from its route, corners and bays. */
+function dressing(idx: number, f: Floor): Decor[] {
+  const rand = rng(idx * 31 + 9);
+  const out: Decor[] = [];
+  const floor = idx;
+  const route = garageRoute[idx].points;
+  const free = (p: Vec, pad: number) =>
+    f.solids.every((s) => !apart({ ...p, w: 0, h: 0, kind: 'wall' }, s, 2 * pad));
+  const away = (p: Vec) => !free(p, 0) || inHelix(p);
+  const inHelix = (p: Vec) =>
+    helixes.some((h) => Math.hypot(p.x - h.center.x, p.y - h.center.y) < h.rOuter + 1);
+
+  // straight lane arrows halfway down every long straight
+  for (let i = 1; i < route.length; i++) {
+    const a = route[i - 1];
+    const b = route[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const p = v(a.x + (b.x - a.x) * 0.45, a.y + (b.y - a.y) * 0.45);
+    if (len > 24 && !inHelix(p))
+      out.push({ floor, kind: 'arrow', ...p, angle: Math.atan2(b.y - a.y, b.x - a.x) });
+  }
+  // old tire marks on the line through every real corner, a little wide, with some wobble
+  for (const c of courses[idx].corners) {
+    if (Math.abs(c.turn) < PI / 6) continue;
+    const g = Math.sign(c.turn);
+    const points: Vec[] = [];
+    for (let k = -0.2; k <= 1.25; k += 0.05) {
+      const a = c.a1 + c.turn * k;
+      const r = c.r + 1.2 + Math.sin(k * 7 + c.r) * 0.6;
+      points.push(v(c.o.x + g * r * Math.sin(a), c.o.y - g * r * Math.cos(a)));
+    }
+    out.push({ floor, kind: 'skid', points });
+  }
+  // bay numbers and oil in some bays
+  f.bays.forEach((b, k) => {
+    const tall = b.h > b.w;
+    out.push({
+      floor,
+      kind: 'text',
+      x: b.x + b.w / 2,
+      y: b.y + b.h / 2,
+      angle: tall ? 0 : -PI / 2,
+      text: `${String.fromCharCode(65 + (k % 6))}${String(k + 1).padStart(2, '0')}`,
+      size: 0.75,
+      color: 'rgba(220,180,60,0.5)',
+    });
+    if (rand() < 0.3)
+      out.push({ floor, kind: 'stain', x: b.x + b.w / 2, y: b.y + b.h / 2, r: 0.8 + rand() });
+  });
+  // oil stains around the course edges
+  for (let n = 0; n < 40; n++) {
+    const q = courses[idx].poses[Math.floor(rand() * courses[idx].poses.length)];
+    const d = (rand() < 0.5 ? -1 : 1) * (2 + rand() * 6);
+    const p = v(q.x - d * Math.sin(q.a), q.y + d * Math.cos(q.a));
+    if (!away(p)) out.push({ floor, kind: 'stain', ...p, r: 0.5 + rand() * 1.2 });
+  }
+  // ceiling light shafts: a few long soft beams across open floor
+  for (let n = 0; n < 4; n++) {
+    const q = courses[idx].poses[Math.floor(((n + 0.5) / 4) * courses[idx].poses.length)];
+    if (!inHelix(q))
+      out.push({ floor, kind: 'shaft', x: q.x, y: q.y, w: 14, h: 3.5, angle: q.a + 0.6 });
+  }
+  return out;
+}
+
+const crowd = (floor: number, x: number, y: number, angle: number, n: number): Decor => ({
+  floor,
+  kind: 'crowd',
+  x,
+  y,
+  angle,
+  n,
+  seed: Math.round(x * 7 + y * 13),
+});
+const neon = (floor: number, ax: number, ay: number, bx: number, by: number, color: string) =>
+  ({ floor, kind: 'neon', a: v(ax, ay), b: v(bx, by), color, flicker: 0.4 }) as Decor;
+
+const decor: Decor[] = [
+  ...dressing(0, b1),
+  ...dressing(1, b2),
+  // B1: level stencils, donut rings round the post, the bay lit sodium, neon on the blocks
+  { floor: 0, kind: 'text', x: 16, y: 11, angle: 0, text: 'B1', size: 5 },
+  { floor: 0, kind: 'text', x: 102, y: 72, angle: 0, text: 'B1', size: 4 },
+  { floor: 0, kind: 'hatch', x: 2, y: 59, w: 20, h: 3 },
+  { floor: 0, kind: 'hatch', x: 82, y: 64, w: 10, h: 3 },
+  { floor: 0, kind: 'hatch', x: 90, y: 33, w: 26, h: 2 },
+  ...[3.5, 4.5, 5.5, 6.5].map((r, i): Decor => ({
+    floor: 0,
+    kind: 'skid',
+    points: Array.from({ length: 49 }, (_, k) => {
+      const a = (k / 48) * 2 * PI;
+      return v(106 + i * 0.6 + r * Math.cos(a), 47 - i * 0.4 + r * Math.sin(a));
+    }),
+  })),
+  { floor: 0, kind: 'pool', x: 106, y: 47, r: 13 },
+  { floor: 0, kind: 'pool', x: 12, y: 12, r: 8 },
+  { floor: 0, kind: 'pool', x: 87, y: 72, r: 7 },
+  neon(0, 59, 54.3, 87, 54.3, NEON.pink),
+  neon(0, 88.5, 32.2, 117.5, 32.2, NEON.cyan),
+  neon(0, 2, 58.3, 22, 58.3, NEON.violet),
+  neon(0, 84.3, 67.3, 89.7, 67.3, NEON.amber),
+  // murals: painted along the top of block walls, or a strip at the foot of perimeter walls
+  { floor: 0, kind: 'graffiti', x: 59, y: 50.5, w: 28, h: 3.3, seed: 1, text: 'DRIFT' },
+  { floor: 0, kind: 'graffiti', x: 2, y: 54.5, w: 20, h: 3.3, seed: 2 },
+  { floor: 0, kind: 'graffiti', x: 30, y: 1, w: 24, h: 2.4, seed: 3, text: 'B2 MEET' },
+  { floor: 0, kind: 'graffiti', x: 137, y: 40, w: 2, h: 22, seed: 4 },
+  crowd(0, 104, 30.5, -PI / 2, 6),
+  crowd(0, 18, 19, -PI / 2, 4),
+  // B2: big stencils, the meet: neon spine, sodium over the line-up, crowd along the pocket and
+  // the deck, graffiti on the blocks, the exit lit up
+  { floor: 1, kind: 'text', x: 51, y: 62, angle: PI / 2, text: 'B2', size: 6 },
+  { floor: 1, kind: 'text', x: 92, y: 74, angle: 0, text: 'B2 MEET', size: 3.2 },
+  { floor: 1, kind: 'text', x: 8, y: 66, angle: PI / 2, text: 'EXIT', size: 2.5 },
+  { floor: 1, kind: 'hatch', x: 72, y: 10, w: 12, h: 2.5 },
+  { floor: 1, kind: 'hatch', x: 120, y: 22, w: 4, h: 23 },
+  { floor: 1, kind: 'hatch', x: 2, y: 69, w: 12, h: 2 },
+  neon(1, 57, 41.4, 119.5, 41.4, NEON.pink),
+  neon(1, 57, 44.6, 119.5, 44.6, NEON.cyan),
+  neon(1, 72.3, 9.7, 83.7, 9.7, NEON.pink),
+  neon(1, 45.3, 60, 45.3, 78, NEON.violet),
+  neon(1, 118.3, 23, 118.3, 40, NEON.pink),
+  neon(1, 2, 78.6, 14, 78.6, NEON.amber),
+  { floor: 1, kind: 'graffiti', x: 58, y: 41.7, w: 61, h: 2.6, seed: 5, text: 'B2 MEET' },
+  { floor: 1, kind: 'graffiti', x: 41.5, y: 60, w: 3.5, h: 18, seed: 6 },
+  { floor: 1, kind: 'graffiti', x: 17, y: 59, w: 23, h: 3.5, seed: 7, text: 'SLIDE' },
+  { floor: 1, kind: 'graffiti', x: 137, y: 46, w: 2, h: 20, seed: 8 },
+  ...[66, 78, 90, 102, 112].map((x): Decor => ({ floor: 1, kind: 'pool', x, y: 34, r: 8 })),
+  ...[66, 78, 90, 102, 112].map((x): Decor => ({ floor: 1, kind: 'pool', x, y: 53, r: 7 })),
+  { floor: 1, kind: 'pool', x: 8, y: 72, r: 8, color: '#ffd28a' },
+  { floor: 1, kind: 'pool', x: 78, y: 8, r: 7 },
+  ...[63, 72, 81, 90, 99, 108].map((x, i) =>
+    crowd(1, x, 33.5 + (i % 2) * 0.6, -PI / 2, 5 + (i % 3)),
+  ),
+  ...[74, 78, 82].map((x) => crowd(1, x, 8.6, PI / 2, 3)),
+  crowd(1, 124, 60, PI, 4),
+  crowd(1, 3.5, 40, 0, 4),
+];
 
 const total = garageRoute.reduce((sum, r) => sum + routeLength(r.points), 0);
+// The old 3-floor JAPAN GARAGE route ran 812 m for medals [4500, 10000, 17500]; scale by length.
+const OLD_LEN = 812;
 
-export const garage: GameMap = {
-  name: 'JAPAN GARAGE',
+export const garage: DecoratedMap = {
+  name: 'B2 MEET',
   parTime: Math.round(total / 17),
-  // tuning values: total score for bronze, silver, gold; ~+10% for clipping zones
-  medals: [4500, 10000, 17500],
-  floors: [roof, level2, ground],
+  // tuning values: total score for bronze, silver, gold
+  medals: [4500, 10000, 17500].map((m) => Math.round((m * total) / OLD_LEN / 500) * 500) as [
+    number,
+    number,
+    number,
+  ],
+  floors: [b1, b2],
   helixes,
-  start: { floor: 0, pos: v(10, 58), angle: 0 },
-  finish: { floor: 2, zone: { x: 129, y: 8.5, w: 10, h: 7 } },
+  start: { floor: 0, pos: v(8, 11), angle: 0 },
+  finish: { floor: 1, zone: { x: 2, y: 71, w: 12, h: 8 } },
+  decor,
 };

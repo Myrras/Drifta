@@ -83,11 +83,11 @@ describe('game', () => {
     expect(game.view().render.blend).toBeNull();
   });
 
-  it('finishes on the ground floor and stores a new best', () => {
+  it('finishes on the last floor and stores a new best', () => {
     const { game, step, toRun, best } = setup();
     toRun();
-    game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 134, y: 12 };
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
     const r = game.view().hud.results!;
     expect(game.view().hud.phase).toBe('results');
@@ -99,8 +99,8 @@ describe('game', () => {
   it('keeps a higher best', () => {
     const { game, step, toRun, best } = setup(memBest(1e9));
     toRun();
-    game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 134, y: 12 };
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
     expect(game.view().hud.results!.newBest).toBe(false);
     expect(best.get()).toBe(1e9);
@@ -185,8 +185,8 @@ describe('game', () => {
   it('locks confirm for 0.5 s on results', () => {
     const { game, step, toRun } = setup();
     toRun();
-    game.debug.floorIndex = 2;
-    game.debug.car.pos = { x: 134, y: 12 };
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
     step({ confirm: true }, 10);
     expect(game.view().hud.phase).toBe('results');
@@ -233,8 +233,8 @@ describe('top drift clips', () => {
       return vi.mocked(clips.mark).mock.lastCall![0];
     };
     const finish = () => {
-      game.debug.floorIndex = 2;
-      game.debug.car.pos = { x: 134, y: 12 };
+      game.debug.floorIndex = garage.finish.floor;
+      game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
       step();
     };
     return { game, step, clips, bank, finish };
@@ -278,7 +278,7 @@ describe('top drift clips', () => {
     step({ down: true });
     expect(game.view().hud.results!.driftRow).toBe(1);
     step({ save: true, down: true }); // S also reports down
-    expect(clips.save).toHaveBeenCalledWith(second, 'drifta-japan-garage-200.webm');
+    expect(clips.save).toHaveBeenCalledWith(second, 'drifta-b2-meet-200.webm');
     const r = game.view().hud.results!;
     expect(r.driftRow).toBe(1);
     expect(r.drifts.map((x) => x.saved)).toEqual([false, true]);

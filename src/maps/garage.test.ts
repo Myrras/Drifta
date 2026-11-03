@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { garage, garageRoute } from './garage';
+import { garage, garageCorners, garageRoute } from './garage';
+import { drawDecor, type Decor, type DecorLayer } from './decor';
 import { CAR_MODELS } from '../models';
+import { CAR_WIDTH } from '../collision';
 import type { CarModel, Floor, Helix, Rect, Solid, Vec } from '../types';
 
 const S = 0.5;
@@ -154,10 +156,10 @@ const targetOf = (i: number) =>
   i < helixes.length ? entryPoint(helixes[i]) : center(garage.finish.zone);
 const carsOf = (f: Floor) => f.solids.filter((s) => s.kind === 'car');
 
-describe('garage', () => {
-  it('has 3 floors joined by 2 half-circle helixes', () => {
-    expect(floors).toHaveLength(3);
-    expect(helixes.map((h) => h.from)).toEqual([0, 1]);
+describe('garage (B2 MEET)', () => {
+  it('has 2 floors joined by 1 half-circle helix', () => {
+    expect(floors.map((f) => f.name)).toEqual(['B1', 'B2']);
+    expect(helixes.map((h) => h.from)).toEqual([0]);
     for (const h of helixes) {
       expect(Math.abs(h.sweep)).toBeCloseTo(Math.PI);
       for (const f of [floors[h.from], floors[h.from + 1]]) {
@@ -165,7 +167,7 @@ describe('garage', () => {
       }
     }
     expect(garage.start.floor).toBe(0);
-    expect(garage.finish.floor).toBe(2);
+    expect(garage.finish.floor).toBe(1);
   });
 
   it('keeps everything inside floor bounds', () => {
@@ -180,7 +182,7 @@ describe('garage', () => {
       expect(f.lights.length).toBeGreaterThan(0);
       expect(f.bays.length).toBeGreaterThan(0);
     }
-    expect(inside(garage.finish.zone, floors[2])).toBe(true);
+    expect(inside(garage.finish.zone, floors[1])).toBe(true);
   });
 
   it('keeps the driven half of every helix ring free of solids on both floors', () => {
@@ -198,14 +200,15 @@ describe('garage', () => {
 
   it('keeps start and finish clear of solids by 3 m', () => {
     expect(clearance(garage.start.pos, floors[0])).toBeGreaterThanOrEqual(3);
-    expect(clearance(center(garage.finish.zone), floors[2])).toBeGreaterThanOrEqual(3);
+    expect(clearance(center(garage.finish.zone), floors[1])).toBeGreaterThanOrEqual(3);
+    expect(floors[0].solids.find((s) => inSolid(garage.start.pos, s))).toBeUndefined();
   });
 
-  it('reaches the next helix / the finish from every floor spawn', () => {
+  it('reaches the helix / the finish from every floor spawn', () => {
     floors.forEach((f, i) => expect(reaches(f, spawnOf(i), targetOf(i))).toBe(true));
   });
 
-  it('only lets you into a helix ring from its open lane', () => {
+  it('only lets you into the helix ring from its open lane', () => {
     for (const h of helixes) {
       const ring = (p: Vec) => inAnnulus(p, h);
       const upper = floors[h.from];
@@ -217,11 +220,21 @@ describe('garage', () => {
     }
   });
 
-  it('route chains spawn to finish and stays 5 m from solids (10 m+ lanes)', () => {
-    expect(garageRoute.map((r) => r.floor)).toEqual([0, 1, 2]);
+  it('has no shortcut past the east side of B1 or the south straight of B2', () => {
+    const ring = (p: Vec) => helixes.some((h) => inAnnulus(p, h));
+    const cutB1 = (p: Vec) => ring(p) || (p.x > 88 && p.y > 40 && p.y < 42);
+    expect(reaches(floors[0], spawnOf(0), mouth(helixes[0], false), cutB1)).toBe(false);
+    const cutB2 = (p: Vec) => ring(p) || (p.x > 85 && p.x < 87 && p.y > 45);
+    expect(reaches(floors[1], mouth(helixes[0], true), targetOf(1), cutB2)).toBe(false);
+  });
+
+  it('route chains spawn to finish and keeps lanes 5+ car widths wide', () => {
+    expect(garageRoute.map((r) => r.floor)).toEqual([0, 1]);
     expect(garageRoute[0].points[0]).toEqual(garage.start.pos);
-    const last = garageRoute[2].points.at(-1)!;
+    const last = garageRoute[1].points.at(-1)!;
     expect(inRect(last, garage.finish.zone)).toBe(true);
+    // 5 m each side of the line: 10 m lanes, 5.7 car widths
+    expect(2 * 5).toBeGreaterThanOrEqual(5 * CAR_WIDTH);
     for (const { floor, points } of garageRoute) {
       for (const p of samples(points)) {
         // helix half circles are drawn as chords, which dip 0.1 m toward the core
@@ -229,7 +242,6 @@ describe('garage', () => {
         expect(clearance(p, floors[floor])).toBeGreaterThanOrEqual(min);
       }
     }
-    // each helix: the route passes its entry point on `from` and its exit point on `from + 1`
     for (const h of helixes) {
       const near = (pts: Vec[], q: Vec) => pts.some((p) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-6);
       expect(near(garageRoute[h.from].points, entryPoint(h))).toBe(true);
@@ -237,47 +249,36 @@ describe('garage', () => {
     }
   });
 
-  it('links varied left and right corners on every floor', () => {
-    for (const { points } of garageRoute) {
-      // signed turn per vertex outside the helixes, merged into corners while the sign holds
-      const corners: { turn: number; from: number; to: number }[] = [];
-      let dist = 0;
-      for (let i = 1; i < points.length - 1; i++) {
-        const [a, b, c] = [points[i - 1], points[i], points[i + 1]];
-        dist += Math.hypot(b.x - a.x, b.y - a.y);
-        if (helixes.some((h) => Math.hypot(b.x - h.center.x, b.y - h.center.y) <= h.rOuter))
-          continue;
-        let turn = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(b.y - a.y, b.x - a.x);
-        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-        if (Math.abs(turn) < DEG) continue;
-        const prev = corners.at(-1);
-        if (prev && Math.sign(prev.turn) === Math.sign(turn)) {
-          prev.turn += turn;
-          prev.to = dist;
-        } else corners.push({ turn, from: dist, to: dist });
-      }
-      const big = corners.filter((c) => Math.abs(c.turn) > 30 * DEG);
-      expect(big.length).toBeGreaterThanOrEqual(4);
-      const flick = corners.some(
-        (c, i) =>
-          i > 0 &&
-          Math.abs(c.turn) > 30 * DEG &&
-          Math.abs(corners[i - 1].turn) > 30 * DEG &&
-          c.from - corners[i - 1].to <= 60,
-      );
-      expect(flick).toBe(true);
-    }
+  it('links left and right corners on B1', () => {
+    const turns = garageCorners[0].map((c) => c.turn).filter((t) => Math.abs(t) > 30 * DEG);
+    expect(turns.length).toBeGreaterThanOrEqual(8);
+    const flicks = turns.filter((t, i) => i > 0 && Math.sign(t) !== Math.sign(turns[i - 1]));
+    expect(flicks.length).toBeGreaterThanOrEqual(4);
   });
 
-  it('sets par from the route length at 17 m/s', () => {
+  it('laps B2 through 4+ big corners of 3+ radii, never one radius twice in a row', () => {
+    const big = garageCorners[1].filter((c) => Math.abs(c.turn) > 60 * DEG);
+    expect(big.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(big.map((c) => c.r)).size).toBeGreaterThanOrEqual(3);
+    big.forEach((c, i) => i > 0 && expect(c.r).not.toBe(big[i - 1].r));
+    // a full lap: the B2 line turns through at least 270°
+    const sum = garageCorners[1].reduce((s, c) => s + c.turn, 0);
+    expect(Math.abs(sum)).toBeGreaterThanOrEqual(1.5 * Math.PI - 1e-9);
+  });
+
+  it('sets par from the route length at 17 m/s, medals scaled by length', () => {
     const len = garageRoute
       .flatMap((r) =>
         r.points.slice(1).map((b, i) => Math.hypot(b.x - r.points[i].x, b.y - r.points[i].y)),
       )
       .reduce((a, b) => a + b, 0);
     expect(garage.parTime).toBe(Math.round(len / 17));
-    expect(garage.parTime).toBeGreaterThanOrEqual(45);
+    expect(garage.parTime).toBeGreaterThanOrEqual(35);
     expect(garage.parTime).toBeLessThanOrEqual(120);
+    const [b, s, g] = garage.medals!;
+    expect(b).toBeLessThan(s);
+    expect(s).toBeLessThan(g);
+    expect(g).toBe(Math.round((17500 * len) / 812 / 500) * 500);
   });
 
   it('keeps parked cars 0.3 m from every other solid and pillars off everything', () => {
@@ -291,8 +292,8 @@ describe('garage', () => {
     }
   });
 
-  it('is called JAPAN GARAGE', () => {
-    expect(garage.name).toBe('JAPAN GARAGE');
+  it('is called B2 MEET', () => {
+    expect(garage.name).toBe('B2 MEET');
   });
 
   it('parks every car as a JDM model with its real footprint, rotated to its heading', () => {
@@ -311,12 +312,17 @@ describe('garage', () => {
     expect(used.size).toBe(10);
   });
 
-  it('lights about 1 in 5 cars, aimed down the course at open floor', () => {
-    const cars = floors.flatMap(carsOf);
+  it('lines up the B2 meet with hazards on', () => {
+    expect(carsOf(floors[1]).filter((c) => c.lights === 'hazard').length).toBeGreaterThanOrEqual(
+      12,
+    );
+  });
+
+  it('lights about 1 in 5 other cars, aimed down the course at open floor', () => {
+    const cars = floors.flatMap(carsOf).filter((c) => c.lights !== 'hazard');
     const lit = cars.filter((c) => c.lights === 'on');
     expect(lit.length / cars.length).toBeGreaterThan(0.12);
     expect(lit.length / cars.length).toBeLessThan(0.3);
-    expect(cars.some((c) => c.lights === 'hazard')).toBe(true);
     garageRoute.forEach(({ points }, i) => {
       const f = floors[i];
       for (const c of carsOf(f).filter((s) => s.lights === 'on')) {
@@ -326,7 +332,6 @@ describe('garage', () => {
           y: k.y + (c.w / 2 + d) * Math.sin(c.facing!),
         });
         expect(f.solids.find((s) => inSolid(ahead(6), s))).toBeUndefined();
-        // the route segment nearest the car runs the way its nose points
         const near = points
           .slice(1)
           .map((q, j) => [points[j], q])
@@ -335,5 +340,70 @@ describe('garage', () => {
         expect(Math.cos(c.facing! - dir)).toBeGreaterThan(0);
       }
     });
+  });
+
+  it('dresses both floors with every decor kind, inside the floor', () => {
+    const decor = garage.decor!;
+    const kinds = new Set(decor.map((d) => d.kind));
+    for (const k of [
+      'text',
+      'arrow',
+      'hatch',
+      'stain',
+      'skid',
+      'graffiti',
+      'neon',
+      'pool',
+      'shaft',
+      'crowd',
+    ])
+      expect(kinds).toContain(k);
+    const pts = (d: Decor): Vec[] =>
+      d.kind === 'skid' ? d.points : d.kind === 'neon' ? [d.a, d.b] : [{ x: d.x, y: d.y }];
+    for (const d of decor) {
+      expect(floors[d.floor]).toBeDefined();
+      for (const p of pts(d)) expect(inRect(p, { x: 0, y: 0, w: 140, h: 80 })).toBe(true);
+    }
+    for (const i of [0, 1]) expect(decor.filter((d) => d.floor === i).length).toBeGreaterThan(30);
+  });
+});
+
+describe('drawDecor', () => {
+  /** Canvas stand-in: every method is a counted no-op, gradients included. */
+  function mockCtx() {
+    const calls: string[] = [];
+    const gradient = { addColorStop: () => {} };
+    const state: Record<string | symbol, unknown> = { globalAlpha: 1 };
+    const ctx = new Proxy(state, {
+      get: (t, k) =>
+        k in t
+          ? t[k]
+          : (...args: unknown[]) => {
+              calls.push(String(k));
+              void args;
+              return String(k).startsWith('create') ? gradient : undefined;
+            },
+      set: (t, k, v) => ((t[k] = v), true),
+    }) as unknown as CanvasRenderingContext2D;
+    return { ctx, calls, state };
+  }
+
+  it('draws every layer of both floors and restores the caller alpha', () => {
+    const layers: DecorLayer[] = ['floor', 'wall', 'light', 'glow', 'over'];
+    for (const floor of [0, 1]) {
+      for (const layer of layers) {
+        const { ctx, calls, state } = mockCtx();
+        state.globalAlpha = 0.5;
+        expect(() => drawDecor(ctx, garage.decor!, layer, floor, 12.3)).not.toThrow();
+        expect(calls.length).toBeGreaterThan(0);
+        expect(state.globalAlpha).toBe(0.5);
+      }
+    }
+  });
+
+  it('skips decor of other floors', () => {
+    const { ctx, calls } = mockCtx();
+    drawDecor(ctx, garage.decor!, 'floor', 7, 0);
+    expect(calls).toEqual([]);
   });
 });
