@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EngineDSP, ENGINE_PROFILES, engineRpm, type EngineProfile } from './engine';
+import { EngineDSP, ENGINE_PROFILES, engineProfile, engineRpm, type EngineProfile } from './engine';
 import { PLAYER_MODELS } from './models';
 
 const SR = 48000;
@@ -141,7 +141,7 @@ describe('limiter', () => {
       render(dsp, p.limit, 1, 0.5);
       return rms(render(dsp, p.limit, 1, 1));
     };
-    const rx7 = ENGINE_PROFILES.rx7;
+    const rx7 = { ...ENGINE_PROFILES.rx7, turbo: undefined }; // turbo noise would mask the cut
     expect(atLimit(rx7)).toBeGreaterThan(atLimit({ ...rx7, limiter: 'fuel' }) * 1.08);
   });
 });
@@ -261,5 +261,49 @@ describe('rasp', () => {
     const supra = at({ ...ENGINE_PROFILES.supra, turbo: undefined });
     expect(at({ ...ENGINE_PROFILES.rx7, turbo: undefined })).toBeGreaterThan(supra);
     expect(at(ENGINE_PROFILES.civic)).toBeGreaterThan(supra);
+  });
+});
+
+describe('tunes', () => {
+  const MODELS = Object.keys(PLAYER_MODELS) as (keyof typeof ENGINE_PROFILES)[];
+  const TURBO = MODELS.filter((m) => ENGINE_PROFILES[m].turbo);
+
+  it('engineProfile covers every model for both tunes', () => {
+    for (const m of MODELS) {
+      expect(engineProfile(m, 'performance')).toBe(ENGINE_PROFILES[m]);
+      const street = engineProfile(m, 'street');
+      expect(street.turbo?.surge).toBe(ENGINE_PROFILES[m].turbo ? true : undefined);
+    }
+  });
+
+  it('NA cars sound the same on both tunes', () => {
+    for (const m of MODELS.filter((k) => !ENGINE_PROFILES[k].turbo))
+      expect(engineProfile(m, 'street')).toBe(engineProfile(m, 'performance'));
+  });
+
+  it.each(TURBO)('%s street: lift at boost gives a surge chirp train at 18-30 Hz, no BOV', (m) => {
+    const { dsp } = lift(engineProfile(m, 'street'), 6000, 0.4);
+    expect(dsp.chirps).toBeGreaterThanOrEqual(7);
+    expect(dsp.chirps).toBeLessThanOrEqual(13);
+    render(dsp, 6000, 0, 1);
+    expect(dsp.flutters).toBe(1);
+    expect(dsp.chirps).toBeGreaterThanOrEqual(10);
+    expect(dsp.chirps).toBeLessThanOrEqual(25);
+    expect(dsp.bovs).toBe(0);
+  });
+
+  it('performance turbo cars still blow off', () => {
+    for (const m of TURBO) {
+      const { dsp } = lift(engineProfile(m, 'performance'), 6000);
+      expect(dsp.bovs).toBe(1);
+      expect(dsp.chirps).toBe(0);
+    }
+  });
+
+  it('whine fundamental at full spool stays below 2.5 kHz (incl. second stage)', () => {
+    for (const m of TURBO) {
+      const t = ENGINE_PROFILES[m].turbo!;
+      expect(t.whine[1] * (t.seq ? 1.25 : t.par ? 1.03 : 1)).toBeLessThan(2500);
+    }
   });
 });
