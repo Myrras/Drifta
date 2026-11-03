@@ -50,6 +50,24 @@ function firesPerSec(p: EngineProfile, rpm: number, throttle = 0.5): number {
 }
 
 /** Full throttle at `rpm`, then a sharp lift; returns the DSP and the lift-off audio. */
+/** power per band over 1024-sample windows, Goertzel on the bins inside [f0, f1) */
+function band(x: Float32Array, f0: number, f1: number): number {
+  let e = 0;
+  for (let w = 0; w + 1024 <= x.length; w += 1024)
+    for (let k = Math.ceil((f0 * 1024) / SR); k < (f1 * 1024) / SR; k++) {
+      const c = 2 * Math.cos((2 * Math.PI * k) / 1024);
+      let s1 = 0;
+      let s2 = 0;
+      for (let n = 0; n < 1024; n++) {
+        const s0 = x[w + n] + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+      }
+      e += s1 * s1 + s2 * s2 - c * s1 * s2;
+    }
+  return e;
+}
+
 function lift(p: EngineProfile, rpm: number, seconds = 0.6) {
   const dsp = new EngineDSP(SR, p);
   render(dsp, rpm, 1, 1.5);
@@ -330,23 +348,6 @@ describe('tunes', () => {
 
   // the template's air pulse carries more power than the hiss (recording: ~4 dB at its peak)
   it('street surge has the air pulse under the hiss, lower and heavier on big turbos', () => {
-    /** power per band over 1024-sample windows, Goertzel on the bins inside [f0, f1) */
-    const band = (x: Float32Array, f0: number, f1: number) => {
-      let e = 0;
-      for (let w = 0; w + 1024 <= x.length; w += 1024)
-        for (let k = Math.ceil((f0 * 1024) / SR); k < (f1 * 1024) / SR; k++) {
-          const c = 2 * Math.cos((2 * Math.PI * k) / 1024);
-          let s1 = 0;
-          let s2 = 0;
-          for (let n = 0; n < 1024; n++) {
-            const s0 = x[w + n] + c * s1 - s2;
-            s2 = s1;
-            s1 = s0;
-          }
-          e += s1 * s1 + s2 * s2 - c * s1 * s2;
-        }
-      return e;
-    };
     const at = (m: (typeof TURBO)[number]) => {
       const { out } = lift({ ...engineProfile(m, 'street'), gain: 0 }, 6000, 1.2); // turbo layer only
       expect(out.every(Number.isFinite)).toBe(true);
@@ -362,6 +363,26 @@ describe('tunes', () => {
     expect(rx7.air).toBeGreaterThan(s13.air);
     expect(supra.low).toBeGreaterThan(rx7.low); // hiss centre lower
     expect(rx7.low).toBeGreaterThan(s13.low);
+  });
+
+  // bypass whistle: a narrow tone at 3500 Hz x the car's warp, street surge only
+  it('street surge whistles through the bypass, performance and NA do not', () => {
+    const run = (p: EngineProfile, flute: boolean) => {
+      const dsp = new EngineDSP(SR, p);
+      if (!flute) (dsp as unknown as { flute: number }).flute = 0;
+      render(dsp, 6000, 1, 1.5);
+      return render(dsp, 6000, 0, 1.2);
+    };
+    for (const m of TURBO) {
+      const p = { ...engineProfile(m, 'street'), gain: 0 }; // turbo layer only
+      const f = (3500 * p.turbo!.tu[2]) / 4450;
+      const [on, off] = [run(p, true), run(p, false)];
+      const gain = (f0: number, f1: number) => band(on, f0, f1) / band(off, f0, f1);
+      expect(gain(0.99 * f, 1.01 * f)).toBeGreaterThan(1.4); // subtle: ~14 dB under the hiss peak
+      expect(gain(0.65 * f, 0.75 * f)).toBeLessThan(1.02); // narrow, nothing off its pitch
+      expect(run(ENGINE_PROFILES[m], true)).toEqual(run(ENGINE_PROFILES[m], false));
+    }
+    for (const [, p] of NA) expect(run(p, true)).toEqual(run(p, false));
   });
 
   it('street surge stops when the throttle opens again', () => {

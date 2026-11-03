@@ -96,6 +96,7 @@ const TU_PL = 8;
 const TU_SPREAD = [2.8, 0.23, 6.9];
 const TU_GAIN = 0.21; // recording level -> turbo layer (TURBO_MIX and the output drive)
 const TU_AIR = 1.6; // air pulse over its recorded level: our engine is louder under it than the recording's
+const TU_FLUTE = 0.26; // bypass whistle under the chirp hiss: ~14 dB below its peak
 
 export interface TurboProfile {
   /** rpm where boost starts / is full */
@@ -708,6 +709,15 @@ export class EngineDSP {
   private chLo = 1; // air pulse / hiss balance of this chirp
   private chHi = 1;
   private tuFloor = 0;
+  // bypass whistle: own noise seed so the chirps' rand() sequence is untouched
+  private flute = TU_FLUTE;
+  private readonly fluteBp: Biquad;
+  private readonly fluteHz: number;
+  private fluteSeed = 0x2545f49;
+  private fluteLev = 0; // hiss level of the current frame
+  private fluteEnv = 0;
+  private flutePh = 0;
+  private fluteT = 0;
   private duck = 1; // whine gain, dips during the surge train
   private wPh = 0;
   private w2Ph = 0;
@@ -777,6 +787,8 @@ export class EngineDSP {
     const warp = (t?.tu[2] ?? 4450) / 4450;
     this.tuHp = new Biquad(sr, 'hp', 150 * warp, 0.7); // nothing chirp-synchronous under 150 Hz in the recording
     this.tuUmph = (t?.tu[4] ?? 1) ** 2;
+    this.fluteHz = 3500 * warp;
+    this.fluteBp = new Biquad(sr, 'bp', this.fluteHz, 6);
     if (t?.surge) {
       const fit = (j: number, fr: readonly number[], w = warp) =>
         (this.tuG[j] = lpcRefit(fr, sr, w, this.tuK, j * TU_P));
@@ -1125,6 +1137,9 @@ export class EngineDSP {
     const fade = Math.min(1, Math.max(0, q < 0 ? this.chT / lead : (this.chEnd - this.chT) / lead));
     this.chG = fade * this.chHi * (g0 + x * (g1 - g0));
     this.chGLo = fade * TU_AIR * this.chLo * (G[lo] + x * (G[lo + 1] - G[lo]));
+    const fr = this.chS ? TU_S : TU_CHIRP;
+    const db = fr[i][0] + x * (fr[i + 1][0] - fr[i][0]);
+    this.fluteLev = fade * this.chHi * 10 ** (db / 20) * (this.chS ? 0.2 : 1); // quieter under the "s"
   }
 
   /**
@@ -1133,7 +1148,8 @@ export class EngineDSP {
    */
   private chirp(): number {
     let y = 0;
-    if (this.chT < this.chEnd) {
+    const on = this.chT < this.chEnd;
+    if (on) {
       this.chT += 1 / this.sr;
       const n = this.rand();
       y =
@@ -1145,7 +1161,31 @@ export class EngineDSP {
     this.tuFloor += this.kThr * (tgt - this.tuFloor);
     if (this.tuFloor > 1e-4)
       y += this.tuFloor * this.tuG[24] * lattice(this.tuK, 24 * TU_P, this.tuFb, this.rand());
-    return y === 0 ? 0 : TU_GAIN * this.tuHp.run(y);
+    const fl = this.whistle(on ? this.chAmp * this.fluteLev : 0);
+    return (y === 0 ? 0 : TU_GAIN * this.tuHp.run(y)) + fl;
+  }
+
+  /**
+   * One sample of the bypass whistle: a breathy flute at fluteHz following the chirp hiss level `tgt`, soft
+   * attack, slower release. Sine + weak 2nd/3rd harmonics, Q 6 breath noise, 0.4% vibrato plus slow drift.
+   */
+  private whistle(tgt: number): number {
+    const sr = this.sr;
+    this.fluteEnv += (tgt - this.fluteEnv) / ((tgt > this.fluteEnv ? 0.008 : 0.035) * sr);
+    if (this.fluteEnv < 1e-6) return 0;
+    this.fluteT += 1 / sr;
+    const ft = 2 * Math.PI * this.fluteT;
+    const vib = 1 + 0.004 * Math.sin(5.2 * ft) + 0.004 * Math.sin(0.7 * ft);
+    this.flutePh = (this.flutePh + (this.fluteHz * vib) / sr) % 1;
+    const w = 2 * Math.PI * this.flutePh;
+    let x = this.fluteSeed;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    this.fluteSeed = x >>> 0;
+    const breath = this.fluteBp.run(this.fluteSeed / 2147483648 - 1);
+    const tone = Math.sin(w) + 0.12 * Math.sin(2 * w) + 0.04 * Math.sin(3 * w);
+    return TU_GAIN * this.flute * this.fluteEnv * (tone + 3 * breath);
   }
 }
 
