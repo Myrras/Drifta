@@ -2470,6 +2470,33 @@ describe('multiplayer entry and lobby', () => {
       expect(at(guest)).toBe('READY');
     });
   });
+
+  describe('time-up edge cases (multiplayer)', () => {
+    it('no last-seconds beeps while paused', () => {
+      const p = pair();
+      const { host, guest } = p;
+      host.enter('host');
+      guest.enter('join');
+      host.tap({});
+      host.to('READY');
+      host.tap({ confirm: true });
+      guest.to('READY');
+      guest.tap({ confirm: true });
+      host.to('START');
+      host.game.update({ ...IDLE, confirm: true }, DT);
+      for (let i = 0; i < Math.round((START_DELAY_MS / 1000 + COUNTDOWN_SECONDS) / DT) + 2; i++) {
+        guest.game.update(IDLE, DT);
+        host.game.update(IDLE, DT);
+      }
+      guest.tap({ pause: true });
+      expect(guest.game.debug.phase).toBe('paused');
+      guest.game.debug.time = garage.parTime * 1.3 - 2.5;
+      const ui = vi.spyOn(audio, 'ui');
+      for (let i = 0; i < Math.ceil(3 / DT); i++) guest.game.update(IDLE, DT);
+      expect(ui).not.toHaveBeenCalled();
+      ui.mockRestore();
+    });
+  });
 });
 
 describe('time limit', () => {
@@ -2643,5 +2670,49 @@ describe('time limit', () => {
     expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'count', 'count']);
     expect(game.view().hud.phase).toBe('run');
     expect(game.view().hud.timeUp).toBe(true);
+  });
+});
+
+describe('time-up edge cases', () => {
+  const LIMIT = garage.parTime * 1.3;
+  function rig() {
+    const game = createGame([garage], audio, () => memBest());
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    return { game, step };
+  }
+  /** car against the north wall, driving into it */
+  const slam = (game: ReturnType<typeof rig>['game']) => {
+    game.debug.car.pos = { x: 70, y: 5 };
+    game.debug.car.angle = -Math.PI / 2;
+    game.debug.car.vel = { x: 0, y: -12 };
+  };
+
+  it('a combo that banks in the frame the time runs out counts', () => {
+    const { game, step } = rig();
+    game.debug.scoring.combo = { points: 3000, multiplier: 1, tricks: ['DRIFT'], grace: 0.001 };
+    game.debug.time = LIMIT - DT / 2;
+    step();
+    expect(game.debug.scoring.banked).toBe(3000);
+    expect(game.view().hud).toMatchObject({ timeUp: true, score: 3000, late: 0 });
+    expect(game.view().hud.popups.find((p) => p.kind === 'bank')!.late).toBe(false);
+  });
+
+  it('wall hits after time up are not counted', () => {
+    const { game, step } = rig();
+    slam(game);
+    step({ throttle: 1 }, 20);
+    step();
+    expect(game.debug.wallHits).toBeGreaterThan(0); // the setup does hit
+    const n = game.debug.wallHits;
+    game.debug.time = LIMIT + 1;
+    step();
+    slam(game);
+    step({ throttle: 1 }, 20);
+    step();
+    expect(game.debug.wallHits).toBe(n);
   });
 });
