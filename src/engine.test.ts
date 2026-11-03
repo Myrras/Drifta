@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EngineDSP, ENGINE_PROFILES, engineRpm, type EngineProfile } from './engine';
+import { EngineDSP, ENGINE_PROFILES, engineProfile, engineRpm, type EngineProfile } from './engine';
 import { PLAYER_MODELS } from './models';
 
 const SR = 48000;
@@ -50,6 +50,24 @@ function firesPerSec(p: EngineProfile, rpm: number, throttle = 0.5): number {
 }
 
 /** Full throttle at `rpm`, then a sharp lift; returns the DSP and the lift-off audio. */
+/** power per band over 1024-sample windows, Goertzel on the bins inside [f0, f1) */
+function band(x: Float32Array, f0: number, f1: number): number {
+  let e = 0;
+  for (let w = 0; w + 1024 <= x.length; w += 1024)
+    for (let k = Math.ceil((f0 * 1024) / SR); k < (f1 * 1024) / SR; k++) {
+      const c = 2 * Math.cos((2 * Math.PI * k) / 1024);
+      let s1 = 0;
+      let s2 = 0;
+      for (let n = 0; n < 1024; n++) {
+        const s0 = x[w + n] + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+      }
+      e += s1 * s1 + s2 * s2 - c * s1 * s2;
+    }
+  return e;
+}
+
 function lift(p: EngineProfile, rpm: number, seconds = 0.6) {
   const dsp = new EngineDSP(SR, p);
   render(dsp, rpm, 1, 1.5);
@@ -141,7 +159,7 @@ describe('limiter', () => {
       render(dsp, p.limit, 1, 0.5);
       return rms(render(dsp, p.limit, 1, 1));
     };
-    const rx7 = ENGINE_PROFILES.rx7;
+    const rx7 = { ...ENGINE_PROFILES.rx7, turbo: undefined }; // turbo noise would mask the cut
     expect(atLimit(rx7)).toBeGreaterThan(atLimit({ ...rx7, limiter: 'fuel' }) * 1.08);
   });
 });
@@ -261,5 +279,140 @@ describe('rasp', () => {
     const supra = at({ ...ENGINE_PROFILES.supra, turbo: undefined });
     expect(at({ ...ENGINE_PROFILES.rx7, turbo: undefined })).toBeGreaterThan(supra);
     expect(at(ENGINE_PROFILES.civic)).toBeGreaterThan(supra);
+  });
+});
+
+describe('tunes', () => {
+  const MODELS = Object.keys(PLAYER_MODELS) as (keyof typeof ENGINE_PROFILES)[];
+  const TURBO = MODELS.filter((m) => ENGINE_PROFILES[m].turbo);
+
+  it('engineProfile covers every model for both tunes', () => {
+    for (const m of MODELS) {
+      expect(engineProfile(m, 'performance')).toBe(ENGINE_PROFILES[m]);
+      const street = engineProfile(m, 'street');
+      expect(street.turbo?.surge).toBe(ENGINE_PROFILES[m].turbo ? true : undefined);
+    }
+  });
+
+  it('NA cars sound the same on both tunes', () => {
+    for (const m of MODELS.filter((k) => !ENGINE_PROFILES[k].turbo))
+      expect(engineProfile(m, 'street')).toBe(engineProfile(m, 'performance'));
+  });
+
+  // "s" burst, ~200 ms, then the car's chirps going from tu[0] to tu[1] ms apart (reference: 155 -> ~85)
+  it.each(TURBO)('%s street: lift at boost gives an "s" then its own chirp train, no BOV', (m) => {
+    const [g0, g1, , n] = ENGINE_PROFILES[m].turbo!.tu;
+    const dsp = new EngineDSP(SR, engineProfile(m, 'street'));
+    render(dsp, 6000, 1, 1.5);
+    const at: number[] = []; // ms after the lift
+    for (let i = 0; i < 250; i++) {
+      const c = dsp.chirps;
+      render(dsp, 6000, 0, 0.01);
+      if (dsp.chirps > c) at.push(i * 10);
+    }
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    expect(at.length).toBeGreaterThanOrEqual(n);
+    expect(at.length).toBeLessThanOrEqual(n + 2);
+    expect(gaps[0]).toBeGreaterThanOrEqual(170);
+    expect(gaps[0]).toBeLessThanOrEqual(230);
+    expect(gaps[1]).toBeGreaterThanOrEqual(g0 * 0.85 - 10);
+    expect(gaps[1]).toBeLessThanOrEqual(g0 * 1.15 + 10);
+    const last = gaps.slice(-3).reduce((a, b) => a + b, 0) / 3;
+    expect(last).toBeGreaterThanOrEqual(g1 * 0.85);
+    expect(last).toBeLessThanOrEqual(g1 * 1.15 + 10);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(60); // never a 25 Hz burble
+    expect(dsp.flutters).toBe(1);
+    expect(dsp.bovs).toBe(0);
+  });
+
+  it('each turbo car has its own surge, inside the reference band, slower and lower on big turbos', () => {
+    const tu = (m: (typeof TURBO)[number]) => ENGINE_PROFILES[m].turbo!.tu;
+    expect(new Set(TURBO.map((m) => String(tu(m)))).size).toBe(TURBO.length);
+    for (const m of TURBO) {
+      const [g0, g1, wf, n] = tu(m);
+      expect(1000 / g0).toBeGreaterThan(5);
+      expect(1000 / g1).toBeGreaterThanOrEqual(8);
+      expect(1000 / g1).toBeLessThanOrEqual(13);
+      expect(wf).toBeGreaterThanOrEqual(3500);
+      expect(wf).toBeLessThanOrEqual(5500);
+      expect(n).toBeGreaterThanOrEqual(12);
+      expect(n).toBeLessThanOrEqual(20);
+    }
+    for (const big of ['supra', '180sx', 'r32'] as const)
+      for (const small of ['s13', 'evo4', 'wrx'] as const) {
+        expect(tu(big)[0]).toBeGreaterThan(tu(small)[0]);
+        expect(tu(big)[2]).toBeLessThan(tu(small)[2]);
+        expect(tu(big)[4]).toBeGreaterThan(tu(small)[4]);
+      }
+  });
+
+  // the template's air pulse carries more power than the hiss (recording: ~4 dB at its peak)
+  it('street surge has the air pulse under the hiss, lower and heavier on big turbos', () => {
+    const at = (m: (typeof TURBO)[number]) => {
+      const { out } = lift({ ...engineProfile(m, 'street'), gain: 0 }, 6000, 1.2); // turbo layer only
+      expect(out.every(Number.isFinite)).toBe(true);
+      const air = band(out, 150, 800);
+      return {
+        air: air / band(out, 3000, 8000),
+        low: band(out, 1000, 3000) / band(out, 5000, 10000),
+      };
+    };
+    const [supra, rx7, s13] = [at('supra'), at('rx7'), at('s13')];
+    expect(rx7.air).toBeGreaterThan(1);
+    expect(supra.air).toBeGreaterThan(rx7.air);
+    expect(rx7.air).toBeGreaterThan(s13.air);
+    expect(supra.low).toBeGreaterThan(rx7.low); // hiss centre lower
+    expect(rx7.low).toBeGreaterThan(s13.low);
+  });
+
+  // bypass whistle: a narrow tone at 3500 Hz x the car's warp, street surge only
+  it('street surge whistles through the bypass, performance and NA do not', () => {
+    const run = (p: EngineProfile, flute: boolean) => {
+      const dsp = new EngineDSP(SR, p);
+      if (!flute) (dsp as unknown as { flute: number }).flute = 0;
+      render(dsp, 6000, 1, 1.5);
+      return render(dsp, 6000, 0, 1.2);
+    };
+    for (const m of TURBO) {
+      const p = { ...engineProfile(m, 'street'), gain: 0 }; // turbo layer only
+      const f = (3500 * p.turbo!.tu[2]) / 4450;
+      const [on, off] = [run(p, true), run(p, false)];
+      const gain = (f0: number, f1: number) => band(on, f0, f1) / band(off, f0, f1);
+      expect(gain(0.99 * f, 1.01 * f)).toBeGreaterThan(1.4); // subtle: ~14 dB under the hiss peak
+      expect(gain(0.65 * f, 0.75 * f)).toBeLessThan(1.02); // narrow, nothing off its pitch
+      expect(run(ENGINE_PROFILES[m], true)).toEqual(run(ENGINE_PROFILES[m], false));
+    }
+    for (const [, p] of NA) expect(run(p, true)).toEqual(run(p, false));
+  });
+
+  it('street surge stops when the throttle opens again', () => {
+    const { dsp } = lift(engineProfile('s13', 'street'), 6000, 0.5);
+    render(dsp, 6000, 1, 0.05); // smoothed throttle passes 0.5
+    const n = dsp.chirps;
+    render(dsp, 6000, 1, 1);
+    expect(n).toBeLessThan(10);
+    expect(dsp.chirps).toBe(n);
+  });
+
+  it('street surge mutes overrun pops', () => {
+    const p = engineProfile('180sx', 'street');
+    expect(lift(p, 6000, 1).out).toEqual(lift({ ...p, pops: [0, 0, 0] }, 6000, 1).out);
+    const perf = ENGINE_PROFILES['180sx'];
+    expect(lift(perf, 6000, 1).out).not.toEqual(lift({ ...perf, pops: [0, 0, 0] }, 6000, 1).out);
+  });
+
+  it('performance turbo cars still blow off', () => {
+    for (const m of TURBO) {
+      const { dsp } = lift(engineProfile(m, 'performance'), 6000);
+      expect(dsp.bovs).toBe(1);
+      expect(dsp.chirps).toBe(0);
+    }
+  });
+
+  it('whine fundamental at full spool stays below 2.5 kHz (incl. second stage)', () => {
+    for (const m of TURBO) {
+      const t = ENGINE_PROFILES[m].turbo!;
+      expect(t.whine[1] * (t.seq ? 1.25 : t.par ? 1.03 : 1)).toBeLessThan(2500);
+    }
   });
 });

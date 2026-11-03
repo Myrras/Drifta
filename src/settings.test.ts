@@ -31,6 +31,11 @@ describe('settings', () => {
     expect(loadSettings(fake(JSON.stringify({ track: 'eurobeat' }))).track).toBe('eurobeat');
     expect(loadSettings(fake(JSON.stringify({ track: 'polka' }))).track).toBe('tokyo');
   });
+  it('validates the tune', () => {
+    expect(loadSettings(fake(JSON.stringify({ tune: 'performance' }))).tune).toBe('performance');
+    expect(loadSettings(fake(JSON.stringify({ tune: 'x' }))).tune).toBe('street');
+    expect(loadSettings(fake()).tune).toBe('street');
+  });
   it('persists', () => {
     const st = fake();
     saveSettings(

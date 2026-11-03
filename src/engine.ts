@@ -7,6 +7,96 @@ import type { PlayerModel } from './types';
 const C_SOUND = 550; // m/s, hot exhaust gas: same as real pipe length x 0.62 at 343 m/s
 const POP_RPM = 3500;
 const TURBO_MIX = 4; // turbo layer level against the exhaust (profile gains are "of engine level")
+const WHOOSH = 4; // band-passed noise at the whine pitch, about as loud as the tone
+const SURGE_WHINE = 0.3; // whine level while the surge train runs (the recording's whine is ~7 dB under ours)
+
+/**
+ * Street surge template, fitted to the reference recording: LPC (48 kHz) of the power each chirp adds over the
+ * floor, averaged over its 17 chirps. Frame: [level dB (from the 1 ms band envelope), reflection coefficients].
+ * Hiss above 1 kHz (order 16) and the air pulse ("whoomph", 150 Hz-1 kHz, order 8, _LO) are separate fits, so
+ * each keeps its own envelope.
+ * Chirp: every 12 ms from 20 ms before the hiss peak; the air pulse peaks 16-28 ms after it, 4 dB over the hiss.
+ * "s": every 35 ms from 30 ms before its peak, sliding down to the lift whoomph. Floor: the hiss between chirps.
+ */
+const TU_CHIRP = [
+  [
+    -28.4, -0.7873, 0.5622, -0.2712, 0.4887, -0.3507, 0.3715, -0.2374, 0.2044, 0.0061, 0.05, 0.2264,
+    -0.0189, 0.1762, 0.0919, 0.0481, 0.1568,
+  ],
+  [
+    -25.5, -0.7243, 0.5743, -0.3156, 0.5159, -0.3723, 0.4248, -0.2791, 0.2763, -0.0933, 0.1265,
+    0.1744, -0.0474, 0.1918, 0.0248, 0.1099, 0.1411,
+  ],
+  [
+    -24.5, -0.7349, 0.6376, -0.2634, 0.511, -0.3839, 0.3741, -0.2547, 0.2128, -0.057, -0.001,
+    0.1382, -0.0722, 0.1674, 0.077, 0.0832, 0.1681,
+  ],
+  [
+    -28.9, -0.6852, 0.6138, -0.2984, 0.4858, -0.4011, 0.3995, -0.2967, 0.3041, -0.0662, 0.1243,
+    0.1172, -0.0735, 0.1914, 0.018, 0.1117, 0.1333,
+  ],
+  [
+    -35.2, -0.7796, 0.5157, -0.4535, 0.4155, -0.3167, 0.3399, -0.1206, 0.0557, 0.1499, -0.0003,
+    0.1919, 0.0555, 0.1067, 0.1977, 0.0826, 0.1622,
+  ],
+  [
+    -46.4, -0.6648, 0.4879, -0.4911, 0.4253, -0.294, 0.4293, -0.2525, 0.1909, -0.0666, -0.0014,
+    0.1457, -0.0698, 0.1596, 0.0409, 0.028, 0.1273,
+  ],
+];
+const TU_S = [
+  [
+    -20.7, -0.6192, 0.6425, -0.1404, 0.4379, -0.3906, 0.5672, -0.2534, 0.3185, -0.0965, 0.2422,
+    -0.0153, -0.0972, 0.2287, 0.0203, 0.1423, 0.0574,
+  ],
+  [
+    -14.9, -0.7029, 0.8939, -0.5577, 0.3783, -0.0554, 0.125, -0.08, 0.2715, 0.2482, -0.2333, 0.1307,
+    0.2943, -0.0191, 0.0091, 0.1802, 0.1756,
+  ],
+  [
+    -15.5, -0.7579, 0.5299, -0.2935, 0.5884, -0.3146, 0.4056, -0.266, 0.19, -0.068, 0.0004, 0.1764,
+    -0.0263, 0.1863, 0.0722, 0.0506, 0.1352,
+  ],
+  [
+    -15.6, -0.8902, 0.4316, -0.366, 0.4886, -0.1105, 0.1011, 0.1359, 0.0116, 0.1965, 0.1003, 0.1023,
+    0.1953, 0.1191, 0.1515, 0.1298, 0.0453,
+  ],
+  [
+    -18.4, -0.7816, 0.4085, -0.4737, 0.6063, -0.2368, 0.3865, -0.1543, 0.082, 0.1154, -0.0189,
+    0.2123, 0.0544, 0.0969, 0.1364, 0.0112, 0.1043,
+  ],
+  [
+    -20.8, -0.8969, 0.5553, -0.297, 0.4912, -0.1391, 0.1746, 0.0756, -0.0163, 0.1764, 0.0211,
+    0.0737, 0.1291, 0.0517, 0.1418, 0.1069, 0.0611,
+  ],
+];
+const TU_CHIRP_LO = [
+  [-28.6, -0.991, -0.2628, 0.093, 0.2358, 0.2685, 0.2581, 0.2325, 0.2014],
+  [-28.0, -0.9909, -0.1728, 0.1918, 0.2989, 0.3031, 0.276, 0.24, 0.2013],
+  [-25.2, -0.9908, -0.2635, 0.0918, 0.2346, 0.2671, 0.256, 0.2292, 0.1963],
+  [-20.5, -0.9899, -0.3459, -0.0226, 0.1463, 0.2135, 0.2286, 0.2209, 0.204],
+  [-21.6, -0.9897, -0.3542, -0.036, 0.1344, 0.2054, 0.2235, 0.2179, 0.2023],
+  [-35.1, -0.9877, -0.3851, -0.0892, 0.0831, 0.1667, 0.1961, 0.1973, 0.1848],
+];
+const TU_S_LO = [
+  [-120.0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [-36.1, -0.9821, 0.1606, 0.4259, 0.4172, 0.3662, 0.3169, 0.2746, 0.2381],
+  [-25.6, -0.9902, 0.1316, 0.408, 0.4008, 0.3395, 0.2681, 0.1922, 0.1135],
+  [-40.6, -0.9862, 0.0989, 0.3928, 0.4017, 0.3562, 0.3068, 0.2612, 0.2187],
+  [-18.6, -0.9881, -0.0418, 0.3027, 0.359, 0.3343, 0.2928, 0.2494, 0.206],
+  [-20.6, -0.9906, -0.072, 0.2799, 0.3471, 0.3275, 0.2879, 0.2447, 0.2005],
+];
+const TU_FLOOR = [
+  -28.7, -0.8516, 0.6491, -0.3665, 0.4426, -0.3127, 0.2305, -0.0042, 0.0109, 0.174, -0.0166, 0.1256,
+  0.1051, 0.0408, 0.142, 0.0519, 0.0606,
+];
+const TU_P = 16;
+const TU_PL = 8;
+/** per-chirp spread in the reference (sd x sqrt 3, uniform): level dB, centre octaves, low / high balance dB */
+const TU_SPREAD = [2.8, 0.23, 6.9];
+const TU_GAIN = 0.21; // recording level -> turbo layer (TURBO_MIX and the output drive)
+const TU_AIR = 1.6; // air pulse over its recorded level: our engine is louder under it than the recording's
+const TU_FLUTE = 0.412; // bypass whistle under the chirp hiss: ~10 dB below its peak
 
 export interface TurboProfile {
   /** rpm where boost starts / is full */
@@ -20,12 +110,16 @@ export interface TurboProfile {
   bov: [number, number];
   /** compressor surge on lift: pulses, Hz, chance per lift */
   flutter: [number, number, number];
+  /** street surge: first / last chirp gap ms, hiss centre Hz (template warp: / 4450, the reference rx7), chirps at full boost, weight (air pulse depth) */
+  tu: [number, number, number, number, number];
   /** sequential twin: second turbo cuts in at this rpm (tone x1.25), boost dip at changeover */
   seq?: [number, number];
   /** parallel twin: two whines detuned +-3% */
   par?: boolean;
   /** external wastegate: chatter Hz, gain */
   wg?: [number, number];
+  /** street tune: no BOV, a compressor surge chirp train ("s-tu-tu-tu") on every lift at boost, no overrun pops over it */
+  surge?: boolean;
 }
 
 export interface EngineProfile {
@@ -130,10 +224,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [2000, 4200],
       tau: [0.35, 0.9],
-      whine: [1400, 4800, 0.05],
+      whine: [560, 1900, 0.05],
       hiss: 0.06,
       bov: [0.8, 350],
       flutter: [3, 9, 0.25],
+      tu: [175, 100, 3800, 15, 1.25], // sequential twin, big total
       seq: [4000, 0],
     },
     gain: 0.94,
@@ -160,10 +255,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [2500, 4500],
       tau: [0.3, 0.7],
-      whine: [1800, 5500, 0.05],
+      whine: [700, 1950, 0.05],
       hiss: 0.05,
       bov: [0.6, 250],
       flutter: [4, 12, 0.35],
+      tu: [155, 88, 4450, 15, 1], // sequential twin, small: the reference
       seq: [4500, 0.15],
     },
     gain: 3.4,
@@ -189,10 +285,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [3000, 4800],
       tau: [0.4, 0.8],
-      whine: [1500, 5200, 0.05],
+      whine: [600, 2100, 0.05],
       hiss: 0.07,
       bov: [0.9, 400],
       flutter: [4, 10, 0.35],
+      tu: [165, 95, 4150, 15, 1.15], // parallel twin
       par: true,
       wg: [18, 0.03],
     },
@@ -219,10 +316,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [2800, 4300],
       tau: [0.3, 0.7],
-      whine: [1800, 5800, 0.06],
+      whine: [700, 2300, 0.06],
       hiss: 0.07,
       bov: [0.9, 330],
       flutter: [5, 11, 0.35],
+      tu: [135, 80, 5100, 14, 0.85], // small single T25
     },
     gain: 1.11,
   },
@@ -247,10 +345,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [3000, 4500],
       tau: [0.35, 0.8],
-      whine: [1500, 5200, 0.07],
+      whine: [600, 2100, 0.07],
       hiss: 0.08,
       bov: [1, 450],
       flutter: [5, 10, 0.35],
+      tu: [170, 98, 3950, 15, 1.2], // big single GT28
       wg: [22, 0.04],
     },
     gain: 1.02,
@@ -317,10 +416,11 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [3200, 4300],
       tau: [0.35, 0.85],
-      whine: [1600, 5600, 0.07],
+      whine: [640, 2250, 0.07],
       hiss: 0.09,
       bov: [0.5, 300],
       flutter: [6, 14, 1],
+      tu: [140, 82, 4900, 15, 0.9], // small single TD05
     },
     gain: 0.77,
   },
@@ -345,14 +445,23 @@ export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
     turbo: {
       spool: [3200, 4400],
       tau: [0.35, 0.8],
-      whine: [1500, 5200, 0.06],
+      whine: [600, 2100, 0.06],
       hiss: 0.07,
       bov: [0.8, 320],
       flutter: [4, 9, 0.35],
+      tu: [145, 85, 4700, 14, 0.9], // small single TD05/VF
     },
     gain: 0.86,
   },
 };
+
+export type Tune = 'performance' | 'street';
+
+/** Performance = the tuned profile; street turbo cars swap the BOV for surge flutter. NA: same for both. */
+export function engineProfile(model: PlayerModel, tune: Tune): EngineProfile {
+  const p = ENGINE_PROFILES[model];
+  return tune === 'street' && p.turbo ? { ...p, turbo: { ...p.turbo, surge: true } } : p;
+}
 
 const clamp01 = (x: number) => Math.min(Math.max(x, 0), 1);
 const smoothstep = (a: number, b: number, x: number) => {
@@ -363,6 +472,88 @@ const smoothstep = (a: number, b: number, x: number) => {
 /** Game rpm (0..1) to crank rpm: idle..limiter of the car. */
 export function engineRpm(norm: number, p: EngineProfile): number {
   return p.idle + clamp01(norm) * (p.limit - p.idle);
+}
+
+/** Levinson step: order i-1 -> i with reflection k, in place (a[0] = 1). */
+function lpcStep(a: Float64Array, i: number, k: number): void {
+  for (let j = 1; 2 * j <= i; j++) {
+    const x = a[j];
+    const y = a[i - j];
+    a[j] = x + k * y;
+    if (2 * j < i) a[i - j] = y + k * x;
+  }
+  a[i] = k;
+}
+
+/**
+ * Template frame [dB, k1..kP at 48 kHz] -> reflection coefficients at `sr` with every frequency x `warp`,
+ * refit (Levinson) from the warped power spectrum into k[o..o+P). Returns the gain for rand() noise that
+ * gives the frame's rms. Constructor only: allocates.
+ */
+function lpcRefit(
+  fr: readonly number[],
+  sr: number,
+  warp: number,
+  k: Float64Array,
+  o: number,
+): number {
+  const P = fr.length - 1;
+  const a = new Float64Array(P + 1);
+  a[0] = 1;
+  for (let i = 1; i <= P; i++) lpcStep(a, i, fr[i]);
+  const M = 1024;
+  const r = new Float64Array(P + 1);
+  for (let q = 0; q <= M && (q * sr) / (2 * M) / warp < 24000; q++) {
+    // A at the template frequency heard at bin q (powers of e^-jw by rotation), then cos(m pi q / M) by recurrence
+    const w = (Math.PI * q * sr) / M / warp / 48000;
+    const cw = Math.cos(w);
+    const sw = Math.sin(w);
+    let c = 1;
+    let sn = 0;
+    let re = 0;
+    let im = 0;
+    for (let j = 0; j <= P; j++) {
+      re += a[j] * c;
+      im -= a[j] * sn;
+      const c2 = c * cw - sn * sw;
+      sn = sn * cw + c * sw;
+      c = c2;
+    }
+    const s = (q === 0 || q === M ? 0.5 : 1) / (re * re + im * im);
+    const c1 = Math.cos((Math.PI * q) / M);
+    let cPrev = 1;
+    let cm = c1;
+    r[0] += s;
+    for (let m = 1; m <= P; m++) {
+      r[m] += s * cm;
+      const next = 2 * c1 * cm - cPrev;
+      cPrev = cm;
+      cm = next;
+    }
+  }
+  a.fill(0);
+  a[0] = 1;
+  let e = r[0];
+  for (let i = 1; i <= P; i++) {
+    let acc = r[i];
+    for (let j = 1; j < i; j++) acc += a[j] * r[i - j];
+    k[o + i - 1] = -acc / e;
+    lpcStep(a, i, k[o + i - 1]);
+    e *= 1 - k[o + i - 1] ** 2;
+  }
+  return Math.sqrt((3 * e) / r[0]) * 10 ** (fr[0] / 20);
+}
+
+/** All-pole lattice, reflection k[o..o+P), state b[0..P). */
+function lattice(k: Float64Array, o: number, b: Float64Array, x: number): number {
+  const P = b.length;
+  let f = x - k[o + P - 1] * b[P - 1];
+  for (let i = P - 1; i >= 1; i--) {
+    f -= k[o + i - 1] * b[i - 1];
+    b[i] = b[i - 1] + k[o + i - 1] * f;
+  }
+  b[0] = f;
+  return f;
 }
 
 /** RBJ biquad, direct form I. */
@@ -494,7 +685,40 @@ export class EngineDSP {
   private flHz = 0;
   private flEnv = 0;
   private flAmp = 0;
+  private flN0 = 1;
   private readonly kFlAmp: number;
+  // street surge: template frames refit for this car and sample rate. Slots: chirp hiss 3 centre variants x 6
+  // frames (0-17), "s" hiss (18-23), floor (24), chirp air pulse (25-30), "s" air pulse (31-36).
+  private readonly tuK = new Float64Array(37 * TU_P);
+  private readonly tuG = new Float64Array(37);
+  private readonly tuNow = new Float64Array(TU_P);
+  private readonly tuNowLo = new Float64Array(TU_PL);
+  private readonly tuB = new Float64Array(TU_P);
+  private readonly tuBLo = new Float64Array(TU_PL);
+  private readonly tuFb = new Float64Array(TU_P);
+  private readonly tuHp: Biquad;
+  private readonly tuUmph: number;
+  private chT = 1; // s since the "s"/chirp started
+  private chEnd = 0; // its length, s
+  private chS = false; // "s" (else a chirp)
+  private chDt = 0.012; // frame spacing, s
+  private chU = 0; // centre variant, -1..1
+  private chAmp = 0;
+  private chG = 0; // current frame gains, hiss / air pulse
+  private chGLo = 0;
+  private chLo = 1; // air pulse / hiss balance of this chirp
+  private chHi = 1;
+  private tuFloor = 0;
+  // bypass whistle: own noise seed so the chirps' rand() sequence is untouched
+  private flute = TU_FLUTE;
+  private readonly fluteBp: Biquad;
+  private readonly fluteHz: number;
+  private fluteSeed = 0x2545f49;
+  private fluteLev = 0; // hiss level of the current frame
+  private fluteEnv = 0;
+  private flutePh = 0;
+  private fluteT = 0;
+  private duck = 1; // whine gain, dips during the surge train
   private wPh = 0;
   private w2Ph = 0;
   private fmPh = 0;
@@ -504,6 +728,8 @@ export class EngineDSP {
   fires = 0;
   bovs = 0;
   flutters = 0;
+  /** street surge chirps */
+  chirps = 0;
 
   private readonly header: [Waveguide, Waveguide];
   private readonly pipe: Waveguide;
@@ -516,6 +742,7 @@ export class EngineDSP {
   private readonly hissBp: Biquad;
   private readonly bovBp: Biquad;
   private readonly flBp: Biquad;
+  private readonly whooshBp: Biquad;
   private readonly wgBp: Biquad;
   private dcX = 0;
   private dcY = 0;
@@ -553,7 +780,28 @@ export class EngineDSP {
     this.hissBp = new Biquad(sr, 'bp', 1000, 1.5);
     this.bovBp = new Biquad(sr, 'bp', 4500, 0.7);
     this.flBp = new Biquad(sr, 'bp', 3000, 1.2);
+    this.whooshBp = new Biquad(sr, 'bp', 1000, 3);
     this.wgBp = new Biquad(sr, 'bp', 2200, 1.5);
+    // street surge: the reference template warped to this turbo (rx7 = 1), heavier turbos get more air pulse
+    const t = p.turbo;
+    const warp = (t?.tu[2] ?? 4450) / 4450;
+    this.tuHp = new Biquad(sr, 'hp', 150 * warp, 0.7); // nothing chirp-synchronous under 150 Hz in the recording
+    this.tuUmph = (t?.tu[4] ?? 1) ** 2;
+    this.fluteHz = 3500 * warp;
+    this.fluteBp = new Biquad(sr, 'bp', this.fluteHz, 6);
+    if (t?.surge) {
+      const fit = (j: number, fr: readonly number[], w = warp) =>
+        (this.tuG[j] = lpcRefit(fr, sr, w, this.tuK, j * TU_P));
+      for (let i = 0; i < 6; i++) {
+        fit(i, TU_CHIRP[i]);
+        fit(6 + i, TU_CHIRP[i], warp * 2 ** -TU_SPREAD[1]);
+        fit(12 + i, TU_CHIRP[i], warp * 2 ** TU_SPREAD[1]);
+        fit(18 + i, TU_S[i]);
+        fit(25 + i, TU_CHIRP_LO[i]);
+        fit(31 + i, TU_S_LO[i]);
+      }
+      fit(24, TU_FLOOR);
+    }
   }
 
   setParams(q: { rpm: number; throttle: number }): void {
@@ -632,10 +880,18 @@ export class EngineDSP {
         if (thr > 0.5) {
           this.liftT = 0;
           this.bovArm = true;
+          if (t.surge) this.flN = 0; // throttle open again: no more surge
         } else this.liftT += 1 / sr;
         if (thr < 0.2 && this.bovArm) {
           this.bovArm = false;
-          if (this.liftT < 0.12 && S > 0.35) {
+          if (this.liftT < 0.12 && S > 0.35 && t.surge) {
+            // street: an "s" burst then half to all of the car's tu[3] chirps, more with more boost
+            const b = clamp01((S - 0.35) / 0.65);
+            this.flutters++;
+            this.flN = this.flN0 = 1 + Math.round(t.tu[3] * (0.47 + 0.53 * b));
+            this.flPh = 0; // s to the next chirp
+            this.flAmp = 0.6 + 0.4 * S;
+          } else if (this.liftT < 0.12 && S > 0.35) {
             this.bovs++;
             this.bovT = 0;
             this.bovEnv = 0.6 * t.bov[0] * S ** 0.7;
@@ -644,7 +900,7 @@ export class EngineDSP {
             this.chuffPh = 0;
             if (this.rand01() < t.flutter[2]) {
               this.flutters++;
-              this.flN = t.flutter[0];
+              this.flN = this.flN0 = t.flutter[0];
               this.flHz = t.flutter[1];
               this.flPh = 1;
               this.flAmp = S;
@@ -660,8 +916,11 @@ export class EngineDSP {
         this.mufLp.set(p.lp[0] + (p.lp[1] - p.lp[0]) * Math.min(bright, 1), 0.8);
         this.intake.set(p.intake[0] + (p.intake[1] - p.intake[0]) * thr * Math.max(rpmN, 0.1), 1.2);
         if (t) {
-          this.hissBp.set(0.6 * (t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8), 1.5);
+          const wf = t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8;
+          this.hissBp.set(1.5 * wf, 1.5); // same absolute band as before the whine was lowered
+          this.whooshBp.set(wf, 3);
           this.bovBp.set(4500 - 2500 * clamp01(this.bovT / this.bovLen), 0.7);
+          if (t.surge && this.chT < this.chEnd) this.tuFrame();
         }
       }
 
@@ -702,7 +961,9 @@ export class EngineDSP {
           } else amp *= 1 + 0.03 * this.rand();
           this.imp[bank] += amp;
         }
-        if (this.popTime > 0 && rpm > 3000 && this.rand01() < p.pops[0] / fireHz) {
+        // street surge: pops would mask the chirp train (the recording has none)
+        const surging = t?.surge && this.flN > 0;
+        if (this.popTime > 0 && rpm > 3000 && !surging && this.rand01() < p.pops[0] / fireHz) {
           this.popEnv = this.popLevel();
           this.imp[bank] += 0.8 * this.popEnv;
         }
@@ -761,9 +1022,35 @@ export class EngineDSP {
   /** One sample of whine, hiss, BOV, flutter and wastegate. */
   private turbo(t: TurboProfile, S: number, thr: number): number {
     const sr = this.sr;
-    // flutter: compressor surge pulses, rate falling ~25% over the burst
-    if (this.flN > 0) {
-      this.flPh += (this.flHz * (0.75 + (0.25 * this.flN) / t.flutter[0])) / sr;
+    if (this.flN > 0 && t.surge) {
+      // street surge: "s" burst, 200 ms, then chirps speeding up from tu[0] to tu[1] ms apart, shorter and 8 dB quieter by the end
+      this.flPh -= 1 / sr;
+      if (this.flPh <= 0) {
+        const [g0, g1] = t.tu;
+        const k = this.flN0 - this.flN;
+        this.flN--;
+        const left = this.flN / this.flN0;
+        this.flEnv = this.flAmp;
+        this.chirps++;
+        this.flPh =
+          (k ? g1 + (g0 - g1) * Math.exp(-(k - 1) / 2.5) : 200) * 0.001 * (1 + 0.1 * this.rand());
+        // the chirp template is the reference's average chirp, ~100 ms apart: stretch it to this gap
+        this.chS = !k;
+        this.chDt = k ? 0.12 * this.flPh : 0.035;
+        this.chEnd = 2 * (k ? this.chDt : 0.012) + 5 * this.chDt;
+        this.chT = 0;
+        this.chU = k ? this.rand() : 0;
+        const tilt = k ? 10 ** ((TU_SPREAD[2] * this.rand()) / 40) : 1;
+        this.chLo = this.tuUmph * tilt;
+        this.chHi = 1 / tilt;
+        this.chAmp =
+          this.flAmp *
+          (k ? ((0.4 + 0.6 * left) / 0.7) * 10 ** ((TU_SPREAD[0] * this.rand()) / 20) : 1);
+        this.tuFrame();
+      }
+    } else if (this.flN > 0) {
+      // flutter: compressor surge pulses, rate falling 25% over the burst
+      this.flPh += (this.flHz * (0.75 + (0.25 * this.flN) / this.flN0)) / sr;
       if (this.flPh >= 1) {
         this.flPh -= 1;
         this.flN--;
@@ -771,9 +1058,10 @@ export class EngineDSP {
       }
     }
     this.flEnv *= this.k25ms;
-    this.flAmp *= this.kFlAmp;
+    if (!t.surge) this.flAmp *= this.kFlAmp;
 
-    // whine: sine + 2nd + 3rd harmonic, 7 Hz wobble, pitch sags in surge
+    // whine: sine + a little 2nd harmonic + band-passed noise (airy spool), 7 Hz wobble, sags in surge
+    this.duck += this.kThr * ((t.surge && this.flN > 0 ? SURGE_WHINE : 1) - this.duck);
     this.fmPh = (this.fmPh + 7 / sr) % 1;
     const f =
       (t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8) *
@@ -785,7 +1073,11 @@ export class EngineDSP {
     this.w2Ph = (this.w2Ph + f2 / sr) % 1;
     const a2 = t.par ? 1 : t.seq ? 0.6 * this.st2 : 0;
     const whine =
-      t.whine[2] * S ** 1.5 * (tone(this.wPh) + (a2 > 0.001 ? a2 * tone(this.w2Ph) : 0));
+      this.duck *
+      t.whine[2] *
+      S ** 1.5 *
+      (0.7 * (tone(this.wPh) + (a2 > 0.001 ? a2 * tone(this.w2Ph) : 0)) +
+        WHOOSH * this.whooshBp.run(this.rand()));
     const hiss = this.hissBp.run(this.rand()) * t.hiss * S * thr;
 
     // blow-off valve: 3 ms attack, 40 ms hold, decay; 120 Hz chuff at the start
@@ -800,7 +1092,7 @@ export class EngineDSP {
         (att * this.bovBp.run(this.rand()) +
           0.5 * Math.sin(2 * Math.PI * this.chuffPh) * Math.exp(-this.bovT / 0.025));
     }
-    const flutter = this.flBp.run(this.rand()) * this.flEnv * 0.6;
+    const flutter = t.surge ? this.chirp() : this.flBp.run(this.rand()) * this.flEnv * 0.6;
 
     // external wastegate chatter near full boost
     let wg = 0;
@@ -817,11 +1109,88 @@ export class EngineDSP {
     }
     return whine + hiss + bov + flutter + wg;
   }
+
+  /** Control rate: the "s"/chirp template frame at chT (k and gain interpolated), one-frame fades at the ends. */
+  private tuFrame(): void {
+    const lead = this.chS ? 0.012 : this.chDt;
+    const q = (this.chT - lead) / this.chDt;
+    const i = Math.min(Math.max(Math.floor(q), 0), 4);
+    const x = clamp01(q - i);
+    const base = this.chS ? 18 : 0;
+    const v = (this.chU < 0 ? 6 : 12) - base; // centre variant, chirps only
+    const a = this.chS ? 0 : Math.abs(this.chU);
+    const K = this.tuK;
+    for (let m = 0; m < TU_P; m++) {
+      const j0 = (base + i) * TU_P + m;
+      const k0 = K[j0] + a * (K[j0 + v * TU_P] - K[j0]);
+      const k1 = K[j0 + TU_P] + a * (K[j0 + (v + 1) * TU_P] - K[j0 + TU_P]);
+      this.tuNow[m] = k0 + x * (k1 - k0);
+    }
+    const lo = (this.chS ? 31 : 25) + i; // air pulse: no centre variants
+    for (let m = 0; m < TU_PL; m++) {
+      const j0 = lo * TU_P + m;
+      this.tuNowLo[m] = K[j0] + x * (K[j0 + TU_P] - K[j0]);
+    }
+    const G = this.tuG;
+    const g0 = G[base + i] + a * (G[base + v + i] - G[base + i]);
+    const g1 = G[base + i + 1] + a * (G[base + v + i + 1] - G[base + i + 1]);
+    const fade = Math.min(1, Math.max(0, q < 0 ? this.chT / lead : (this.chEnd - this.chT) / lead));
+    this.chG = fade * this.chHi * (g0 + x * (g1 - g0));
+    this.chGLo = fade * TU_AIR * this.chLo * (G[lo] + x * (G[lo + 1] - G[lo]));
+    const fr = this.chS ? TU_S : TU_CHIRP;
+    const db = fr[i][0] + x * (fr[i + 1][0] - fr[i][0]);
+    this.fluteLev = fade * this.chHi * 10 ** (db / 20) * (this.chS ? 0.2 : 1); // quieter under the "s"
+  }
+
+  /**
+   * One sample of street surge: the "s"/chirp is one noise through the template's two all-pole filters (hiss and
+   * air pulse), on the floor hiss; the floor follows the chirp level while the train runs, then fades.
+   */
+  private chirp(): number {
+    let y = 0;
+    const on = this.chT < this.chEnd;
+    if (on) {
+      this.chT += 1 / this.sr;
+      const n = this.rand();
+      y =
+        this.chAmp *
+        (this.chG * lattice(this.tuNow, 0, this.tuB, n) +
+          this.chGLo * lattice(this.tuNowLo, 0, this.tuBLo, n));
+    }
+    const tgt = this.flN > 0 ? (this.flAmp * (0.4 + (0.6 * this.flN) / this.flN0)) / 0.7 : 0;
+    this.tuFloor += this.kThr * (tgt - this.tuFloor);
+    if (this.tuFloor > 1e-4)
+      y += this.tuFloor * this.tuG[24] * lattice(this.tuK, 24 * TU_P, this.tuFb, this.rand());
+    const fl = this.whistle(on ? this.chAmp * this.fluteLev : 0);
+    return (y === 0 ? 0 : TU_GAIN * this.tuHp.run(y)) + fl;
+  }
+
+  /**
+   * One sample of the bypass whistle: a breathy flute at fluteHz following the chirp hiss level `tgt`, soft
+   * attack, slower release. Sine + weak 2nd/3rd harmonics, Q 6 breath noise, 0.4% vibrato plus slow drift.
+   */
+  private whistle(tgt: number): number {
+    const sr = this.sr;
+    this.fluteEnv += (tgt - this.fluteEnv) / ((tgt > this.fluteEnv ? 0.008 : 0.035) * sr);
+    if (this.fluteEnv < 1e-6) return 0;
+    this.fluteT += 1 / sr;
+    const ft = 2 * Math.PI * this.fluteT;
+    const vib = 1 + 0.004 * Math.sin(5.2 * ft) + 0.004 * Math.sin(0.7 * ft);
+    this.flutePh = (this.flutePh + (this.fluteHz * vib) / sr) % 1;
+    const w = 2 * Math.PI * this.flutePh;
+    let x = this.fluteSeed;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    this.fluteSeed = x >>> 0;
+    const breath = this.fluteBp.run(this.fluteSeed / 2147483648 - 1);
+    const tone = Math.sin(w) + 0.12 * Math.sin(2 * w) + 0.04 * Math.sin(3 * w);
+    return TU_GAIN * this.flute * this.fluteEnv * (tone + 3 * breath);
+  }
 }
 
-/** Whine waveform: fundamental + 0.35 x 2nd + 0.15 x 3rd harmonic. */
+/** Whine waveform: fundamental + 0.15 x 2nd harmonic. */
 function tone(ph: number): number {
   const s = Math.sin(2 * Math.PI * ph);
-  const c = Math.cos(2 * Math.PI * ph);
-  return s + 0.7 * s * c + 0.15 * (3 * s - 4 * s * s * s);
+  return s + 0.3 * s * Math.cos(2 * Math.PI * ph);
 }

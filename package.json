@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "render:engine": "node --experimental-transform-types scripts/render-engine.ts"
   },
   "keywords": [],
   "author": "",
