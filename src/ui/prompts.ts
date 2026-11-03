@@ -13,7 +13,9 @@ export type Action =
   | 'pause'
   | 'skip'
   | 'navigate'
-  | 'adjust';
+  | 'adjust'
+  | 'tabs'
+  | 'rev';
 
 // Keyboard bindings mirror keyboardInput()/createInput() in input.ts.
 const KB: Record<Action, string> = {
@@ -30,6 +32,8 @@ const KB: Record<Action, string> = {
   skip: 'N',
   navigate: '↑↓',
   adjust: '←→',
+  tabs: 'Q/E',
+  rev: 'R',
 };
 
 // Pad mapping mirrors gamepadInput()/createInput(): [xbox, ps].
@@ -47,6 +51,8 @@ const PAD: Record<Action, [string, string]> = {
   skip: ['RB', 'R1'],
   navigate: ['D-PAD ↑↓', 'D-PAD ↑↓'],
   adjust: ['D-PAD ←→', 'D-PAD ←→'],
+  tabs: ['LB/RB', 'L1/R1'],
+  rev: ['RT', 'R2'], // garage rev reads pad button 7
 };
 
 export function glyph(a: Action, device: InputDevice, padStyle: PadStyle): string {
