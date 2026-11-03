@@ -1,6 +1,6 @@
 import { COMBO_GRACE } from './config';
 import { itemById } from './cosmetics';
-import type { HudView, Popup } from './view';
+import type { HudView, MpHud, Popup } from './view';
 import { drawMenu, carImage } from './ui/menu';
 import { createTach } from './ui/tach';
 import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
@@ -301,6 +301,7 @@ const anim = {
   multAt: -99,
   combo: 0,
   score: 0,
+  rival: 0,
   resultsAt: 0,
 };
 
@@ -344,6 +345,72 @@ function tachPalette(th: Theme) {
 }
 
 const BANK_FLY = 0.55; // s for banked points to reach the total
+
+export type Verdict = 'win' | 'lose' | 'draw';
+
+/** Head-to-head outcome on displayed (rounded) totals; a rival DNF (null) loses. */
+export function verdict(you: number, rival: number | null): Verdict {
+  if (rival === null || Math.round(you) > Math.round(rival)) return 'win';
+  return Math.round(you) < Math.round(rival) ? 'lose' : 'draw';
+}
+
+export const verdictText = (v: Verdict, rival: string): string =>
+  v === 'win' ? 'YOU WIN' : v === 'lose' ? `${rival.toUpperCase()} WINS` : 'DRAW';
+
+export const rivalTotalText = (total: number | null): string =>
+  total === null ? 'DNF' : formatScore(total);
+
+/** Rival name + live score under the score plate; `right` is the plate's bottom-right corner. */
+function drawRivalPanel(
+  ctx: CanvasRenderingContext2D,
+  mp: MpHud,
+  right: number,
+  y: number,
+  u: number,
+): void {
+  const w = 30 * u;
+  const h = 8 * u;
+  const done = mp.rivalTotal !== null;
+  plate(ctx, right - w, y, w, h, INK, !mp.connected ? RED : done ? GREEN : STEEL);
+  const tag = mp.connected && done ? 'FINISHED' : '';
+  const tagW = tag ? measure(ctx, tag, 1.9 * u, 'label') + 2 * u : 0;
+  const name = ellipsize(
+    ctx,
+    mp.rival.toUpperCase(),
+    `italic 800 ${2.2 * u}px ${LABEL}`,
+    w - 6 * u - tagW,
+  );
+  text(ctx, name, right - w + 4 * u, y + 2.4 * u, 2.2 * u, WHITE, {
+    font: 'label',
+    stroke: null,
+    alpha: mp.connected ? 1 : 0.45,
+  });
+  if (tag)
+    text(ctx, tag, right + 0.3 * u, y + 2.4 * u, 1.9 * u, GREEN, {
+      align: 'right',
+      font: 'label',
+      stroke: null,
+    });
+  if (!mp.connected)
+    text(ctx, 'DISCONNECTED', right - 0.6 * u, y + 5.6 * u, 2.4 * u, RED, {
+      align: 'right',
+      font: 'label',
+      stroke: null,
+    });
+  else
+    text(ctx, formatScore(anim.rival), right - 0.6 * u, y + 5.5 * u, 4.2 * u, WHITE, {
+      align: 'right',
+      glow: done ? GREEN : undefined,
+    });
+}
+
+/** Short centred banner, e.g. a disconnect notice. */
+function drawToast(ctx: CanvasRenderingContext2D, s: string, cx: number, y: number, u: number) {
+  const px = 2.8 * u;
+  const w = measure(ctx, s, px, 'label') + 8 * u;
+  plate(ctx, cx - w / 2 - 1 * u, y - 2.5 * u, w, 5 * u, INK, RED);
+  text(ctx, s, cx, y, px, WHITE, { align: 'center', font: 'label', stroke: null });
+}
 
 function drawCountdown(ctx: CanvasRenderingContext2D, v: HudView, cx: number, u: number): void {
   const n = Math.max(1, Math.ceil(v.countdown - 1e-6));
@@ -516,11 +583,20 @@ export function drawHud(
   const cx = width / 2;
   const pad = 3 * u;
   const th = THEMES[v.ui.theme];
+  const mp = v.mp;
+  if (mp) {
+    const t = mp.rivalTotal ?? mp.rivalScore;
+    anim.rival = v.phase === 'countdown' || t < anim.rival ? t : approach(anim.rival, t, dt, 9);
+  }
 
   if (v.phase === 'countdown') {
     anim.score = v.score;
     lastPhase = v.phase;
     drawCountdown(ctx, v, cx, u);
+    if (mp) {
+      drawRivalPanel(ctx, mp, width - pad - 2.6 * u, pad, u);
+      if (mp.toast) drawToast(ctx, mp.toast, cx, pad + 10.5 * u, u);
+    }
     return;
   }
 
@@ -594,6 +670,8 @@ export function drawHud(
         font: 'label',
         stroke: null,
       });
+    // continues the score plate's slant 1u below it
+    if (mp) drawRivalPanel(ctx, mp, width - pad - 2.6 * u + SKEW * 9 * u, pad + 12.5 * u, u);
 
     // ---- combo
     const baseY = height - 16 * u;
@@ -706,6 +784,7 @@ export function drawHud(
     lastTime = v.time;
 
     if (v.phase === 'run' && v.time < 0.8) drawGo(ctx, v.time, width, height, u);
+    if (mp?.toast) drawToast(ctx, mp.toast, cx, pad + 10.5 * u, u);
     if (v.phase === 'paused') {
       overlay(ctx, width, height, 0.6);
       text(ctx, 'PAUSED', cx, height * 0.45, 13 * u, th.text, {
@@ -728,6 +807,7 @@ export function drawHud(
   const r = v.results;
   if (!r) return;
   drawResults(ctx, v, r, width, height, u, th, nowS);
+  if (mp?.toast) drawToast(ctx, mp.toast, cx, height - 9 * u, u);
   drawOverlayFx(ctx, width, height, nowS, th, { osd: false });
 }
 
@@ -891,6 +971,63 @@ function drawResults(
     scale: lerp(1.25, 1, easeOutBack(age / 0.4)),
     glow,
   });
+
+  // ---- multiplayer: side panels flanking the total
+  const rv = r.rival;
+  const h2h = !!rv && (rv.total !== null || !v.mp?.connected);
+  if (h2h || v.mp?.waiting) {
+    const totalW = cssWidth(ctx, total, th.font(800, totalPx, true));
+    const sw = Math.max(16 * u, Math.min(34 * u, (cw - totalW) / 2 - 3 * u));
+    const fade = clamp01((age - 0.4) / 0.15);
+    if (rv && h2h) {
+      const res = verdict(r.total, rv.total);
+      const vt = verdictText(res, rv.name);
+      const vc = res === 'win' ? GREEN : res === 'lose' ? RED : AMBER;
+      const vs = easeOutBack((age - 0.6) / 0.35);
+      sidePanel(
+        ctx,
+        x0,
+        sw,
+        u,
+        th,
+        'YOU',
+        formatScore(r.total),
+        res !== 'lose' ? vt : '',
+        vc,
+        vs,
+        fade,
+      );
+      const rn = rv.name.toUpperCase();
+      sidePanel(
+        ctx,
+        x0 + cw - sw,
+        sw,
+        u,
+        th,
+        rn,
+        rivalTotalText(rv.total),
+        res !== 'win' ? vt : '',
+        vc,
+        vs,
+        fade,
+      );
+    } else if (v.mp) {
+      const label = `WAITING FOR ${v.mp.rival.toUpperCase()}`;
+      sidePanel(
+        ctx,
+        x0 + cw - sw,
+        sw,
+        u,
+        th,
+        label,
+        formatScore(anim.rival),
+        '',
+        AMBER,
+        1,
+        fade * (0.55 + 0.45 * pulse),
+      );
+    }
+  }
 
   // ---- position badge + NEW BEST + next target
   const by = 27 * u;
@@ -1098,6 +1235,55 @@ function drawResults(
 
   if (r.chooser) drawChooser(ctx, r.chooser, width, height, u, th, pulse);
   hintBar(ctx, resultsHint(v.ui, r), width, height, u, th);
+}
+
+/** Results side panel beside the total: label, value, optional verdict tag (winner gets the glow). */
+function sidePanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  w: number,
+  u: number,
+  th: Theme,
+  label: string,
+  value: string,
+  tag: string,
+  tagCol: string,
+  tagScale: number,
+  alpha: number,
+): void {
+  const y = 9.5 * u;
+  const h = 13.5 * u;
+  const cx = x + w / 2;
+  ctx.save();
+  ctx.globalAlpha = clamp01(alpha);
+  const edge = tag ? tagCol : 'rgba(255,255,255,0.12)';
+  const g = tag && th.glow ? tagCol : undefined;
+  box(ctx, x, y, w, h, 1 * u, th.panel, edge, tag ? 0.35 * u : Math.max(1, 0.15 * u), g);
+  ctx.restore();
+  const lp = fitPx(ctx, label, (p) => th.font(700, p), 2.2 * u, w - 3 * u);
+  text(ctx, label, cx, y + 2.6 * u, lp, th.dim, {
+    align: 'center',
+    css: th.font(700, lp),
+    stroke: null,
+    alpha,
+  });
+  const vp = fitPx(ctx, value, (p) => th.font(800, p, true), 4.6 * u, w - 3 * u);
+  text(ctx, value, cx, y + 6.8 * u, vp, th.text, {
+    align: 'center',
+    css: th.font(800, vp, true),
+    stroke: null,
+    alpha,
+  });
+  if (!tag) return;
+  const tp = fitPx(ctx, tag, (p) => th.font(800, p, true), 2.6 * u, w - 3 * u);
+  text(ctx, tag, cx, y + 11 * u, tp, tagCol, {
+    align: 'center',
+    css: th.font(800, tp, true),
+    stroke: null,
+    glow: th.glow ? tagCol : undefined,
+    scale: tagScale,
+    alpha,
+  });
 }
 
 /** Car pick overlay: one locked car at a time, LATER as the last stop. */
