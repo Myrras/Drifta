@@ -1,5 +1,5 @@
-import type { CarModel } from './types';
-import { CAR_MODELS } from './models';
+import type { CarModel, PlayerModel } from './types';
+import { CAR_MODELS, PLAYER_MODELS } from './models';
 
 type Ctx = CanvasRenderingContext2D;
 /** [x, half width] in m, listed nose to tail; mirrored across the x axis */
@@ -453,4 +453,55 @@ export function drawParkedCar(ctx: CanvasRenderingContext2D, model: CarModel, co
   }
   s.detail(g, color);
   g.restore();
+}
+
+/** NA roadster: short, rounded, pop-up lids, open cockpit with two seats and roll hoops. */
+function drawMx5(g: Ctx, color: string): void {
+  const hl = PLAYER_MODELS.mx5.length / 2;
+  const B = PLAYER_MODELS.mx5.width / 2 - 0.1;
+  const fa = hl - 0.9;
+  g.save();
+  for (const x of [fa, fa - 2.27]) pair(g, [TIRE], x - 0.29, B - 0.2, 0.58, 0.3, 0.07);
+  fill(g, color, [
+    [hl, 0.42],
+    [hl - 0.06, 0.58],
+    [hl - 0.3, B - 0.02],
+    [hl - 0.8, B],
+    [-0.1, B - 0.02],
+    [-hl + 0.7, B],
+    [-hl + 0.2, B - 0.06],
+    [-hl + 0.02, B - 0.3],
+    [-hl, 0],
+  ]);
+  g.save();
+  g.clip();
+  g.strokeStyle = 'rgba(0,0,0,0.07)'; // darker toward the edges
+  for (const lw of [0.7, 0.55, 0.4, 0.28, 0.18, 0.1]) {
+    g.lineWidth = lw;
+    g.stroke();
+  }
+  g.strokeStyle = 'rgba(255,255,255,0.14)';
+  g.lineWidth = 0.05;
+  g.stroke();
+  g.restore();
+  lids(g, color, hl - 0.8, 0.32, 0.36, 0.3); // shut pop-up lids
+  pair(g, [HEAD], hl - 0.2, 0.34, 0.14, 0.26, 0.06);
+  pair(g, [TAIL], -hl + 0.01, 0.3, 0.07, 0.34);
+  line(g, 'rgba(0,0,0,0.35)', 0.03, 0.3, -B + 0.1, 0.3, B - 0.1); // hood shut line
+  // open cockpit with two seats
+  g.fillStyle = '#1b1c20';
+  g.beginPath();
+  g.roundRect(-1.05, -B + 0.1, 1.2, 2 * B - 0.2, 0.2);
+  g.fill();
+  pair(g, ['#2a2b30', 'rgba(255,255,255,0.08)'], -0.75, 0.1, 0.42, 0.38, 0.1);
+  trap(g, GLASS, [0.42, B - 0.1, 0.18, B - 0.1, 0.05, 0.04, 0]); // low windshield
+  pair(g, ['#101114'], -0.9, 0.5, 0.1, 0.12, 0.03); // roll hoops
+  pair(g, [color, SHADE], 0.3, B - 0.02, 0.14, 0.11, 0.03); // mirrors
+  g.restore();
+}
+
+/** Draws any player model centered at the origin, nose toward +x, 1 unit = 1 m. */
+export function drawCar(ctx: CanvasRenderingContext2D, model: PlayerModel, color: string): void {
+  if (model === 'mx5') drawMx5(ctx, color);
+  else drawParkedCar(ctx, model, color);
 }

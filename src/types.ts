@@ -77,6 +77,8 @@ export interface InputState {
   confirm: boolean;
   /** edge-triggered: true for one poll on press */ left: boolean;
   right: boolean;
+  /** edge-triggered, menu navigation (optional so car tests need no change) */ up?: boolean;
+  down?: boolean;
 }
 /** rpm normalized 0..1 */
 export interface CarState {
@@ -122,4 +124,4 @@ export type ScoreEvent =
   | { type: 'trick'; trick: Trick }
   | { type: 'bank'; amount: number }
   | { type: 'fail'; lost: number };
-export type Phase = 'title' | 'countdown' | 'run' | 'paused' | 'results';
+export type Phase = 'title' | 'garage' | 'settings' | 'countdown' | 'run' | 'paused' | 'results';

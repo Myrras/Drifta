@@ -141,6 +141,8 @@ export function createInput(
     confirm: latchedEdge(),
     left: latchedEdge(),
     right: latchedEdge(),
+    up: latchedEdge(),
+    down: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -151,6 +153,10 @@ export function createInput(
     ArrowLeft: kbEdge.left,
     KeyD: kbEdge.right,
     ArrowRight: kbEdge.right,
+    KeyW: kbEdge.up,
+    ArrowUp: kbEdge.up,
+    KeyS: kbEdge.down,
+    ArrowDown: kbEdge.down,
   };
   win.addEventListener('keydown', (e) => {
     if (!MAPPED.has(e.code)) return;
@@ -167,6 +173,8 @@ export function createInput(
     confirm: edgeTracker(),
     left: edgeTracker(),
     right: edgeTracker(),
+    up: edgeTracker(),
+    down: edgeTracker(),
   };
 
   return {
@@ -191,6 +199,12 @@ export function createInput(
         right:
           kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')) ||
           padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5),
+        up:
+          kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')) ||
+          padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5),
+        down:
+          kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')) ||
+          padEdge.down((pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5),
       };
     },
   };

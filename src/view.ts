@@ -41,6 +41,34 @@ export interface Results {
   newBest: boolean;
 }
 
+export interface MenuRow {
+  label: string;
+  value?: string;
+  /** 0..1 slider fill */
+  bar?: number;
+}
+
+/** Title, garage and settings screens. */
+export interface MenuView {
+  screen: 'title' | 'garage' | 'settings';
+  rows: MenuRow[];
+  /** highlighted row */
+  row: number;
+  /** map names and the chosen one (title) */
+  items: string[];
+  selected: number;
+  /** garage preview; stats are 0..1 across all models */
+  garage: {
+    model: PlayerModel;
+    name: string;
+    color: string;
+    colors: string[];
+    index: number;
+    count: number;
+    stats: { power: number; grip: number; weight: number };
+  } | null;
+}
+
 export interface HudView {
   phase: Phase;
   time: number;
@@ -57,8 +85,8 @@ export interface HudView {
   countdown: number;
   best: number;
   results: Results | null;
-  /** map choice; non-null only on the title */
-  menu: { items: string[]; selected: number } | null;
+  /** non-null on title, garage and settings */
+  menu: MenuView | null;
 }
 
 export interface FrameView {
