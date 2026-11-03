@@ -45,6 +45,15 @@ import {
   timeBonus,
   zoneAt,
 } from './scoring';
+import {
+  awardFinish,
+  isCarUnlocked,
+  loadProgress,
+  positionFor,
+  saveProgress,
+  spendCarPick,
+  type Progress,
+} from './progress';
 
 export type AudioLike = ReturnType<typeof createAudio>;
 /** MY MUSIC library hooks (browser side, see main.ts). */
@@ -75,6 +84,7 @@ export interface ClipRecorder {
   /** drop everything */
   clear(): void;
   has(id: number): boolean;
+  still?(id: number): HTMLCanvasElement | undefined;
   /** download the clip */
   save(id: number, filename: string): void;
 }
@@ -234,7 +244,11 @@ export function createGame(
     helix: null as Helix | null,
     p: 0,
     drifted: 0,
-    results: null as Omit<Results, 'drifts' | 'driftRow'> | null,
+    results: null as Omit<Results, 'drifts' | 'driftRow' | 'carPick' | 'chooser'> | null,
+    /** progress loaded at finish (null: no storage), pending car pick, open chooser */
+    prog: null as Progress | null,
+    carPick: false,
+    chooser: null as { cars: PlayerModel[]; row: number } | null,
     resultsAge: 0,
     stuck: 0,
     clip: null as Rect | null,
@@ -351,6 +365,16 @@ export function createGame(
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
     if (newBest) stores[sel].set((bests[sel] = total));
+    try {
+      s.prog = loadProgress(storage);
+    } catch {
+      s.prog = null; // no localStorage (node tests without storage): no progression
+    }
+    const award = s.prog
+      ? awardFinish(s.prog, map, total, s.time)
+      : { position: positionFor(map, total, s.time), newPaints: [], carPick: false };
+    if (s.prog) saveProgress(s.prog, storage);
+    s.carPick = award.carPick;
     s.results = {
       comboPoints,
       timeBonus: bonus,
@@ -359,6 +383,8 @@ export function createGame(
       best: bests[sel],
       newBest,
       medals: map.medals,
+      position: award.position,
+      newPaints: award.newPaints,
     };
     s.phase = 'results';
     audio.stop();
@@ -782,11 +808,26 @@ export function createGame(
         case 'results': {
           s.resultsAge += dt;
           const ready = s.resultsAge >= RESULTS_LOCKOUT;
-          if (input.pause) toTitle();
-          else if (input.confirm && ready) newRun();
+          const ch = s.chooser;
+          if (ch) {
+            // car pick overlay: LATER or ESC / B keep the pick for the garage
+            if (dir) ch.row = cycle(ch.row, dir, ch.cars.length + 1);
+            if (input.confirm || input.pause) {
+              const car = input.confirm ? ch.cars[ch.row] : undefined;
+              if (car && s.prog && spendCarPick(s.prog, car)) saveProgress(s.prog, storage);
+              s.chooser = null;
+              s.carPick = false;
+            }
+          } else if (input.pause) toTitle();
+          else if (input.confirm && ready && s.carPick && s.prog) {
+            const p = s.prog;
+            const cars = MODEL_IDS.filter((m) => !isCarUnlocked(p, m, false));
+            if (cars.length) s.chooser = { cars, row: 0 };
+            else s.carPick = false; // everything owned: the pick stays banked
+          } else if (input.confirm && ready) newRun();
           else if (input.save) {
-            if (ready) saveDrift(); // S also sets down: don't move
-          } else if (dv && s.drifts.length) s.driftRow = cycle(s.driftRow, dv, s.drifts.length);
+            if (ready) saveDrift();
+          } else if (dir && s.drifts.length) s.driftRow = cycle(s.driftRow, dir, s.drifts.length);
           break;
         }
       }
@@ -869,8 +910,14 @@ export function createGame(
                     tricks: d.tricks,
                     clip: clips?.has(d.id) ?? false,
                     saved: d.saved,
+                    still: clips?.still?.(d.id),
                   })),
                   driftRow: s.driftRow,
+                  carPick: s.carPick,
+                  chooser: s.chooser && {
+                    cars: s.chooser.cars.map((m) => ({ model: m, name: PLAYER_MODELS[m].name })),
+                    row: s.chooser.row,
+                  },
                 }
               : null,
         },

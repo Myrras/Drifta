@@ -20,6 +20,20 @@ interface Take {
   discard: boolean;
   kept: boolean;
   tail?: ReturnType<typeof setTimeout>;
+  start: number;
+  still?: HTMLCanvasElement;
+}
+
+const STILL_MS = 200;
+const STILL_MAX = 32; // ring cap: stills spread over the whole current drift
+const STILL_W = 320;
+
+/** index of the time nearest to target, -1 if none */
+export function nearestIndex(times: number[], target: number): number {
+  let best = -1;
+  for (let i = 0; i < times.length; i++)
+    if (best < 0 || Math.abs(times[i] - target) < Math.abs(times[best] - target)) best = i;
+  return best;
 }
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
@@ -28,7 +42,7 @@ const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 export function createClipRecorder(
   canvas: HTMLCanvasElement,
   audio: () => MediaStream | null,
-): ClipRecorder & { frame(): void } {
+): ClipRecorder & { frame(): void; still(id: number): HTMLCanvasElement | undefined } {
   const out = document.createElement('canvas');
   const octx = out.getContext('2d');
   const ok = typeof MediaRecorder !== 'undefined' && 'captureStream' in out && !!octx;
@@ -39,6 +53,48 @@ export function createClipRecorder(
   let rolling: Take[] = [];
   let [maxLong, maxShort, fps, bitrate] = PRESETS.medium;
   const clips = new Map<number, Take>();
+  let ring: { t: number; c: HTMLCanvasElement }[] = [];
+  let spare: HTMLCanvasElement[] = []; // canvases freed by decimation, reused
+  let gap = STILL_MS;
+  let lastStill = 0;
+
+  /** new drift: start the stills over at the finest interval */
+  function resetStills(): void {
+    spare.push(...ring.map((e) => e.c));
+    ring = [];
+    gap = STILL_MS;
+    lastStill = 0;
+  }
+
+  function snap(): void {
+    const now = performance.now();
+    if (now - lastStill < gap) return;
+    lastStill = now;
+    if (ring.length >= STILL_MAX) {
+      // full: keep every other still and halve the rate, so any drift length fits
+      spare.push(...ring.filter((_, i) => i % 2).map((e) => e.c));
+      ring = ring.filter((_, i) => !(i % 2));
+      gap *= 2;
+    }
+    const c = spare.pop() ?? document.createElement('canvas');
+    ring.push({ t: now, c });
+    c.width = STILL_W;
+    c.height = Math.max(1, Math.round((out.height * STILL_W) / out.width));
+    c.getContext('2d')!.drawImage(out, 0, 0, c.width, c.height);
+  }
+
+  function pickStill(t: Take): void {
+    const i = nearestIndex(
+      ring.map((e) => e.t),
+      (t.start + performance.now()) / 2,
+    );
+    if (i < 0) return;
+    const c = document.createElement('canvas');
+    c.width = ring[i].c.width;
+    c.height = ring[i].c.height;
+    c.getContext('2d')!.drawImage(ring[i].c, 0, 0);
+    t.still = c;
+  }
 
   function release(): void {
     stream?.getVideoTracks().forEach((v) => v.stop());
@@ -56,7 +112,7 @@ export function createClipRecorder(
     if (!stream) return null;
     try {
       const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: bitrate });
-      const t: Take = { rec, chunks: [], done: null!, discard: false, kept: false };
+      const t: Take = { rec, chunks: [], done: null!, discard: false, kept: false, start: 0 };
       t.done = new Promise((resolve) => {
         rec.ondataavailable = (e) => !t.discard && e.data.size && t.chunks.push(e.data);
         rec.onstop = () => resolve(new Blob(t.chunks, { type: rec.mimeType || 'video/webm' }));
@@ -104,10 +160,17 @@ export function createClipRecorder(
   return {
     /** call after each rendered frame */
     frame() {
-      if (stream) draw();
+      if (stream) {
+        draw();
+        snap();
+      }
     },
     begin(quality) {
       this.clear();
+      ring = [];
+      spare = [];
+      gap = STILL_MS;
+      lastStill = 0;
       if (!mimeType || quality === 'off') return;
       [maxLong, maxShort, fps, bitrate] = PRESETS[quality];
       try {
@@ -125,13 +188,18 @@ export function createClipRecorder(
     },
     mark(id) {
       const t = rolling.shift() ?? take();
-      if (t) clips.set(id, t);
+      if (t) {
+        t.start = performance.now(); // drift start, not take start
+        resetStills();
+        clips.set(id, t);
+      }
       if (!rolling.length) rotate();
     },
     keep(id) {
       const t = clips.get(id);
       if (!t || t.kept) return;
       t.kept = true;
+      pickStill(t);
       t.tail = setTimeout(() => {
         finish(t);
         releaseIfIdle();
@@ -159,6 +227,9 @@ export function createClipRecorder(
       clips.forEach((t) => finish(t, true));
       clips.clear();
       release();
+    },
+    still(id) {
+      return clips.get(id)?.still;
     },
     has(id) {
       return clips.has(id);

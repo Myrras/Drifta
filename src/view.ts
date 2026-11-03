@@ -44,6 +44,8 @@ export interface TopDrift {
   /** a video clip exists and can be saved */
   clip: boolean;
   saved: boolean;
+  /** still frame from the middle of the drift, if captured */
+  still?: HTMLCanvasElement;
 }
 
 export interface Results {
@@ -53,8 +55,16 @@ export interface Results {
   time: number;
   best: number;
   newBest: boolean;
-  /** thresholds [bronze, silver, gold] of the map, if any */
+  /** score thresholds [3rd, 2nd, 1st] of the map, if any */
   medals?: [number, number, number];
+  /** finishing position on maps with positions, null = none reached */
+  position: 1 | 2 | 3 | null;
+  /** paint ids unlocked by this finish */
+  newPaints: string[];
+  /** a car pick was earned and is not yet chosen or deferred */
+  carPick: boolean;
+  /** car pick overlay: locked cars, then LATER at index cars.length */
+  chooser: { cars: { model: PlayerModel; name: string }[]; row: number } | null;
   /** best banked combos, highest first (max 3) */
   drifts: TopDrift[];
   /** selected index in drifts */
