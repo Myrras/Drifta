@@ -1,4 +1,4 @@
-import type { CarState, DriftInfo, PlayerModel } from './types';
+import type { CarState, DriftInfo, PlayerModel, Solid, Vec } from './types';
 import { engineProfile, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
 import { createMusic, type Track } from './music';
@@ -52,6 +52,30 @@ export function pickLoopWindow(
   return [(best * blk) / sampleRate, ((best + w) * blk) / sampleRate];
 }
 
+export const BOOM_RANGE = 45; // m, silent beyond
+const BOOM_NEAR = 4; // m, full level inside
+/** Subwoofer level 0..1 at distance d (m): full inside BOOM_NEAR, squared fade to 0 at BOOM_RANGE. */
+export function boomGain(d: number): number {
+  const t = Math.min(1, Math.max(0, (d - BOOM_NEAR) / (BOOM_RANGE - BOOM_NEAR)));
+  return (1 - t) ** 2;
+}
+/** Centers of the parked boom cars among a floor's solids. */
+export function boomCars(solids: Solid[]): Vec[] {
+  return solids.filter((s) => s.boom).map((s) => ({ x: s.x + s.w / 2, y: s.y + s.h / 2 }));
+}
+const BOOM_BAR = 2; // s, kick pattern length
+const BOOM_KICKS = [0, 0.75, 1, 1.5]; // kick times within the bar
+/** Kick envelope 0..1 at time t, for visuals that follow the bass (decays ~0.15 s after each kick). */
+export function boomPulse(t: number): number {
+  const ph = ((t % BOOM_BAR) + BOOM_BAR) % BOOM_BAR;
+  let m = 0;
+  for (const k of BOOM_KICKS) {
+    const a = (ph - k + BOOM_BAR) % BOOM_BAR;
+    m = Math.max(m, Math.exp(-a / 0.15));
+  }
+  return m;
+}
+
 export function createAudio() {
   let ctx: AudioContext | null = null;
   let master: GainNode;
@@ -72,6 +96,11 @@ export function createAudio() {
   let track: Track = 'phonk';
   let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
   let tap: MediaStreamAudioDestinationNode | null = null;
+  // boom cars: one voice (wobbling lowpass -> level -> pan) per car, one shared kick scheduler
+  let boomBus: GainNode | null = null;
+  const booms: { kick: GainNode; level: GainNode; pan: StereoPannerNode }[] = [];
+  let boomT = 0; // next kick time
+  let boomI = 0; // next kick index in the bar
 
   function applyVolumes(): void {
     if (!ctx) return;
@@ -167,6 +196,57 @@ export function createAudio() {
     }
   }
 
+  function boomVoice(i: number) {
+    const c = ctx!;
+    if (!boomBus) {
+      const comp = c.createDynamicsCompressor(); // gain ceiling
+      comp.threshold.value = -12;
+      comp.ratio.value = 12;
+      boomBus = c.createGain();
+      boomBus.gain.value = 0.6;
+      boomBus.connect(comp).connect(sfxBus);
+    }
+    const kick = c.createGain();
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 140;
+    lp.Q.value = 4;
+    const lfo = c.createOscillator(); // the wub
+    lfo.frequency.value = 2.5 + (i % 3) * 0.7;
+    const depth = c.createGain();
+    depth.gain.value = 70;
+    lfo.connect(depth).connect(lp.frequency);
+    lfo.start();
+    const level = c.createGain();
+    level.gain.value = 0;
+    const pan = c.createStereoPanner();
+    kick.connect(lp).connect(level).connect(pan).connect(boomBus);
+    return (booms[i] = { kick, level, pan });
+  }
+
+  /** One 808-style kick (sine 55 -> 40 Hz plus a quiet octave up so small speakers hear it). */
+  function boomKick(out: GainNode, t: number): void {
+    const env = ctx!.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.9, t + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    env.connect(out);
+    for (const [type, mul, vol] of [
+      ['sine', 1, 1],
+      ['triangle', 2, 0.3],
+    ] as const) {
+      const o = ctx!.createOscillator();
+      const g = ctx!.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(55 * mul, t);
+      o.frequency.exponentialRampToValueAtTime(40 * mul, t + 0.18);
+      g.gain.value = vol;
+      o.connect(g).connect(env);
+      o.start(t);
+      o.stop(t + 0.5);
+    }
+  }
+
   return {
     resume(): void {
       try {
@@ -209,6 +289,28 @@ export function createAudio() {
         const on = drift.drifting;
         set(sqGain.gain, on ? slip * speed * 0.6 : 0, on ? 0.06 : 0.15);
         set(sqSrc.playbackRate, 0.9 + slip * 0.2, 0.1);
+      }
+    },
+    /** Call every frame of a run with the player and the floor's boom car centers; silent when not called. */
+    boom(player: Vec, cars: Vec[]): void {
+      if (!ctx || ctx.state !== 'running') return;
+      const now = ctx.currentTime;
+      const live: GainNode[] = [];
+      cars.forEach((c, i) => {
+        const g = boomGain(Math.hypot(c.x - player.x, c.y - player.y));
+        if (g < 0.01 && !booms[i]) return;
+        const v = booms[i] ?? boomVoice(i);
+        set(v.level.gain, g * 0.8, 0.05);
+        set(v.pan.pan, Math.max(-1, Math.min(1, (c.x - player.x) / 20)) * 0.7, 0.05);
+        if (g >= 0.01) live.push(v.kick);
+      });
+      for (let i = cars.length; i < booms.length; i++) set(booms[i].level.gain, 0, 0.05);
+      if (boomT < now - 0.1) [boomT, boomI] = [now + 0.02, 0]; // first call, or back after a pause
+      while (boomT < now + 0.12) {
+        for (const k of live) boomKick(k, boomT);
+        const n = (boomI + 1) % BOOM_KICKS.length;
+        boomT += (n ? BOOM_KICKS[n] : BOOM_BAR) - BOOM_KICKS[boomI];
+        boomI = n;
       }
     },
     hit(): void {

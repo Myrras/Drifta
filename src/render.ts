@@ -29,6 +29,7 @@ import { drawCar, drawParkedCar } from './sprites';
 import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
+import { boomPulse } from './audio';
 
 // --- visual tuning ---
 const STATIC_PX = 10; // px per meter, pre-rendered floor layer
@@ -523,6 +524,12 @@ function parkedPoses(f: Floor): ParkedPose[] {
     });
 }
 
+/** Paint of the i-th parked car on floor idx: its own color, else a stable pick. */
+function parkedColor(p: ParkedPose, i: number, idx: number): string {
+  const colors = p.s.model ? CAR_MODELS[p.s.model].colors : PARKED_COLORS;
+  return p.s.color ?? colors[(i * 7 + idx * 3) % colors.length];
+}
+
 type Pose = Pick<ParkedPose, 'x' | 'y' | 'facing' | 'len' | 'wid'>;
 /** Lamps of a car with headlights on: cones from the front corners, lamp and tail (brake) glows. */
 function parkedLamps(p: Pose, brake = false): Lamp[] {
@@ -660,6 +667,7 @@ function buildLights(map: GameMap, idx: number) {
     rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
     police: poses.filter((p) => p.s.police).map(policeLamps),
+    boom: poses.flatMap((p, i) => (p.s.boom ? [{ p, color: parkedColor(p, i, idx) }] : [])),
   };
 }
 
@@ -675,6 +683,35 @@ function policeLivery(g: Ctx, len: number, wid: number) {
   g.fillRect(-0.26, -wid / 2 + 0.36, 0.32, wid / 2 - 0.4);
   g.fillStyle = '#2a5cff';
   g.fillRect(-0.26, 0.04, 0.32, wid / 2 - 0.4);
+}
+
+/** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
+function drawBoomCar(g: Ctx, { p, color }: { p: ParkedPose; color: string }, t: number, a: number) {
+  const k = boomPulse(t);
+  const c = Math.cos(p.facing);
+  const s = Math.sin(p.facing);
+  const jit = k * 0.03 * Math.sin(t * 90); // m, sideways
+  g.save();
+  g.globalAlpha = a * 0.35; // ground shadow, offset like the static layer's
+  g.translate(p.x + 0.3, p.y + 0.4);
+  g.rotate(p.facing);
+  g.fillStyle = '#000';
+  g.beginPath();
+  g.roundRect(-p.len / 2 + 0.15, -p.wid / 2 + 0.15, p.len - 0.3, p.wid - 0.3, 0.5);
+  g.fill();
+  g.restore();
+  g.save();
+  g.globalAlpha = a;
+  g.translate(p.x - s * jit, p.y + c * jit);
+  g.rotate(p.facing + k * 0.012 * Math.sin(t * 61));
+  g.strokeStyle = `rgba(255,60,200,${0.12 + 0.4 * k})`;
+  g.lineWidth = 0.08 + 0.08 * k;
+  g.beginPath();
+  g.arc(-p.len / 2, 0, 0.7 + 0.5 * k, 0, Math.PI * 2);
+  g.stroke();
+  if (p.s.model) drawParkedCar(g, p.s.model, color);
+  else parkedCar(g, p.len, p.wid, color);
+  g.restore();
 }
 
 /** Parked car in local frame, +x = nose. */
@@ -1014,7 +1051,7 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
     });
   }
   parkedPoses(f).forEach((p, i) => {
-    const pick = (colors: string[]) => colors[(i * 7 + idx * 3) % colors.length];
+    if (p.s.boom) return; // drawn per frame, see drawBoomCar
     g.save();
     g.translate(p.x, p.y);
     g.rotate(p.facing);
@@ -1025,9 +1062,9 @@ function buildStatic(map: GameMap, idx: number): HTMLCanvasElement {
       g.roundRect(-p.len / 2 + 0.15, -p.wid / 2 + 0.15, p.len - 0.3, p.wid - 0.3, 0.5);
       g.fill();
       noShadow();
-      drawParkedCar(g, p.s.model, p.s.color ?? pick(CAR_MODELS[p.s.model].colors));
+      drawParkedCar(g, p.s.model, parkedColor(p, i, idx));
       if (p.s.police) policeLivery(g, p.len, p.wid);
-    } else parkedCar(g, p.len, p.wid, p.s.color ?? pick(PARKED_COLORS));
+    } else parkedCar(g, p.len, p.wid, parkedColor(p, i, idx));
     g.restore();
   });
   // round concrete cores: hazard band at the edge, soft top highlight
@@ -1851,6 +1888,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       if (skid) ctx.drawImage(skid.c, 0, 0, fl.w, fl.h);
     }
     ctx.globalAlpha = 1;
+    for (const [idx, a] of floors)
+      for (const b of lightLayer(v.map, idx).boom)
+        if (visible(b.p.x, b.p.y, 5)) drawBoomCar(ctx, b, clock, a);
 
     // traffic cars under the darkness: lit by street lights and headlights like the player
     const sim = v.traffic?.sim;
@@ -1934,6 +1974,23 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       for (const { l, w } of layers)
         for (const set of l.hazards)
           if (visible(set[0].x, set[0].y, 6)) for (const lamp of set) dyn.push([lamp, w]);
+    const pulse = boomPulse(clock);
+    for (const { l, w } of layers)
+      for (const { p } of l.boom)
+        if (visible(p.x, p.y, 5))
+          dyn.push([
+            {
+              cone: false,
+              x: p.x - Math.cos(p.facing) * (p.len / 2 + 0.4),
+              y: p.y - Math.sin(p.facing) * (p.len / 2 + 0.4),
+              ang: 0,
+              size: 3 + pulse,
+              cut: 0.4,
+              tint: 'red',
+              glow: 0.15 + 0.4 * pulse,
+            },
+            w,
+          ]);
     const wig = Math.floor(clock * POLICE_HZ * 2) % 2;
     for (const { l, w } of layers)
       for (const bar of l.police) if (visible(bar[0].x, bar[0].y, 6)) dyn.push([bar[wig], w]);

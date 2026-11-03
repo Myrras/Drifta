@@ -14,7 +14,7 @@ import type {
   Trick,
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContext } from './view';
-import type { createAudio } from './audio';
+import { boomCars, type createAudio } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
@@ -199,6 +199,8 @@ export function createGame(
   let starter = 0; // index into STARTERS on the first-launch screen
   let offerPick = false; // garage: confirm again spends a car pick on the locked car
   let toastT = 0;
+  let boomFloor: Floor | null = null; // floor whose boom cars boomList holds
+  let boomList: Vec[] = [];
   // daily / legend run in progress; a legend swaps in its car until the title
   let daily: Daily | null = null;
   let dailyDate = '';
@@ -572,6 +574,8 @@ export function createGame(
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle, cfg.car, cfg.tune);
+    if (floor !== boomFloor) boomList = boomCars((boomFloor = floor).solids);
+    if (boomList.length) audio.boom(car.pos, boomList);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const { solids, circles } = nearby(car, floor);

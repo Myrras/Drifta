@@ -30,6 +30,7 @@ const noop = () => {};
 const audio: AudioLike = {
   resume: noop,
   update: noop,
+  boom: noop,
   hit: noop,
   bank: noop,
   fail: noop,
