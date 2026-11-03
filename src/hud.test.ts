@@ -6,6 +6,7 @@ import {
   easeOutElastic,
   formatScore,
   formatTime,
+  limitState,
   multColor,
   nextTarget,
   paintName,
@@ -92,6 +93,31 @@ describe('positions', () => {
     expect(paintName('b2-violet')).toBe('B2 VIOLET');
     expect(paintName('fortune-orange')).toBe('FORTUNE ORANGE');
     expect(paintName('no-such-paint')).toBe('NO SUCH PAINT');
+  });
+});
+
+describe('time limit readout', () => {
+  it('goes amber under 15 s, red and pulsing under 5 s', () => {
+    expect(limitState(0, 60, 78)).toMatchObject({ left: 78, color: '#f4f5ff', pulse: false });
+    expect(limitState(64, 60, 78)).toMatchObject({ color: '#ffb21a', pulse: false });
+    expect(limitState(74, 60, 78)).toMatchObject({ left: 4, color: '#ff2b3a', pulse: true });
+    expect(limitState(99, 60, 78).left).toBe(0);
+  });
+  it('shows the latest place cutoff already passed', () => {
+    expect(limitState(60, 60, 78).missed).toBe('');
+    expect(limitState(61, 60, 78).missed).toBe('1ST ✗');
+    expect(limitState(70, 60, 78).missed).toBe('2ND ✗');
+  });
+  it('TIME UP results bar is retry / menu', () => {
+    const ui = { theme: 'arcade', device: 'kb', padStyle: 'xbox' } as const;
+    const r = {
+      carPick: false,
+      chooser: null,
+      drifts: [],
+      driftRow: 0,
+      timeUp: true,
+    } as unknown as Results;
+    expect(resultsHint(ui, r)).toBe('ENTER retry · ESC menu');
   });
 });
 

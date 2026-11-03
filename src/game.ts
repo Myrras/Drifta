@@ -498,13 +498,17 @@ export function createGame(
     return false;
   }
 
-  function finish(): void {
+  /** par x1.3 (the 3rd-place time) on maps with positions; not in MP */
+  const limitOf = () => (map.medals && !mp ? map.parTime * 1.3 : 0);
+
+  /** timeUp: the score is shown but nothing counts or is saved */
+  function finish(timeUp = false): void {
     handle(forceBank(s.scoring));
     clips?.stop();
     const comboPoints = s.scoring.banked;
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
-    const newBest = total > bests[sel];
+    const newBest = !timeUp && total > bests[sel];
     if (newBest) {
       stores[sel].set((bests[sel] = total));
       saveGhost(map.name, {
@@ -514,8 +518,11 @@ export function createGame(
       });
     }
     s.prog = prog;
-    const award = awardFinish(prog, map, total, s.time);
-    const dr = daily ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
+    const award = timeUp
+      ? { position: null, newPaints: [] as string[], carPick: false }
+      : awardFinish(prog, map, total, s.time);
+    const dr =
+      daily && !timeUp ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
     persist();
     s.carPick = award.carPick || !!dr?.carPick;
     s.results = {
@@ -525,6 +532,7 @@ export function createGame(
       time: s.time,
       best: bests[sel],
       newBest,
+      timeUp,
       medals: map.medals,
       position: award.position,
       newPaints: award.newPaints,
@@ -614,7 +622,17 @@ export function createGame(
 
   function run(input: InputState, dt: number): void {
     track();
+    const was = s.time;
     s.time += dt;
+    const limit = limitOf();
+    if (limit) {
+      const n = Math.ceil(limit - s.time - 1e-6); // whole seconds left, as in hud
+      if (n <= 0) {
+        s.time = limit;
+        return finish(true);
+      }
+      if (n <= 5 && n < Math.ceil(limit - was - 1e-6)) audio.ui('count');
+    }
     rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
@@ -1408,6 +1426,7 @@ export function createGame(
           phase: s.phase,
           time: s.time,
           par: map.parTime,
+          limit: limitOf(),
           floorName: map.floors[s.floorIndex].name,
           score: scoring.banked,
           combo: scoring.combo,
