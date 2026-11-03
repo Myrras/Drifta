@@ -8,6 +8,8 @@ import type { GameMap, InputState } from './types';
 import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
 import { settingsLayout } from './ui/menu';
+import { docks, docksRoute } from './maps/docks';
+import { ENGINE_PROFILES } from './engine';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -578,14 +580,16 @@ describe('main menu, garage, settings', () => {
     tap({ up: true });
     expect(g().color).toBe(PLAYER_MODELS.civic.colors.at(-1));
     tap({ pause: true }); // revert
-    expect(game.view().render.player.model).toBe('mx5');
+    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.mx5.name);
     tap({ confirm: true });
     tap({ left: true });
     expect(g().model).toBe('wrx');
     tap({ confirm: true });
-    const p = game.view().render.player;
-    expect(p).toEqual({ model: 'wrx', color: PLAYER_MODELS.wrx.colors[0] });
-    expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({ car: 'wrx' });
+    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.wrx.name);
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({
+      car: 'wrx',
+      color: PLAYER_MODELS.wrx.colors[0],
+    });
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS.wrx.stats);
   });
 
@@ -657,7 +661,7 @@ describe('main menu, garage, settings', () => {
       engine: 0.8,
     });
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).music).toBe(0.7);
-    tap({ tabNext: true } as Partial<InputState>);
+    tap({ tabNext: true });
     tap({ up: true });
     tap({ right: true });
     expect(game.view().hud.menu!.rows[0].value).toBe('OFF');
@@ -698,8 +702,8 @@ describe('main menu, garage, settings', () => {
   it('tabs: strip left/right, Q/E from anywhere, BACK stays last', () => {
     const { game, tap, row } = rig();
     const menu = () => game.view().hud.menu!;
-    const Q = { tabPrev: true } as Partial<InputState>;
-    const E = { tabNext: true } as Partial<InputState>;
+    const Q = { tabPrev: true };
+    const E = { tabNext: true };
     tap({ up: true });
     tap({ confirm: true });
     expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
@@ -903,5 +907,88 @@ describe('main menu, garage, settings', () => {
       game.update({ ...IDLE, right: true }, DT);
       expect(game.debug.runId).toBeGreaterThan(id);
     });
+  });
+});
+
+describe('device, rpm and attract', () => {
+  it('menu and hud ui follow the polled device', () => {
+    const { game, step } = setup();
+    step({ device: 'pad', padStyle: 'ps' });
+    expect(game.view().hud.ui).toMatchObject({ device: 'pad', padStyle: 'ps' });
+    expect(game.view().hud.menu!.ui).toMatchObject({ device: 'pad', padStyle: 'ps' });
+    step(); // fields absent: last device sticks
+    expect(game.view().hud.ui.device).toBe('pad');
+  });
+
+  it('hud rpm is real crank rpm of the chosen car', () => {
+    const { game, toRun } = setup();
+    toRun();
+    const p = ENGINE_PROFILES.mx5;
+    game.debug.car.rpm = 0;
+    expect(game.view().hud.rpm).toBe(p.idle);
+    game.debug.car.rpm = 1;
+    expect(game.view().hud.rpm).toBe(p.limit);
+    expect(game.view().hud.redline).toBe(p.limit - 200);
+  });
+
+  it('runs a silent attract car on the docks behind the menu', () => {
+    const update = vi.fn();
+    const hit = vi.fn();
+    const set = vi.fn();
+    const game = createGame([garage], { ...audio, update, hit }, () => ({ get: () => 42, set }));
+    const step = (i: Partial<InputState> = {}, n = 1) => {
+      for (let k = 0; k < n; k++) game.update({ ...IDLE, ...i }, DT);
+    };
+    step();
+    const r = game.view().render;
+    expect(r.map).toBe(docks);
+    const from = { ...r.car.pos };
+    step({}, 120);
+    const r2 = game.view().render;
+    expect(Math.hypot(r2.car.pos.x - from.x, r2.car.pos.y - from.y)).toBeGreaterThan(5);
+    expect(r2.runId).toBeLessThan(0);
+    // settings keeps it running
+    step({ up: true });
+    step({ confirm: true });
+    expect(game.view().hud.menu!.screen).toBe('settings');
+    const before = { ...game.view().render.car.pos };
+    step({}, 30);
+    expect(game.view().render.car.pos).not.toEqual(before);
+    // route end teleports back to the start as a new loop
+    const end = docksRoute[0].points.at(-1)!;
+    game.view().render.car.pos = { ...end };
+    const loop = game.view().render.runId;
+    step();
+    expect(game.view().render.runId).toBe(loop - 1);
+    expect(Math.hypot(game.view().render.car.pos.x - docks.start.pos.x)).toBeLessThan(1);
+    expect(update).not.toHaveBeenCalled();
+    expect(hit).not.toHaveBeenCalled();
+    // starting a run: real state is clean and the attract car is gone
+    step({ pause: true });
+    step({ down: true }); // SETTINGS -> PLAY
+    step({ confirm: true });
+    const v = game.view();
+    expect(v.hud.phase).toBe('countdown');
+    expect(v.render.map).toBe(garage);
+    expect(v.render.player.model).toBe('mx5');
+    expect(v.render.runId).toBeGreaterThan(0);
+    expect(game.debug.car.pos).toEqual(garage.start.pos);
+    expect(game.debug.car.vel).toEqual({ x: 0, y: 0 });
+    expect(game.debug.scoring).toMatchObject({ banked: 0, combo: null });
+    expect(v.hud.best).toBe(42);
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('LB/RB tab presses with clutch held in settings do not reach the run', () => {
+    const { game, step, toRun } = setup();
+    step({ up: true });
+    step({ confirm: true });
+    step({ tabNext: true, clutch: true });
+    step({ tabPrev: true, clutch: true });
+    expect(game.view().hud.menu!.tabs!.active).toBe(0);
+    step({ pause: true });
+    toRun();
+    step();
+    expect(game.debug.car.clutchHeld).toBeFalsy();
   });
 });

@@ -51,41 +51,34 @@ document.addEventListener('visibilitychange', () => document.hidden && game.paus
 
 let last = performance.now();
 let acc = 0;
-const pending = {
-  pause: false,
-  restart: false,
-  confirm: false,
-  left: false,
-  right: false,
-  up: false,
-  down: false,
-  save: false,
-};
+/** edges latched across frames without a physics step */
+const EDGES = [
+  'pause',
+  'restart',
+  'confirm',
+  'left',
+  'right',
+  'up',
+  'down',
+  'save',
+  'tune',
+  'tabPrev',
+  'tabNext',
+] as const;
+const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
+  (typeof EDGES)[number],
+  boolean
+>;
 function frame(now: number) {
   const frameDt = Math.min((now - last) / 1000, 0.25);
   last = now;
   acc += frameDt;
   const s = input.poll();
-  pending.pause ||= s.pause;
-  pending.restart ||= s.restart;
-  pending.confirm ||= s.confirm;
-  pending.left ||= s.left;
-  pending.right ||= s.right;
-  pending.up ||= !!s.up;
-  pending.down ||= !!s.down;
-  pending.save ||= !!s.save;
+  for (const k of EDGES) pending[k] ||= !!s[k];
   if (s.confirm) resume();
   while (acc >= DT) {
     game.update({ ...s, ...pending }, DT);
-    pending.pause =
-      pending.restart =
-      pending.confirm =
-      pending.left =
-      pending.right =
-      pending.up =
-      pending.down =
-      pending.save =
-        false;
+    for (const k of EDGES) pending[k] = false;
     acc -= DT;
   }
   const v = game.view();

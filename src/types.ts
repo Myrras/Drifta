@@ -88,6 +88,10 @@ export interface InputState {
   /** level: garage engine rev (R / right trigger) */ rev?: boolean;
   /** edge-triggered: garage tune toggle (T / pad X) */ tune?: boolean;
   /** edge-triggered: save the selected drift clip on results (S / pad X) */ save?: boolean;
+  /** edge-triggered: settings tab prev / next (Q / E, pad LB / RB) */ tabPrev?: boolean;
+  tabNext?: boolean;
+  /** last-used device, for button prompts */ device?: 'kb' | 'pad';
+  padStyle?: 'ps' | 'xbox';
 }
 /** rpm normalized 0..1 */
 export interface CarState {
