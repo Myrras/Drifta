@@ -10,15 +10,15 @@ export type LobbyStep =
   | { k: 'invite'; invite: string; error?: string }
   | { k: 'connecting'; invite: string }
   | { k: 'paste'; error?: string }
-  | { k: 'joining' }
-  | { k: 'reply'; reply: string }
+  | { k: 'joining'; invite: string }
+  | { k: 'reply'; invite: string; reply: string }
   | { k: 'failed'; error: string }
   | { k: 'open' };
 
 export type LobbyEvent =
   | { t: 'hosted'; invite: string }
   | { t: 'joined'; reply: string }
-  | { t: 'submit' }
+  | { t: 'submit'; code: string }
   | { t: 'error'; reason: LinkErrorReason }
   | { t: 'link'; state: LinkState }
   | { t: 'retry' };
@@ -52,10 +52,10 @@ export function lobbyStep(mode: LobbyMode, s: LobbyStep, e: LobbyEvent): LobbySt
     case 'hosted':
       return s.k === 'creating' ? { k: 'invite', invite: e.invite } : s;
     case 'joined':
-      return s.k === 'joining' ? { k: 'reply', reply: e.reply } : s;
+      return s.k === 'joining' ? { k: 'reply', invite: s.invite, reply: e.reply } : s;
     case 'submit':
       if (s.k === 'invite') return { k: 'connecting', invite: s.invite };
-      if (s.k === 'paste') return { k: 'joining' };
+      if (s.k === 'paste') return { k: 'joining', invite: e.code };
       return s;
     case 'error': {
       const error = errorText(e.reason, mode);
@@ -86,6 +86,8 @@ const CSS = `
 .${P}-label{margin:14px 0 6px;font:${th.font(600, 14)};color:${th.dim}}
 .${P}-code{display:block;width:100%;box-sizing:border-box;height:72px;resize:none;padding:8px;background:rgba(4,3,16,0.8);color:${th.text};border:1px solid ${th.dim};font:12px/1.35 Consolas,"Lucida Console",monospace;word-break:break-all;text-transform:none;letter-spacing:0}
 .${P}-code:focus{outline:none;border-color:${th.accent2}}
+.${P}-code.${P}-dim{opacity:.55;color:${th.dim}}
+.${P}-code.${P}-hot,.${P}-code.${P}-hot:focus{border:2px solid ${th.accent};box-shadow:0 0 10px ${th.accent}}
 .${P}-row,.${P}-foot{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
 .${P}-foot{margin-top:20px}
 .${P}-btn{font:${th.font(700, 15)};text-transform:uppercase;letter-spacing:.08em;padding:8px 16px;cursor:pointer;background:transparent;color:${th.text};border:1px solid ${th.dim}}
@@ -202,7 +204,7 @@ export function openLobby(
     const code = input.trim();
     if (!takesInput(s) || !code) return box.focus();
     const g = gen;
-    dispatch({ t: 'submit' });
+    dispatch({ t: 'submit', code });
     Promise.resolve()
       .then(() =>
         mode === 'host'
@@ -259,8 +261,8 @@ export function openLobby(
     let focus: HTMLElement | null = null;
     const label = (text: string) => panel.append(el('div', 'label', text));
     const status = (text: string) => panel.append(el('div', 'status', text));
-    const codeOut = (code: string) => {
-      const ta = el('textarea', 'code');
+    const codeOut = (code: string, hot = false) => {
+      const ta = el('textarea', hot ? 'code ' + `${P}-hot` : 'code');
       ta.readOnly = true;
       ta.value = code;
       ta.addEventListener('focus', () => ta.select());
@@ -269,6 +271,13 @@ export function openLobby(
       row.append(b);
       panel.append(ta, row);
       focus ??= b;
+    };
+    const codeShown = (code: string) => {
+      const ta = el('textarea', 'code ' + `${P}-dim`);
+      ta.readOnly = true;
+      ta.tabIndex = -1;
+      ta.value = code;
+      panel.append(ta);
     };
     const codeIn = (placeholder: string, action: string) => {
       const ta = el('textarea', 'code');
@@ -302,17 +311,23 @@ export function openLobby(
         codeIn('REPLY CODE', 'CONNECT');
         break;
       case 'paste':
-        label("PASTE THE HOST'S INVITE");
+        label("1. PASTE THE HOST'S INVITE");
         codeIn('INVITE CODE', 'JOIN');
         break;
       case 'connecting':
-      case 'joining':
         status('CONNECTING...');
         break;
+      case 'joining':
+        label("1. PASTE THE HOST'S INVITE");
+        codeShown(s.invite);
+        status('CREATING REPLY...');
+        break;
       case 'reply':
-        label('SEND THIS BACK TO THE HOST');
-        codeOut(s.reply);
-        status('WAITING FOR HOST...');
+        label("1. PASTE THE HOST'S INVITE");
+        codeShown(s.invite);
+        label('2. SEND THIS REPLY BACK TO THE HOST');
+        codeOut(s.reply, true);
+        status('WAITING FOR THE HOST TO PASTE YOUR REPLY...');
         break;
       case 'failed':
       case 'open':

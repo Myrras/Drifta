@@ -11,6 +11,8 @@ import {
 
 const FAILED = "COULDN'T CONNECT - TRY AGAIN. SOME NETWORKS BLOCK DIRECT CONNECTIONS";
 
+const SUBMIT: LobbyEvent = { t: 'submit', code: 'INV' };
+
 const run = (mode: LobbyMode, ...events: LobbyEvent[]): LobbyStep =>
   events.reduce((s, e) => lobbyStep(mode, s, e), initialStep(mode));
 
@@ -31,24 +33,19 @@ describe('host flow', () => {
   it('creating -> invite -> connecting -> open', () => {
     expect(initialStep('host')).toEqual({ k: 'creating' });
     expect(run('host', { t: 'hosted', invite: 'I' })).toEqual({ k: 'invite', invite: 'I' });
-    expect(run('host', { t: 'hosted', invite: 'I' }, { t: 'submit' })).toEqual({
+    expect(run('host', { t: 'hosted', invite: 'I' }, SUBMIT)).toEqual({
       k: 'connecting',
       invite: 'I',
     });
-    expect(
-      run('host', { t: 'hosted', invite: 'I' }, { t: 'submit' }, { t: 'link', state: 'open' }),
-    ).toEqual({ k: 'open' });
+    expect(run('host', { t: 'hosted', invite: 'I' }, SUBMIT, { t: 'link', state: 'open' })).toEqual(
+      { k: 'open' },
+    );
   });
   it('accept error returns to the reply input with the invite kept', () => {
-    const s = run(
-      'host',
-      { t: 'hosted', invite: 'I' },
-      { t: 'submit' },
-      {
-        t: 'error',
-        reason: 'wrong-kind',
-      },
-    );
+    const s = run('host', { t: 'hosted', invite: 'I' }, SUBMIT, {
+      t: 'error',
+      reason: 'wrong-kind',
+    });
     expect(s).toEqual({ k: 'invite', invite: 'I', error: errorText('wrong-kind', 'host') });
     expect(takesInput(s)).toBe(true);
   });
@@ -63,33 +60,37 @@ describe('host flow', () => {
       error: FAILED,
     });
     expect(
-      run('host', { t: 'hosted', invite: 'I' }, { t: 'submit' }, { t: 'link', state: 'closed' }).k,
+      run('host', { t: 'hosted', invite: 'I' }, SUBMIT, { t: 'link', state: 'closed' }).k,
     ).toBe('failed');
   });
 });
 
 describe('join flow', () => {
-  it('paste -> joining -> reply -> open', () => {
+  it('paste -> joining -> reply -> open, carrying the submitted invite', () => {
     expect(initialStep('join')).toEqual({ k: 'paste' });
-    expect(run('join', { t: 'submit' })).toEqual({ k: 'joining' });
-    expect(run('join', { t: 'submit' }, { t: 'joined', reply: 'R' })).toEqual({
-      k: 'reply',
-      reply: 'R',
-    });
-    expect(
-      run('join', { t: 'submit' }, { t: 'joined', reply: 'R' }, { t: 'link', state: 'open' }),
-    ).toEqual({ k: 'open' });
+    const joining = run('join', SUBMIT);
+    expect(joining).toEqual({ k: 'joining', invite: 'INV' });
+    expect(takesInput(joining)).toBe(false);
+    const reply = lobbyStep('join', joining, { t: 'joined', reply: 'R' });
+    expect(reply).toEqual({ k: 'reply', invite: 'INV', reply: 'R' });
+    expect(takesInput(reply)).toBe(false);
+    expect(lobbyStep('join', reply, { t: 'link', state: 'open' })).toEqual({ k: 'open' });
   });
-  it('join error stays on the paste step', () => {
-    expect(run('join', { t: 'submit' }, { t: 'error', reason: 'version' })).toEqual({
-      k: 'paste',
-      error: errorText('version', 'join'),
-    });
+  it('a stray submit while joining or showing the reply keeps the original invite', () => {
+    const joining = run('join', SUBMIT);
+    expect(lobbyStep('join', joining, { t: 'submit', code: 'OTHER' })).toBe(joining);
+    const reply = lobbyStep('join', joining, { t: 'joined', reply: 'R' });
+    expect(lobbyStep('join', reply, { t: 'submit', code: 'OTHER' })).toBe(reply);
+  });
+  it('join error returns to the paste step', () => {
+    const s = run('join', SUBMIT, { t: 'error', reason: 'version' });
+    expect(s).toEqual({ k: 'paste', error: errorText('version', 'join') });
+    expect(takesInput(s)).toBe(true);
   });
   it('link failure after reply, then retry back to paste', () => {
     const s = run(
       'join',
-      { t: 'submit' },
+      SUBMIT,
       { t: 'joined', reply: 'R' },
       {
         t: 'link',
