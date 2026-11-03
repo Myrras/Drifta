@@ -184,6 +184,17 @@ describe('game', () => {
     expect(game.view().hud.phase).toBe('paused');
   });
 
+  it('boom shake only applies while driving', () => {
+    const { game, step, toRun } = setup();
+    toRun();
+    expect(game.view().render.shakeOn).toBe(true);
+    step({ photo: true });
+    expect(game.view().render.shakeOn).toBe(false);
+    step({ pause: true });
+    step({ pause: true });
+    expect(game.view().render.shakeOn).toBe(false);
+  });
+
   it('pauses and resumes', () => {
     const { game, step, toRun } = setup();
     toRun();
