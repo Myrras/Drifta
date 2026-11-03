@@ -328,6 +328,42 @@ describe('tunes', () => {
       }
   });
 
+  // the template's air pulse carries more power than the hiss (recording: ~4 dB at its peak)
+  it('street surge has the air pulse under the hiss, lower and heavier on big turbos', () => {
+    /** power per band over 1024-sample windows, Goertzel on the bins inside [f0, f1) */
+    const band = (x: Float32Array, f0: number, f1: number) => {
+      let e = 0;
+      for (let w = 0; w + 1024 <= x.length; w += 1024)
+        for (let k = Math.ceil((f0 * 1024) / SR); k < (f1 * 1024) / SR; k++) {
+          const c = 2 * Math.cos((2 * Math.PI * k) / 1024);
+          let s1 = 0;
+          let s2 = 0;
+          for (let n = 0; n < 1024; n++) {
+            const s0 = x[w + n] + c * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+          }
+          e += s1 * s1 + s2 * s2 - c * s1 * s2;
+        }
+      return e;
+    };
+    const at = (m: (typeof TURBO)[number]) => {
+      const { out } = lift({ ...engineProfile(m, 'street'), gain: 0 }, 6000, 1.2); // turbo layer only
+      expect(out.every(Number.isFinite)).toBe(true);
+      const air = band(out, 150, 800);
+      return {
+        air: air / band(out, 3000, 8000),
+        low: band(out, 1000, 3000) / band(out, 5000, 10000),
+      };
+    };
+    const [supra, rx7, s13] = [at('supra'), at('rx7'), at('s13')];
+    expect(rx7.air).toBeGreaterThan(1);
+    expect(supra.air).toBeGreaterThan(rx7.air);
+    expect(rx7.air).toBeGreaterThan(s13.air);
+    expect(supra.low).toBeGreaterThan(rx7.low); // hiss centre lower
+    expect(rx7.low).toBeGreaterThan(s13.low);
+  });
+
   it('street surge stops when the throttle opens again', () => {
     const { dsp } = lift(engineProfile('s13', 'street'), 6000, 0.5);
     render(dsp, 6000, 1, 0.05); // smoothed throttle passes 0.5
