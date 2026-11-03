@@ -5,22 +5,67 @@ import type { CarModel, Floor, Helix, Rect, Solid, Vec } from '../types';
 
 const S = 0.5;
 const CLEAR = 1.4;
+const DEG = Math.PI / 180;
 
+const center = (r: Rect): Vec => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+const halfDiag = (s: Solid) => Math.hypot(s.w, s.h) / 2;
 const distToRect = (p: Vec, r: Rect) =>
   Math.hypot(Math.max(r.x - p.x, 0, p.x - (r.x + r.w)), Math.max(r.y - p.y, 0, p.y - (r.y + r.h)));
+/** Rotated solids are approximated by the circle around them (radius = half-diagonal). */
+const distToSolid = (p: Vec, s: Solid) =>
+  s.angle
+    ? Math.max(0, Math.hypot(p.x - center(s).x, p.y - center(s).y) - halfDiag(s))
+    : distToRect(p, s);
 const clearance = (p: Vec, f: Floor) =>
   Math.min(
-    ...f.solids.map((s) => distToRect(p, s)),
+    ...f.solids.map((s) => distToSolid(p, s)),
     ...f.circles.map((c) => Math.hypot(p.x - c.x, p.y - c.y) - c.r),
   );
 const inside = (r: Rect, f: Floor) => r.x >= 0 && r.y >= 0 && r.x + r.w <= f.w && r.y + r.h <= f.h;
 const inRect = (p: Vec, r: Rect) =>
   p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
-const strictlyIn = (p: Vec, r: Rect) =>
-  p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
-const overlap = (a: Rect, b: Rect) =>
-  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-const center = (r: Rect): Vec => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+
+/** Corners of a (rotated) solid grown by `pad`. */
+function cornersOf(s: Solid, pad = 0): Vec[] {
+  const a = s.angle ?? 0;
+  const c = center(s);
+  return [
+    [1, 1],
+    [1, -1],
+    [-1, -1],
+    [-1, 1],
+  ].map(([i, j]) => {
+    const u = i * (s.w / 2 + pad);
+    const w = j * (s.h / 2 + pad);
+    return {
+      x: c.x + u * Math.cos(a) - w * Math.sin(a),
+      y: c.y + u * Math.sin(a) + w * Math.cos(a),
+    };
+  });
+}
+/** Separating axis test: true if a and b, each grown by gap / 2, still don't overlap. */
+function separated(a: Solid, b: Solid, gap = 0) {
+  const pa = cornersOf(a, gap / 2);
+  const pb = cornersOf(b, gap / 2);
+  return [a.angle ?? 0, b.angle ?? 0].some((ang) =>
+    [ang, ang + Math.PI / 2].some((t) => {
+      const pr = (pts: Vec[]) => pts.map((p) => p.x * Math.cos(t) + p.y * Math.sin(t));
+      const A = pr(pa);
+      const B = pr(pb);
+      return Math.max(...A) <= Math.min(...B) + 1e-9 || Math.max(...B) <= Math.min(...A) + 1e-9;
+    }),
+  );
+}
+/** Point strictly inside a (rotated) solid. */
+function inSolid(p: Vec, s: Solid) {
+  const a = s.angle ?? 0;
+  const c = center(s);
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  const u = dx * Math.cos(a) + dy * Math.sin(a);
+  const w = -dx * Math.sin(a) + dy * Math.cos(a);
+  return Math.abs(u) < s.w / 2 && Math.abs(w) < s.h / 2;
+}
 
 const rMid = (h: Helix) => (h.rCore + h.rOuter) / 2;
 const onRing = (h: Helix, a: number, r = rMid(h)): Vec => ({
@@ -83,11 +128,31 @@ function reaches(f: Floor, from: Vec, to: Vec, blocked = (_p: Vec) => false): bo
   return false;
 }
 
+const segDist = (p: Vec, [a, b]: Vec[]) => {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+};
+/** Samples every 0.5 m along a polyline. */
+function samples(points: Vec[]): Vec[] {
+  const out: Vec[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    for (let d = 0; d <= len; d += 0.5)
+      out.push({ x: a.x + ((b.x - a.x) * d) / len, y: a.y + ((b.y - a.y) * d) / len });
+  }
+  return out;
+}
+
 const { floors, helixes } = garage;
 /** Where the car appears on floor i, and where it must get to. */
 const spawnOf = (i: number) => (i === 0 ? garage.start.pos : exitPoint(helixes[i - 1]));
 const targetOf = (i: number) =>
   i < helixes.length ? entryPoint(helixes[i]) : center(garage.finish.zone);
+const carsOf = (f: Floor) => f.solids.filter((s) => s.kind === 'car');
 
 describe('garage', () => {
   it('has 3 floors joined by 2 half-circle helixes', () => {
@@ -104,8 +169,10 @@ describe('garage', () => {
   });
 
   it('keeps everything inside floor bounds', () => {
+    const all = { x: 0, y: 0, w: 140, h: 80 };
     for (const f of floors) {
       for (const r of [...f.solids, ...f.bays]) expect(inside(r, f)).toBe(true);
+      for (const s of f.solids) for (const p of cornersOf(s)) expect(inRect(p, all)).toBe(true);
       for (const c of f.circles) {
         expect(inside({ x: c.x - c.r, y: c.y - c.r, w: 2 * c.r, h: 2 * c.r }, f)).toBe(true);
       }
@@ -122,7 +189,7 @@ describe('garage', () => {
         for (let r = h.rCore + 0.05; r < h.rOuter; r += 0.25) {
           for (let t = 0; t <= 1; t += 0.1 / r / Math.PI) {
             const p = onRing(h, h.enterAngle + h.sweep * t, r);
-            expect(f.solids.find((s) => strictlyIn(p, s))).toBeUndefined();
+            expect(f.solids.find((s) => inSolid(p, s))).toBeUndefined();
           }
         }
       }
@@ -150,21 +217,16 @@ describe('garage', () => {
     }
   });
 
-  it('route chains spawn to finish and stays 3.5 m from solids (7 m lanes)', () => {
+  it('route chains spawn to finish and stays 5 m from solids (10 m+ lanes)', () => {
     expect(garageRoute.map((r) => r.floor)).toEqual([0, 1, 2]);
     expect(garageRoute[0].points[0]).toEqual(garage.start.pos);
     const last = garageRoute[2].points.at(-1)!;
     expect(inRect(last, garage.finish.zone)).toBe(true);
     for (const { floor, points } of garageRoute) {
-      const f = floors[floor];
-      for (let i = 1; i < points.length; i++) {
-        const a = points[i - 1];
-        const b = points[i];
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        for (let d = 0; d <= len; d += 0.5) {
-          const p = { x: a.x + ((b.x - a.x) * d) / len, y: a.y + ((b.y - a.y) * d) / len };
-          expect(clearance(p, f)).toBeGreaterThanOrEqual(3.5);
-        }
+      for (const p of samples(points)) {
+        // helix half circles are drawn as chords, which dip 0.1 m toward the core
+        const min = helixes.some((h) => inAnnulus(p, h)) ? 4.9 : 5;
+        expect(clearance(p, floors[floor])).toBeGreaterThanOrEqual(min);
       }
     }
     // each helix: the route passes its entry point on `from` and its exit point on `from + 1`
@@ -172,6 +234,38 @@ describe('garage', () => {
       const near = (pts: Vec[], q: Vec) => pts.some((p) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-6);
       expect(near(garageRoute[h.from].points, entryPoint(h))).toBe(true);
       expect(near(garageRoute[h.from + 1].points, exitPoint(h))).toBe(true);
+    }
+  });
+
+  it('links varied left and right corners on every floor', () => {
+    for (const { points } of garageRoute) {
+      // signed turn per vertex outside the helixes, merged into corners while the sign holds
+      const corners: { turn: number; from: number; to: number }[] = [];
+      let dist = 0;
+      for (let i = 1; i < points.length - 1; i++) {
+        const [a, b, c] = [points[i - 1], points[i], points[i + 1]];
+        dist += Math.hypot(b.x - a.x, b.y - a.y);
+        if (helixes.some((h) => Math.hypot(b.x - h.center.x, b.y - h.center.y) <= h.rOuter))
+          continue;
+        let turn = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(b.y - a.y, b.x - a.x);
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        if (Math.abs(turn) < DEG) continue;
+        const prev = corners.at(-1);
+        if (prev && Math.sign(prev.turn) === Math.sign(turn)) {
+          prev.turn += turn;
+          prev.to = dist;
+        } else corners.push({ turn, from: dist, to: dist });
+      }
+      const big = corners.filter((c) => Math.abs(c.turn) > 30 * DEG);
+      expect(big.length).toBeGreaterThanOrEqual(4);
+      const flick = corners.some(
+        (c, i) =>
+          i > 0 &&
+          Math.abs(c.turn) > 30 * DEG &&
+          Math.abs(corners[i - 1].turn) > 30 * DEG &&
+          c.from - corners[i - 1].to <= 60,
+      );
+      expect(flick).toBe(true);
     }
   });
 
@@ -186,12 +280,13 @@ describe('garage', () => {
     expect(garage.parTime).toBeLessThanOrEqual(120);
   });
 
-  it('parked cars and pillars do not overlap other solids', () => {
+  it('keeps parked cars 0.3 m from every other solid and pillars off everything', () => {
     for (const f of floors) {
-      const cars = f.solids.filter((s) => s.kind === 'car');
-      expect(cars.length).toBeGreaterThan(0);
+      expect(carsOf(f).length).toBeGreaterThan(20);
       for (const c of f.solids.filter((s) => s.kind !== 'wall')) {
-        for (const s of f.solids) if (s !== c) expect(overlap(c, s)).toBe(false);
+        for (const s of f.solids) {
+          if (s !== c) expect(separated(c, s, c.kind === 'car' ? 0.3 : 0)).toBe(true);
+        }
       }
     }
   });
@@ -200,68 +295,45 @@ describe('garage', () => {
     expect(garage.name).toBe('JAPAN GARAGE');
   });
 
-  /** Unit nose direction of a parked car. */
-  const nose = (c: Solid) => ({
-    x: Math.round(Math.cos(c.facing!)),
-    y: Math.round(Math.sin(c.facing!)),
-  });
-  /** The `depth` m strip directly ahead (side 1) or behind (side -1) the car. */
-  const strip = (c: Solid, side: number, depth: number): Rect => {
-    const d = nose(c);
-    const sx = d.x * side;
-    const sy = d.y * side;
-    return {
-      x: sx > 0 ? c.x + c.w : sx < 0 ? c.x - depth : c.x,
-      y: sy > 0 ? c.y + c.h : sy < 0 ? c.y - depth : c.y,
-      w: sx ? depth : c.w,
-      h: sy ? depth : c.h,
-    };
-  };
-  const contains = (o: Rect, r: Rect) =>
-    r.x >= o.x - 1e-9 &&
-    r.y >= o.y - 1e-9 &&
-    r.x + r.w <= o.x + o.w + 1e-9 &&
-    r.y + r.h <= o.y + o.h + 1e-9;
-
-  it('parks every car as a JDM model in a bay that opens onto an aisle', () => {
+  it('parks every car as a JDM model with its real footprint, rotated to its heading', () => {
     const used = new Set<CarModel>();
     for (const f of floors) {
-      for (const c of f.solids.filter((s) => s.kind === 'car')) {
-        expect(c.model && c.color && c.facing !== undefined).toBeTruthy();
+      for (const c of carsOf(f)) {
+        expect(c.model && c.color && Number.isFinite(c.facing)).toBeTruthy();
         const m = CAR_MODELS[c.model!];
         used.add(c.model!);
         expect(m.colors).toContain(c.color);
-        const q = c.facing! / (Math.PI / 2);
-        expect(Math.abs(q - Math.round(q))).toBeLessThan(1e-9);
-        const along = nose(c).x !== 0;
-        expect(Math.abs(c.w - (along ? m.length : m.width))).toBeLessThan(0.01);
-        expect(Math.abs(c.h - (along ? m.width : m.length))).toBeLessThan(0.01);
-        expect(f.bays.some((b) => contains(b, c))).toBe(true);
-        const open = [1, -1].some((side) =>
-          f.solids.every((s) => s === c || !overlap(strip(c, side, 1.5), s)),
-        );
-        expect(open).toBe(true);
+        expect(c.angle).toBe(c.facing);
+        expect(c.w).toBeCloseTo(m.length, 6);
+        expect(c.h).toBeCloseTo(m.width, 6);
       }
     }
     expect(used.size).toBe(10);
   });
 
-  it('points lit cars at open floor and lights about 1 in 5 cars', () => {
-    const cars = floors.flatMap((f) => f.solids.filter((s) => s.kind === 'car'));
+  it('lights about 1 in 5 cars, aimed down the course at open floor', () => {
+    const cars = floors.flatMap(carsOf);
     const lit = cars.filter((c) => c.lights === 'on');
     expect(lit.length / cars.length).toBeGreaterThan(0.12);
     expect(lit.length / cars.length).toBeLessThan(0.3);
     expect(cars.some((c) => c.lights === 'hazard')).toBe(true);
-    for (const f of floors) {
-      for (const c of f.solids.filter((s) => s.lights === 'on')) {
-        const d = nose(c);
-        const len = CAR_MODELS[c.model!].length;
-        const p = {
-          x: c.x + c.w / 2 + d.x * (len / 2 + 6),
-          y: c.y + c.h / 2 + d.y * (len / 2 + 6),
-        };
-        expect(f.solids.find((s) => strictlyIn(p, s))).toBeUndefined();
+    garageRoute.forEach(({ points }, i) => {
+      const f = floors[i];
+      for (const c of carsOf(f).filter((s) => s.lights === 'on')) {
+        const k = center(c);
+        const ahead = (d: number) => ({
+          x: k.x + (c.w / 2 + d) * Math.cos(c.facing!),
+          y: k.y + (c.w / 2 + d) * Math.sin(c.facing!),
+        });
+        expect(f.solids.find((s) => inSolid(ahead(6), s))).toBeUndefined();
+        // the route segment nearest the car runs the way its nose points
+        const near = points
+          .slice(1)
+          .map((q, j) => [points[j], q])
+          .reduce((best, seg) => (segDist(k, seg) < segDist(k, best) ? seg : best));
+        const dir = Math.atan2(near[1].y - near[0].y, near[1].x - near[0].x);
+        expect(Math.cos(c.facing! - dir)).toBeGreaterThan(0);
       }
-    }
+    });
   });
 });
