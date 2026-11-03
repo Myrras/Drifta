@@ -194,22 +194,18 @@ export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
   // tuning values
   return tune === 'performance' ? { ...st, power: st.power * 1.05, grip: st.grip * 1.03 } : st;
 };
-<<<<<<< HEAD
 /** a stat scaled 0..1 across all models, as the garage bars show it */
 const normStat = (car: PlayerModel, tune: Tune, k: keyof CarStats) => {
   const [lo, hi] = statRange(k);
   return hi > lo ? Math.min(1, (tunedStats(car, tune)[k] - lo) / (hi - lo)) : 0.5;
-=======
+};
 /** stat bars, 0..1 across all models */
 const statsOf = (car: PlayerModel, tune: Tune) => {
-  const n = (k: keyof CarStats) => {
-    const [lo, hi] = statRange(k);
-    const v = tunedStats(car, tune)[k];
-    return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
-  };
-  return { power: n('power'), grip: n('grip'), weight: n('mass') };
->>>>>>> slice/menu
-};
+const statsOf = (car: PlayerModel, tune: Tune) => ({
+  power: normStat(car, tune, 'power'),
+  grip: normStat(car, tune, 'grip'),
+  weight: normStat(car, tune, 'mass'),
+});
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
@@ -1206,10 +1202,6 @@ export function createGame(
       const car = first ? STARTERS[starter] : gCar;
       const ids = first ? STARTERS : MODEL_IDS;
       const m = PLAYER_MODELS[car];
-<<<<<<< HEAD
-      const n = (k: keyof CarStats) => normStat(car, first ? 'street' : gTune, k);
-=======
->>>>>>> slice/menu
       return {
         ...base,
         screen: first ? 'starter' : 'garage',

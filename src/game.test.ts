@@ -2809,6 +2809,8 @@ describe('top drifts with late (not counted) drifts', () => {
       [100, false],
       [900, true],
     ]);
+  });
+});
 
 describe('time-up edge cases', () => {
   const LIMIT = garage.parTime * 1.3;
