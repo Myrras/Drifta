@@ -114,20 +114,40 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
     }
   });
 
-  it('parks every car exactly inside a painted bay', () => {
+  it('holds a live meet: rows in painted bays, loose cars at casual angles', () => {
     const cars = f.solids.filter((s) => s.kind === 'car');
-    expect(cars.length).toBeGreaterThanOrEqual(120);
-    expect(cars.length).toBeLessThanOrEqual(160);
+    expect(cars.length).toBeGreaterThanOrEqual(200);
+    expect(cars.length).toBeLessThanOrEqual(240);
     expect(f.bays.length).toBeLessThan(cars.length * 1.25); // few empty outlines
+    let loose = 0;
     for (const c of cars) {
       const m = CAR_MODELS[c.model!];
       expect(c.w).toBeCloseTo(m.length);
       expect(c.h).toBeCloseTo(m.width);
       expect(m.colors).toContain(c.color);
+      // a car squarely in a bay is parked properly: centered and square to it
       const bay = f.bays.find((b) => cornersOf(c).every((p) => inRect(p, b)));
-      expect(bay).toBeDefined();
-      expect(center(c).x).toBeCloseTo(center(bay!).x);
-      expect(center(c).y).toBeCloseTo(center(bay!).y);
+      if (!bay) {
+        loose++;
+        continue;
+      }
+      expect(center(c).x).toBeCloseTo(center(bay).x);
+      expect(center(c).y).toBeCloseTo(center(bay).y);
+      expect(Math.abs(Math.sin(2 * c.angle!))).toBeCloseTo(0);
+    }
+    expect(loose).toBeGreaterThanOrEqual(60);
+    // no car touches another solid
+    for (const c of cars) {
+      const pts = cornersOf(c);
+      const probes = [
+        ...pts,
+        ...pts.map((p, i) => ({
+          x: (p.x + pts[(i + 1) % 4].x) / 2,
+          y: (p.y + pts[(i + 1) % 4].y) / 2,
+        })),
+      ];
+      for (const s of f.solids)
+        if (s !== c) for (const p of probes) expect(distToSolid(p, s)).toBeGreaterThan(0.1);
     }
     // bays never overlap
     f.bays.forEach((a, i) =>
@@ -140,6 +160,18 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
     expect(drivethru.decor!.filter((d) => d.kind === 'hood').length).toBeGreaterThan(
       cars.length / 2,
     );
+  });
+
+  it('parks exactly 2 boom cars on the line, and no posts', () => {
+    const boom = f.solids.filter((s) => s.boom);
+    expect(boom).toHaveLength(2);
+    const pts = samples(route);
+    for (const b of boom) {
+      expect(b.kind).toBe('car');
+      const c = center(b);
+      expect(Math.min(...pts.map((p) => Math.hypot(p.x - c.x, p.y - c.y)))).toBeLessThan(14);
+    }
+    expect(f.solids.some((s) => s.kind === 'pillar')).toBe(false);
   });
 
   it('sets par and positions on the shared scale', () => {

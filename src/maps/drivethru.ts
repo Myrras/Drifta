@@ -15,31 +15,44 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const headOf = (a: Vec, b: Vec) => Math.atan2(b.y - a.y, b.x - a.x);
 
 // --- restaurant and drive-thru lane ---
-// The lane runs 11 m wide up the west face, across the north face and down the east face; its
-// outer kerb is a planted island, rounded at the two corners round the building's corners.
-const B: Rect = { x: 170, y: 96, w: 32, h: 30 };
-const YARD: Rect = { x: 170, y: 126, w: 32, h: 33 };
+// The lane runs 11 m wide up the west face, across the north face and down the east face. A
+// planted kerb strip rings the building, rounded at its corners, and the outer island is
+// rounded to match, so the lane sweeps round both corners on a 15.5 m line.
+const B: Rect = { x: 170, y: 96, w: 25, h: 30 };
+const YARD: Rect = { x: 170, y: 126, w: 25, h: 33 };
 const LANE = 11;
-const NW = v(B.x, B.y);
-const NE = v(B.x + B.w, B.y);
-const ISLAND_N: Rect = { x: 152.5, y: 78.5, w: 66.5, h: B.y - LANE - 78.5 };
-const ISLAND_W: Rect = { x: 152.5, y: 85, w: B.x - LANE - 152.5, h: 27 };
-const ISLAND_E: Rect = { x: B.x + B.w + LANE, y: 85, w: W - 1 - (B.x + B.w + LANE), h: H - 1 - 85 };
-const R_KERB = 16.5;
-const T_KERB = 5;
+/** Planted strip between the building and the lane. */
+const G = 3.5;
+/** Inner kerb radius at the building's corners (G >= 0.3 R_IN keeps the corners inside it). */
+const R_IN = 10;
+const R_OUT = R_IN + LANE;
+/** Outer kerb thickness: fills the square corner behind the outer arc. */
+const T_KERB = R_OUT * (Math.SQRT2 - 1) + 0.3;
+const NW = v(B.x - G + R_IN, B.y - G + R_IN); // corner arc centers
+const NE = v(B.x + B.w + G - R_IN, NW.y);
+const LANE_W = B.x - G - LANE / 2; // lane centerlines: west x, north y, east x
+const LANE_N = B.y - G - LANE / 2;
+const LANE_E = B.x + B.w + G + LANE / 2;
+const ISLAND_W: Rect = { x: 152.5, y: NW.y - 3, w: LANE_W - LANE / 2 - 152.5, h: 112 - NW.y + 3 };
+const ISLAND_N: Rect = { x: NW.x, y: NW.y - R_OUT - T_KERB, w: NE.x - NW.x, h: T_KERB };
+const ISLAND_E: Rect = {
+  x: LANE_E + LANE / 2,
+  y: NE.y - 5,
+  w: W - 1 - (LANE_E + LANE / 2),
+  h: H - 1 - (NE.y - 5),
+};
+/** Planted strips along the building's west, north and east faces. */
+const STRIPS: Rect[] = [
+  { x: B.x - G, y: NW.y, w: G, h: B.y + B.h - NW.y },
+  { x: NW.x, y: B.y - G, w: NE.x - NW.x, h: G },
+  { x: B.x + B.w, y: NE.y, w: G, h: H - 1 - NE.y },
+];
 /** Pylon sign island inside the NE hairpin. */
 const PYLON: Rect = { x: 181, y: 43, w: 14, h: 14 };
 const TRUCK = { x: 192, y: 17, w: 6.5, h: 2.5, angle: PI / 2 };
 
 const wall = (x: number, y: number, w: number, h: number): Solid => ({ kind: 'wall', x, y, w, h });
 const wallOf = (r: Rect) => wall(r.x, r.y, r.w, r.h);
-const pillar = (c: Vec, size = 0.6): Solid => ({
-  kind: 'pillar',
-  x: c.x - size / 2,
-  y: c.y - size / 2,
-  w: size,
-  h: size,
-});
 
 /**
  * Curved kerb t m thick inside radius r1 around o, polar angle a0 to a1: rotated rects about
@@ -60,7 +73,7 @@ function arcWall(o: Vec, r1: number, t: number, a0: number, a1: number, seg = 4)
 // --- route ---
 /**
  * Course through control points [x, y, radius] (as B2 MEET): every inner point is rounded by an
- * arc. The driving line keeps at most 45° per vertex and stays within 1.5 m of the arc.
+ * arc. The driving line keeps at most 45° per vertex and stays within 0.5 m of the arc.
  */
 function course(ctl: number[][]) {
   const P = ctl.map(([x, y]) => v(x, y));
@@ -90,7 +103,7 @@ function course(ctl: number[][]) {
     });
     const n = Math.max(
       Math.ceil(Math.abs(turn) / (PI / 4) - 1e-9),
-      Math.ceil(Math.abs(turn) / (2 * Math.acos(r / (r + 1.5)))),
+      Math.ceil(Math.abs(turn) / (2 * Math.acos(r / (r + 0.5)))),
     );
     const step = turn / n;
     for (let k = 0; k < n; k++) {
@@ -105,9 +118,6 @@ function course(ctl: number[][]) {
 }
 
 const START = v(16, 148);
-const LANE_W = B.x - LANE / 2; // lane centerlines: west x, north y, east x
-const LANE_N = B.y - LANE / 2;
-const LANE_E = B.x + B.w + LANE / 2;
 const C = course([
   [START.x, START.y], // run-up north along the west edge
   [16, 18, 20], // NW sweeper
@@ -120,13 +130,13 @@ const C = course([
   [110, 100, 14], // S: right...
   [110, 142, 16], // ...left
   [LANE_W, 142, 14], // left into the drive-thru
-  [LANE_W, LANE_N, LANE / 2], // round the restaurant
-  [LANE_E, LANE_N, LANE / 2],
+  [LANE_W, LANE_N, R_IN + LANE / 2], // round the restaurant
+  [LANE_E, LANE_N, R_IN + LANE / 2],
   [LANE_E, 154], // down the exit chute
 ]);
 export const drivethruCorners = C.corners.map(({ r, turn }) => ({ r, turn }));
 export const drivethruRoute: { floor: number; points: Vec[] }[] = [{ floor: 0, points: C.line }];
-const FINISH: Rect = { x: B.x + B.w + 0.5, y: 146, w: LANE - 1, h: 12.5 };
+const FINISH: Rect = { x: B.x + B.w + G + 0.5, y: 146, w: LANE - 1, h: 12.5 };
 
 const segDist = (p: Vec, a: Vec, b: Vec) => {
   const dx = b.x - a.x;
@@ -136,12 +146,11 @@ const segDist = (p: Vec, a: Vec, b: Vec) => {
 };
 const routeDist = (p: Vec) => Math.min(...C.line.slice(1).map((b, i) => segDist(p, C.line[i], b)));
 
-/** The lane, drifted end to end in one combo: four rects across its full width. */
+/** The lane, drifted end to end in one combo: west leg, the top across both bends, east leg. */
 const bonusZones: BonusZone[] = [
-  { x: B.x - LANE, y: 98, w: LANE, h: 16 },
-  { x: 172, y: B.y - LANE, w: 14, h: LANE },
-  { x: 186, y: B.y - LANE, w: 14, h: LANE },
-  { x: B.x + B.w, y: 98, w: LANE, h: 16 },
+  { x: LANE_W - LANE / 2, y: LANE_N - LANE / 2, w: LANE, h: 112 - (LANE_N - LANE / 2) },
+  { x: LANE_W - LANE / 2, y: LANE_N - LANE / 2, w: LANE_E - LANE_W + LANE, h: LANE },
+  { x: LANE_E - LANE / 2, y: LANE_N - LANE / 2, w: LANE, h: 116 - (LANE_N - LANE / 2) },
 ].map((r) => ({ ...r, id: 'drivethru', trick: 'DRIVE-THRU' }));
 
 // --- solids ---
@@ -155,8 +164,11 @@ const fixed: Solid[] = [
   wallOf(ISLAND_N),
   wallOf(ISLAND_W),
   wallOf(ISLAND_E),
-  ...arcWall(NW, R_KERB, T_KERB, PI, 1.5 * PI),
-  ...arcWall(NE, R_KERB, T_KERB, -PI / 2, 0),
+  ...STRIPS.map(wallOf),
+  ...arcWall(NW, R_IN, G, PI, 1.5 * PI),
+  ...arcWall(NE, R_IN, G, -PI / 2, 0),
+  ...arcWall(NW, R_OUT + T_KERB, T_KERB, PI, 1.5 * PI),
+  ...arcWall(NE, R_OUT + T_KERB, T_KERB, -PI / 2, 0),
   wallOf(PYLON),
   wall(TRUCK.x - TRUCK.h / 2, TRUCK.y - TRUCK.w / 2, TRUCK.h, TRUCK.w), // long side along y
 ];
@@ -192,7 +204,7 @@ const double = (horiz: boolean, a0: number, a1: number, back: number) => [
   ...row(horiz, a0, a1, back, -1),
   ...row(horiz, a0, a1, back, 1),
 ];
-/** Back lines of the double rows: light poles stand at both ends. */
+/** Back lines of the double rows: lamps light both ends. */
 const DOUBLES: [boolean, number, number, number][] = [
   [true, 112, 180, 17.2],
   [true, 40, 172, 50],
@@ -213,64 +225,153 @@ const allBays: Bay[] = [
 const center = (r: Rect) => v(r.x + r.w / 2, r.y + r.h / 2);
 const rand = rng(1985);
 const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+const cornersOf = (s: Solid): Vec[] => {
+  const a = s.angle ?? 0;
+  const c = center(s);
+  const u = v((Math.cos(a) * s.w) / 2, (Math.sin(a) * s.w) / 2);
+  const n = v((-Math.sin(a) * s.h) / 2, (Math.cos(a) * s.h) / 2);
+  return [1, -1].flatMap((i) =>
+    [1, -1].map((j) => v(c.x + i * u.x + j * n.x, c.y + i * u.y + j * n.y)),
+  );
+};
+/** Axis-aligned box round a (rotated) solid. */
+const box = (s: Solid): Rect => {
+  const p = cornersOf(s);
+  const x = Math.min(...p.map((q) => q.x));
+  const y = Math.min(...p.map((q) => q.y));
+  return { x, y, w: Math.max(...p.map((q) => q.x)) - x, h: Math.max(...p.map((q) => q.y)) - y };
+};
+const inRect = (p: Vec, r: Rect) =>
+  p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 /**
- * Meet clusters: runs of 3-7 bays with gaps of bare tarmac between (no paint there), each bay
- * off the line by 9 m (car corners stay 6.5 m clear) and clear of every fixed solid.
+ * Painted runs of 3-6 bays with gaps of bare tarmac between, each bay off the line by 9 m
+ * (car corners stay 6.5 m clear) and clear of every fixed solid.
  */
 const bays: Bay[] = [];
 for (let i = 0, run = 0; i < allBays.length; i++) {
   if (run <= 0) {
-    i += 8 + Math.floor(rand() * 10); // gap
-    run = 3 + Math.floor(rand() * 5);
+    i += 10 + Math.floor(rand() * 10); // gap
+    run = 3 + Math.floor(rand() * 4);
     if (i >= allBays.length) break;
   }
   run--;
   const b = allBays[i];
-  if (
-    routeDist(center(b)) >= 9 &&
-    fixed.slice(4).every((s) => s.angle !== undefined || !overlaps(b, s, 0.5))
-  )
+  if (routeDist(center(b)) >= 9 && fixed.slice(4).every((s) => !overlaps(b, box(s), 0.5)))
     bays.push(b);
 }
 
 const cars: Solid[] = [];
 const hoods: Decor[] = [];
-for (const b of bays) {
-  if (rand() < 0.1) continue; // a few empty bays
+/**
+ * Parks a random car centered at c, nose along `facing`. A loose car (no bay) only goes where
+ * its center stays 8 m off the line, clear of walls and cars, and never squarely in a bay.
+ */
+function park(c: Vec, facing: number, loose: boolean, hood = 0.8, lit = 0.16) {
   const model = pick(MODELS);
   const { length, width, colors } = CAR_MODELS[model];
-  const c = center(b);
   const color = pick(colors);
-  const r = rand();
-  cars.push({
+  const s: Solid = {
     kind: 'car',
     x: c.x - length / 2,
     y: c.y - width / 2,
     w: length,
     h: width,
-    angle: b.out,
-    facing: b.out,
+    angle: facing,
+    facing,
     model,
     color,
-    ...(r < 0.12 ? { lights: 'on' as const } : r < 0.16 ? { lights: 'hazard' as const } : {}),
-  });
-  if (rand() < 0.8)
+  };
+  if (loose) {
+    const b = box(s);
+    if (
+      b.x < 1.5 ||
+      b.y < 1.5 ||
+      b.x + b.w > W - 1.5 ||
+      b.y + b.h > H - 1.5 ||
+      routeDist(c) < 8 ||
+      [...fixed, ...cars].some((t) => overlaps(b, box(t), 0.5)) ||
+      bays.some((bay) => cornersOf(s).every((p) => inRect(p, bay)))
+    )
+      return undefined;
+  }
+  const r = rand();
+  if (r < lit) s.lights = r < lit * 0.75 ? 'on' : 'hazard';
+  cars.push(s);
+  if (rand() < hood)
     hoods.push({
       floor: 0,
       kind: 'hood',
       ...c,
-      angle: b.out,
+      angle: facing,
       len: length,
       wid: width,
       color,
       seed: cars.length,
     });
+  return s;
+}
+for (const b of bays) if (rand() >= 0.1) park(center(b), b.out, false); // a few empty bays
+// show row: backed against the west wall without paint, noses at the run-up, lights on
+for (let y = 24; y < 146; y += 2.9)
+  if (rand() > 0.12)
+    park(v(4 + rand() * 0.6, y + rand() * 0.3), (rand() - 0.5) * 0.25, true, 0.4, 0.5);
+/** Loose crowd of n cars within r of o, at casual angles, most noses in toward o. */
+function crowd(o: Vec, r: number, n: number) {
+  for (let k = 0, got = 0; k < n * 40 && got < n; k++) {
+    const a = rand() * 2 * PI;
+    const d = r * Math.sqrt(rand());
+    const c = v(o.x + d * Math.cos(a), o.y + d * Math.sin(a));
+    const face = headOf(c, o) + (rand() < 0.25 ? PI : 0) + (rand() - 0.5) * 1.4;
+    if (park(c, face, true, 0.6)) got++;
+  }
+}
+/** Two cars nose to nose, hoods up, along heading a. */
+function pair(c: Vec, a: number) {
+  const u = v(Math.cos(a) * 2.8, Math.sin(a) * 2.8);
+  const n = cars.length;
+  const h = hoods.length;
+  if (
+    !park(v(c.x - u.x, c.y - u.y), a, true, 1) ||
+    !park(v(c.x + u.x, c.y + u.y), a + PI, true, 1)
+  ) {
+    cars.length = n;
+    hoods.length = h;
+  }
+}
+crowd(v(TRUCK.x - 2, TRUCK.y + 2), 13, 14); // round the coffee truck
+crowd(v(176, 50), 8, 8); // under the pylon sign
+crowd(v(138, 126), 11, 12); // by the drive-thru entry
+crowd(v(70, 130), 14, 14); // the meet's middle
+for (const [x, y, a] of [
+  [76, 80, 0],
+  [80, 90, 0.1],
+  [46, 82, PI / 2],
+  [60, 150, 0],
+  [86, 150, -0.1],
+  [130, 152, 0.05],
+  [200, 28, PI / 2],
+  [150, 40, 0],
+])
+  pair(v(x, y), a);
+// stragglers: anywhere on the lot, any angle
+for (let k = 0, got = 0; k < 600 && got < 18; k++)
+  if (park(v(4 + rand() * (W - 8), 4 + rand() * (H - 8)), rand() * 2 * PI, true, 0.4)) got++;
+/** Two boom cars, lit, where the line passes them: the show row and the truck crowd. */
+for (const o of [v(4, 96), v(196, 26)]) {
+  const near = cars.reduce((a, b) =>
+    Math.hypot(center(b).x - o.x, center(b).y - o.y) <
+    Math.hypot(center(a).x - o.x, center(a).y - o.y)
+      ? b
+      : a,
+  );
+  near.boom = true;
+  near.lights = 'on';
 }
 
-/** Light poles at the row ends, where they stay 6 m off the line: close-call posts. */
+/** Lamp heads at the row ends (light only: no posts to hit). */
 const poles = DOUBLES.flatMap(([h, a0, a1, back]) =>
   [a0 - 0.8, a1 + 0.8].map((a) => (h ? v(a, back) : v(back, a))),
-).filter((p) => routeDist(p) >= 6 && fixed.every((s) => !overlaps({ ...p, w: 0, h: 0 }, s, 1)));
+);
 
 /** Clean-line lamps every 22 m, so the driving line reads under the sodium. */
 const lights: Vec[] = [];
@@ -287,7 +388,7 @@ const floor: Floor = {
   name: 'MOONBURGER',
   w: W,
   h: H,
-  solids: [...fixed, ...poles.map((p) => pillar(p)), ...cars],
+  solids: [...fixed, ...cars],
   bays: bays.map(({ x, y, w, h }) => ({ x, y, w, h })),
   lights,
   circles: [],
@@ -316,10 +417,8 @@ const drand = rng(77);
 add({ kind: 'tarmac', x: 0, y: 0, w: W, h: H, seed: 3 });
 const laneLine = [
   v(LANE_W, 128),
-  v(LANE_W, B.y),
-  ...arcPts(NW, LANE / 2, PI, 1.5 * PI),
-  v(NE.x, LANE_N),
-  ...arcPts(NE, LANE / 2, -PI / 2, 0),
+  ...arcPts(NW, R_IN + LANE / 2, PI, 1.5 * PI),
+  ...arcPts(NE, R_IN + LANE / 2, -PI / 2, 0),
   v(LANE_E, H - 1),
 ];
 paint(laneLine, LANE - 0.4, 'rgba(120,30,60,0.32)');
@@ -338,7 +437,7 @@ add({ kind: 'text', x: LANE_E, y: 104, angle: PI / 2, text: 'PICK UP', size: 1.6
 add({ kind: 'text', x: LANE_E, y: 118, angle: PI / 2, text: 'PAY', size: 1.6, color: LINE });
 add({ kind: 'text', x: LANE_E, y: 136, angle: PI / 2, text: 'EXIT', size: 2.2, color: LINE });
 add({ kind: 'arrow', x: LANE_W, y: 112, angle: -PI / 2 });
-add({ kind: 'arrow', x: 186, y: LANE_N, angle: 0 });
+add({ kind: 'arrow', x: (NW.x + NE.x) / 2, y: LANE_N, angle: 0 });
 add({ kind: 'arrow', x: LANE_E, y: 128, angle: PI / 2 });
 // lot arrows: halfway down every long straight
 for (let i = 1; i < C.line.length; i++) {
@@ -417,7 +516,7 @@ for (let x = 14; x < W; x += 26)
   }
 for (const p of poles) add({ kind: 'pool', ...p, r: 9, color: '#ffb066' });
 add({ kind: 'pool', x: LANE_W, y: 111, r: 9, color: '#9fdcff' });
-add({ kind: 'pool', x: 186, y: LANE_N, r: 10, color: '#ffd9e8' });
+add({ kind: 'pool', x: (NW.x + NE.x) / 2, y: LANE_N, r: 10, color: '#ffd9e8' });
 add({ kind: 'pool', x: LANE_E, y: 108, r: 10, color: '#9fdcff' });
 
 // kerbs and islands: planted, with a pale kerb edge along the lane
@@ -425,24 +524,28 @@ const capped = (r: Rect) =>
   r.w >= r.h
     ? paint([v(r.x, r.y + r.h / 2), v(r.x + r.w, r.y + r.h / 2)], r.h, PLANTER, undefined, true)
     : paint([v(r.x + r.w / 2, r.y), v(r.x + r.w / 2, r.y + r.h)], r.w, PLANTER, undefined, true);
-[ISLAND_N, ISLAND_W, ISLAND_E, PYLON].forEach(capped);
-paint(arcPts(NW, R_KERB - T_KERB / 2 - 0.2, PI, 1.5 * PI), T_KERB + 0.2, PLANTER, undefined, true);
-paint(arcPts(NE, R_KERB - T_KERB / 2 - 0.2, -PI / 2, 0), T_KERB + 0.2, PLANTER, undefined, true);
-const kerbR = LANE + 0.35;
-paint(
-  [
-    v(ISLAND_W.x + ISLAND_W.w - 0.15, ISLAND_W.y + ISLAND_W.h),
-    v(ISLAND_W.x + ISLAND_W.w - 0.15, B.y),
-    ...arcPts(NW, kerbR, PI, 1.5 * PI),
-    v(NE.x, ISLAND_N.y + ISLAND_N.h - 0.15),
-    ...arcPts(NE, kerbR, -PI / 2, 0),
-    v(ISLAND_E.x + 0.15, H - 1),
-  ],
-  0.35,
-  KERB,
-  undefined,
-  true,
-);
+[ISLAND_N, ISLAND_W, ISLAND_E, PYLON, ...STRIPS].forEach(capped);
+for (const [o, a0] of [
+  [NW, PI],
+  [NE, -PI / 2],
+] as const) {
+  const ring = (r: number, t: number) =>
+    paint(arcPts(o, r - t / 2, a0, a0 + PI / 2), t + 0.2, PLANTER, undefined, true);
+  ring(R_IN, G);
+  ring(R_OUT + T_KERB, T_KERB);
+}
+// lane kerbs: outer along the islands, inner along the building strip
+for (const [x0, x1, y0, r] of [
+  [ISLAND_W.x + ISLAND_W.w - 0.15, ISLAND_E.x + 0.15, ISLAND_W.y + ISLAND_W.h, R_OUT + 0.15],
+  [B.x - G + 0.15, B.x + B.w + G - 0.15, B.y + B.h, R_IN - 0.15],
+])
+  paint(
+    [v(x0, y0), ...arcPts(NW, r, PI, 1.5 * PI), ...arcPts(NE, r, -PI / 2, 0), v(x1, H - 1)],
+    0.35,
+    KERB,
+    undefined,
+    true,
+  );
 paint(
   [
     v(ISLAND_W.x, ISLAND_W.y + ISLAND_W.h - 0.15),
@@ -502,10 +605,10 @@ add({
   color: BLUE,
   flicker: 0.2,
 });
-add({ kind: 'moon', x: B.x + 10, y: B.y + 12, r: 5.5 });
+add({ kind: 'moon', x: B.x + 9, y: B.y + 11, r: 5.5 });
 add({
   kind: 'sign',
-  x: B.x + 21,
+  x: B.x + B.w / 2,
   y: B.y + 22,
   w: 17,
   h: 3,
