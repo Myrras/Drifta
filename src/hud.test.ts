@@ -12,6 +12,9 @@ import {
   pauseHint,
   positionLabel,
   resultsHint,
+  rivalTotalText,
+  verdict,
+  verdictText,
 } from './hud';
 import type { Results } from './view';
 
@@ -89,6 +92,29 @@ describe('positions', () => {
     expect(paintName('b2-violet')).toBe('B2 VIOLET');
     expect(paintName('fortune-orange')).toBe('FORTUNE ORANGE');
     expect(paintName('no-such-paint')).toBe('NO SUCH PAINT');
+  });
+});
+
+describe('head-to-head', () => {
+  it('verdict: higher total wins, equal draws, rival DNF loses', () => {
+    expect(verdict(12000, 9000)).toBe('win');
+    expect(verdict(9000, 12000)).toBe('lose');
+    expect(verdict(5000, 5000)).toBe('draw');
+    expect(verdict(0, null)).toBe('win');
+    expect(verdict(0, 0)).toBe('draw');
+  });
+  it('verdict compares the totals as displayed', () => {
+    expect(verdict(1000.4, 1000)).toBe('draw');
+    expect(verdict(1000.6, 1000)).toBe('win');
+  });
+  it('verdict text names the winner', () => {
+    expect(verdictText('win', 'guest1234')).toBe('YOU WIN');
+    expect(verdictText('lose', 'guest1234')).toBe('GUEST1234 WINS');
+    expect(verdictText('draw', 'guest1234')).toBe('DRAW');
+  });
+  it('rival total reads DNF when unfinished', () => {
+    expect(rivalTotalText(12345)).toBe('12,345');
+    expect(rivalTotalText(null)).toBe('DNF');
   });
 });
 
