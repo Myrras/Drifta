@@ -39,6 +39,7 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
 import { drivethru, drivethruRoute } from './maps/drivethru';
+import { dailyFor, finishDaily, liveStreak, localDate, type Daily } from './daily';
 import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
 import {
@@ -63,8 +64,6 @@ import {
   comboValue,
   createScoring,
   forceBank,
-  MEDAL_NAMES,
-  medalFor,
   stepScoring,
   timeBonus,
   zoneAt,
@@ -136,7 +135,8 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-const TITLE_ROWS = 3;
+const TITLE_ROWS = 4;
+const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
@@ -182,6 +182,8 @@ export function createGame(
   host?: MusicHost,
   /** progression store; omitted = progression off (no starter pick, every car unlocked) */
   prog: Progress = { ...defaultProgress(), starterChosen: true, unlocked: [...MODEL_IDS] },
+  /** local date, YYYY-MM-DD; injectable for tests */
+  today: () => string = localDate,
 ) {
   const cfg = loadSettings(storage);
   const pStore = storage ?? {
@@ -197,6 +199,10 @@ export function createGame(
   let starter = 0; // index into STARTERS on the first-launch screen
   let offerPick = false; // garage: confirm again spends a car pick on the locked car
   let toastT = 0;
+  // daily / legend run in progress; a legend swaps in its car until the title
+  let daily: Daily | null = null;
+  let dailyDate = '';
+  let carBackup: { car: PlayerModel; color: string } | null = null;
   const applyVolumes = () => {
     const { master, music, sfx, engine } = cfg;
     audio.setVolumes({ master, music, sfx, engine });
@@ -294,6 +300,7 @@ export function createGame(
     helix: null as Helix | null,
     p: 0,
     drifted: 0,
+    wallHits: 0,
     results: null as Omit<Results, 'drifts' | 'driftRow' | 'carPick' | 'chooser'> | null,
     /** progress loaded at finish (null: no storage), pending car pick, open chooser */
     prog: null as Progress | null,
@@ -348,6 +355,19 @@ export function createGame(
     ghost = loadGhost(map.name);
     clips?.begin(cfg.clips);
   };
+  function startDaily(): void {
+    dailyDate = today();
+    daily = dailyFor(dailyDate, maps);
+    sel = maps.indexOf(daily.map);
+    map = daily.map;
+    if (daily.car && !carBackup) {
+      carBackup = { car: cfg.car, color: cfg.color };
+      cfg.car = daily.car;
+      cfg.color = PLAYER_MODELS[daily.car].colors[0];
+      raceLook = { skin: daily.skin };
+    }
+    newRun();
+  }
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
     s.popups.push({ kind, text, amount, age: 0 });
 
@@ -455,8 +475,9 @@ export function createGame(
     }
     s.prog = prog;
     const award = awardFinish(prog, map, total, s.time);
+    const dr = daily ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
     persist();
-    s.carPick = award.carPick;
+    s.carPick = award.carPick || !!dr?.carPick;
     s.results = {
       comboPoints,
       timeBonus: bonus,
@@ -467,6 +488,7 @@ export function createGame(
       medals: map.medals,
       position: award.position,
       newPaints: award.newPaints,
+      daily: dr,
     };
     s.phase = 'results';
     audio.stop();
@@ -546,6 +568,7 @@ export function createGame(
       bounce(car, hit);
       if (impact > HARD_HIT_SPEED) {
         hard = true;
+        s.wallHits++;
         audio.hit();
         s.shake = Math.min(1, impact / 10);
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
@@ -623,6 +646,13 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     clips?.clear();
+    if (carBackup) {
+      cfg.car = carBackup.car;
+      cfg.color = carBackup.color;
+      carBackup = null;
+      raceLook = lookOf(cfg.car);
+    }
+    daily = null;
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
@@ -675,14 +705,14 @@ export function createGame(
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
-      go('title', 1);
+      go('title', 2);
     } else if (input.pause) {
       prog.looks = structuredClone(savedLooks); // drop the draft
       gTune = cfg.tune;
       gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
-      go('title', 1);
+      go('title', 2);
     }
   }
 
@@ -749,11 +779,14 @@ export function createGame(
       } else confirmReset = true;
     } else if ((row === back && input.confirm) || input.pause) {
       audio.ui('back');
-      go('title', 2);
+      go('title', 3);
     }
   }
 
-  const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
+  const posTag = (name: string) => {
+    const n = prog.results[name]?.position;
+    return n ? ` ${ORD[n]}` : '';
+  };
 
   function menuView(): MenuView | null {
     const base = {
@@ -765,8 +798,15 @@ export function createGame(
     };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     if (s.phase === 'title') {
+      const date = today();
+      const dl = dailyFor(date, maps);
+      const done = prog.daily.lastClear === date;
       const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶${medalTag(medalFor(bests[sel], map.medals))}` },
+        { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` },
+        {
+          label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
+          value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
+        },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
       ];
@@ -774,6 +814,7 @@ export function createGame(
         ...base,
         screen: 'title',
         rows,
+        note: `STREAK ${liveStreak(prog, date)}${done ? ' · CLEARED' : ''}`,
         toast: toastT > 0 ? 'ALL CARS UNLOCKED' : undefined,
       };
     }
@@ -923,11 +964,12 @@ export function createGame(
             audio.resume();
             audio.ui('confirm');
             if (row === 0) newRun();
+            else if (row === 1) startDaily();
             else {
               gTune = cfg.tune;
               gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
-              go(row === 1 ? 'garage' : 'settings');
+              go(row === 2 ? 'garage' : 'settings');
             }
           }
           break;

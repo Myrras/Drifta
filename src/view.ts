@@ -1,4 +1,5 @@
 import type { Look } from './cosmetics';
+import type { DailyResult } from './daily';
 import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
@@ -71,6 +72,8 @@ export interface Results {
   medals?: [number, number, number];
   /** finishing position on maps with positions, null = none reached */
   position: 1 | 2 | 3 | null;
+  /** daily / legend verdict when this run was one */
+  daily?: DailyResult;
   /** paint ids unlocked by this finish */
   newPaints: string[];
   /** a car pick was earned and is not yet chosen or deferred */
@@ -106,6 +109,8 @@ export interface MenuView {
   /** short notice over the menu, e.g. the cheat */
   toast?: string;
   rows: MenuRow[];
+  /** title only: small line next to BEST, e.g. the daily streak */
+  note?: string;
   /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
   tabs?: { names: string[]; active: number };
   ui: UiContext;

@@ -690,6 +690,7 @@ function toast(g: CanvasRenderingContext2D, s: string): void {
 
 let bestVal = -1;
 let bestStr = '';
+let bestNote: string | undefined;
 
 function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typeof H): void {
   const { th, u, w, h, now } = F;
@@ -700,10 +701,11 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   const top = 12 * u;
   const Sw = Math.min((w * 0.9) / 5.4, 24 * u);
   // tall windows: center logo + rows as one block; short ones: rows sit low, logo shrinks
-  const block = 2.5 * Sw + 4 * u + ph + 2 * step + 7.6 * u;
+  const n = m.rows.length - 1;
+  const block = 2.5 * Sw + 4 * u + ph + n * step + 7.6 * u;
   const rowsTop = Math.min(
     h * 0.5 + 10 * u,
-    hintTop - 9 * u - ph / 2 - 2 * step,
+    hintTop - 9 * u - ph / 2 - n * step,
     top + Math.max(0, hintTop - top - block) * 0.42 + 2.5 * Sw + 4 * u + ph / 2,
   );
   const S = Math.max(4 * u, Math.min(Sw, (rowsTop - ph / 2 - 4 * u - top) / 2.5));
@@ -725,16 +727,17 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   }
   rows(g, m.rows, m.row, rowsTop, step, 0, A.rowsOpen, selPos(now));
   if (v.par > 0) {
-    if (v.best !== bestVal) {
+    if (v.best !== bestVal || m.note !== bestNote) {
       bestVal = v.best;
-      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}`;
+      bestNote = m.note;
+      bestStr = `BEST  ${Math.round(v.best).toLocaleString('en-US')}${m.note ? `  ·  ${m.note}` : ''}`;
     }
     g.globalAlpha = enter(3, A.open);
     text(
       g,
       bestStr,
       w / 2,
-      rowsTop + 2 * step + ph / 2 + 3.6 * u,
+      rowsTop + n * step + ph / 2 + 3.6 * u,
       th.font(700, 3 * u, th.id === 'vhs'),
       th.id === 'vhs' ? th.accent : th.accent2,
       'center',
