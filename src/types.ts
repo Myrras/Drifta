@@ -26,6 +26,8 @@ export interface Solid extends Rect {
   lights?: 'on' | 'hazard';
   /** parked police car: light bar flashes, close drifts score COP SHOW */
   police?: boolean;
+  /** parked boom car: subwoofer thump + body shake */
+  boom?: boolean;
 }
 /** angle in radians, 0 = facing +x, positive = clockwise on screen (y down) */
 export interface Spawn {
