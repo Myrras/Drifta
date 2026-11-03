@@ -1,5 +1,5 @@
-import type { CarModel, PlayerModel } from './types';
-import { CAR_MODELS, PLAYER_MODELS } from './models';
+import type { PlayerModel } from './types';
+import { PLAYER_MODELS } from './models';
 
 type Ctx = CanvasRenderingContext2D;
 /** [x, half width] in m, listed nose to tail; mirrored across the x axis */
@@ -128,7 +128,9 @@ function slots(g: Ctx, x: number, y: number, d: number, w: number, n: number) {
   }
 }
 
-function specs(model: CarModel, hl: number, B: number): Spec {
+type Body = Exclude<PlayerModel, 'mx5'>;
+
+function specs(model: Body, hl: number, B: number): Spec {
   const t = -hl;
   switch (model) {
     case 'civic':
@@ -412,13 +414,73 @@ function specs(model: CarModel, hl: number, B: number): Spec {
           wing(g, c, t + 0.26, 0.22, B - 0.14, 0.16);
         },
       };
+    case 'rx8':
+      return {
+        wb: 2.7,
+        fo: 0.82,
+        // short-overhang wedge: pointed nose, flared arches, pinched waist
+        body: [
+          [hl, 0.22],
+          [hl - 0.06, 0.48],
+          [hl - 0.35, B - 0.08],
+          [hl - 0.82, B],
+          [0.1, B - 0.1],
+          [-0.9, B - 0.06],
+          [-1.3, B],
+          [t + 0.3, B - 0.05],
+          [t + 0.04, B - 0.26],
+          [t, 0],
+        ],
+        glass: [0.72, B - 0.2, -1.48, B - 0.22, 0.26, 0.05, 0.05],
+        roof: [0.2, B - 0.27, -0.98, B - 0.28, 0.18, 0.03, 0.02],
+        mirror: 0.42,
+        detail(g, c) {
+          pair(g, ['rgba(255,255,255,0.1)'], hl - 1.2, B - 0.24, 0.75, 0.12, 0.06); // fender peaks
+          pair(g, [HEAD], hl - 0.36, 0.3, 0.26, 0.22, [0.02, 0.12, 0.02, 0.02]);
+          pair(g, [TAIL], t + 0.05, 0.36, 0.1, 0.24, 0.06);
+          // freestyle doors: front and rear door meet with no B-pillar
+          for (const x of [0.62, -0.38, -1.12])
+            for (const y of [-1, 1]) line(g, 'rgba(0,0,0,0.4)', 0.03, x, y * (B - 0.18), x, y * B);
+          pair(g, [c, SHADE], t + 0.1, 0, 0.1, B - 0.2, 0.02); // trunk lip
+        },
+      };
+    case 'celica':
+      return {
+        wb: 2.54,
+        fo: 0.92,
+        body: [
+          [hl, 0.3],
+          [hl - 0.04, 0.58],
+          [hl - 0.28, B - 0.04],
+          [1.29, B],
+          [0.0, B - 0.04],
+          [-1.25, B],
+          [t + 0.28, B - 0.04],
+          [t + 0.03, B - 0.22],
+          [t, 0.3],
+        ],
+        glass: [0.62, B - 0.13, -1.62, B - 0.22, 0.25, 0.06, 0.06],
+        roof: [0.12, B - 0.19, -0.85, B - 0.25, 0.2, 0.04, 0.03],
+        mirror: 0.45,
+        detail(g, c) {
+          // quad round headlights
+          pair(g, [HEAD], hl - 0.2, 0.34, 0.14, 0.14, 0.07);
+          pair(g, [HEAD], hl - 0.3, 0.52, 0.14, 0.14, 0.07);
+          pair(g, [SHADE], hl - 1.0, 0.1, 0.4, 0.24, 0.05); // hood vents
+          slots(g, hl - 0.98, 0.22, 0.36, 0.09, 4);
+          pair(g, [TAIL], t + 0.04, 0.3, 0.08, 0.26, 0.03);
+          // big rear wing on tall uprights
+          pair(g, [TRIM], t + 0.3, B - 0.3, 0.12, 0.06, 0.02);
+          wing(g, c, t + 0.18, 0.3, B - 0.02, 0.18);
+        },
+      };
   }
 }
 
 /** Draws a parked car centered at the origin, nose toward +x, 1 unit = 1 m (caller sets the transform). */
-export function drawParkedCar(ctx: CanvasRenderingContext2D, model: CarModel, color: string): void {
+export function drawParkedCar(ctx: CanvasRenderingContext2D, model: Body, color: string): void {
   const g = ctx;
-  const { length, width } = CAR_MODELS[model];
+  const { length, width } = PLAYER_MODELS[model];
   const hl = length / 2;
   const B = width / 2 - 0.1; // body half width; tires peek out 0.1 m
   const s = specs(model, hl, B);

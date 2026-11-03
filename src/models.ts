@@ -86,9 +86,19 @@ export const CAR_MODELS: Record<
   },
 };
 
+// garage order: each new car next to its maker's
+const { civic, supra, rx7, ...rest } = CAR_MODELS;
 export const PLAYER_MODELS: Record<
   PlayerModel,
-  { name: string; length: number; width: number; colors: string[]; stats: CarStats }
+  {
+    name: string;
+    length: number;
+    width: number;
+    colors: string[];
+    stats: CarStats;
+    /** garage note under the name */
+    tag?: string;
+  }
 > = {
   mx5: {
     name: 'MX-5 NA',
@@ -97,5 +107,23 @@ export const PLAYER_MODELS: Record<
     colors: ['#d32030', '#e8e8e8', '#1d3f8f', '#2f5f3a', '#151515'],
     stats: { power: 0.85, grip: 1.05, mass: 0.9 },
   },
-  ...CAR_MODELS,
+  civic,
+  supra,
+  celica: {
+    name: 'Celica GT-Four ST205',
+    tag: 'RWD CONVERSION',
+    length: 4.42,
+    width: 1.75,
+    colors: ['#e8e8e8', '#c8102e', '#a8adb2', '#151515'],
+    stats: { power: 1.05, grip: 1, mass: 1.1 },
+  },
+  rx7,
+  rx8: {
+    name: 'RX-8',
+    length: 4.43,
+    width: 1.77,
+    colors: ['#9e1b22', '#1f4fa0', '#c0c4c8', '#e3c21a', '#151515'],
+    stats: { power: 0.95, grip: 1.1, mass: 0.9 },
+  },
+  ...rest,
 };

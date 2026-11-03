@@ -1,3 +1,4 @@
+import type { CityGraph, Traffic } from './traffic';
 import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
 export interface RenderView {
@@ -24,6 +25,8 @@ export interface RenderView {
   runId: number;
   /** clipping zone the player is drifting in, lit up */
   clip: Rect | null;
+  /** live traffic and its city graph (signal heads), null on maps without traffic */
+  traffic: { sim: Traffic; city: CityGraph } | null;
 }
 
 export interface Popup {
@@ -58,6 +61,13 @@ export interface Results {
   driftRow: number;
 }
 
+/** Look and input hints for the UI. */
+export interface UiContext {
+  theme: 'arcade' | 'vhs';
+  device: 'kb' | 'pad';
+  padStyle: 'ps' | 'xbox';
+}
+
 export interface MenuRow {
   label: string;
   value?: string;
@@ -69,6 +79,9 @@ export interface MenuRow {
 export interface MenuView {
   screen: 'title' | 'garage' | 'settings';
   rows: MenuRow[];
+  /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
+  tabs?: { names: string[]; active: number };
+  ui: UiContext;
   /** highlighted row */
   row: number;
   /** map names and the chosen one (title) */
@@ -105,6 +118,13 @@ export interface HudView {
   results: Results | null;
   /** non-null on title, garage and settings */
   menu: MenuView | null;
+  ui: UiContext;
+  /** engine rpm 0..1 (car.rpm) */
+  rpm: number;
+  /** normalized rpm of the limiter */
+  redline: number;
+  /** 'N', 'R', '1'..'4' */
+  gear: string;
 }
 
 export interface FrameView {

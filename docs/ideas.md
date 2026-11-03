@@ -2,7 +2,7 @@
 
 Size: S = hours, M = a day or two, L = a week+. **TOP** = recommended next 10 (ordered list at the end).
 
-Already exists (do not duplicate): 3-floor garage + open test pad, helix floor transitions, combos (Close Call, Switchback, Long Drift, 360, Ramp Drift), JDM parked cars, dark lighting with car lights, modelled engine, CC0 sfx, par-time bonus, local best score.
+Already exists (do not duplicate): 2-floor B2 MEET garage, TOKYO NIGHTS city, open test pad, helix floor transitions, combos (Close Call, Switchback, Long Drift, 360, Ramp Drift), JDM parked cars, dark lighting with car lights, modelled engine, CC0 sfx, par-time bonus, local best score.
 
 ## Driving & cars
 
@@ -24,11 +24,12 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 - Challenge list per map (score X, no wall hit, collectibles): Tony Hawk goals, Absolute Drift objectives. M
 - Free-roam mode, no timer, scoring on: Absolute Drift, Forza. S
 - Rival battle (chase/lead a tandem car): Tokyo Xtreme Racer, Initial D. L
+- Live traffic and pedestrians (done in TOKYO NIGHTS, a hit breaks the combo): Tokyo Xtreme Racer. M
 - Time attack / endless mode with shrinking timer: arcade standard. M
 
 ## Maps
 
-- **TOP** Second map outdoors (touge or industrial yard) with new corner types: mountain drifting is the genre core, Initial D, Absolute Drift. L
+- **TOP** Second map outdoors (touge or industrial yard) with new corner types (WANGAN DOCKS and TOKYO NIGHTS done, no touge yet): mountain drifting is the genre core, Initial D, Absolute Drift. L
 - Suggested-line decals in free-roam (see docs/map-design.md). S
 - Collectibles and jump ramps: Absolute Drift objectives. M
 - Shortcut/risk lines with higher payout: Absolute Drift, Tony Hawk. S
@@ -45,7 +46,7 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 
 ## Audio & music
 
-- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original) (done, 2 tracks): genre feel, Initial D Eurobeat, NFS Underground. M
+- **TOP** Synthwave/phonk soundtrack with track select (CC0 or original) (done, 2 tracks plus MY MUSIC MP3 import and N / RB skip): genre feel, Initial D Eurobeat, NFS Underground. M
 - Turbo flutter, blow-off valve, backfire pops on lift (done): JDM sound cues. S
 - Tire squeal varying by slip and surface. S
 - Music layers fade in with combo multiplier: Tony Hawk-style intensity. M
@@ -59,8 +60,10 @@ Already exists (do not duplicate): 3-floor garage + open test pad, helix floor t
 - Smoke/skid intensity scaling with angle; sparks on wall scrape. S
 - Speed lines / zoom punch on handbrake: arcade racers. S
 - Slow-mo replay of last combo: Tony Hawk, Forza photo mode. M
-- Settings: volume, key remap, reduce-shake. M
+- Settings: volume, key remap, reduce-shake (done except key remap: AUDIO/VIDEO/GAME tabs, MENU THEME). M
 - Mobile touch controls: broader reach. M
+
+- RPM tach replacing the speedo, PS/Xbox hints following the last-used device, live attract-mode scene behind the menu (done). S
 
 ## Social / meta
 

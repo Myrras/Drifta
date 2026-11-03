@@ -11,7 +11,8 @@ export interface Rect {
 }
 export type CarModel =
   'civic' | 'supra' | 'rx7' | 'r32' | 's13' | '180sx' | 'ae86' | 'nsx' | 'evo4' | 'wrx';
-export type PlayerModel = CarModel | 'mx5';
+/** player-only cars are never parked on maps */
+export type PlayerModel = CarModel | 'mx5' | 'rx8' | 'celica';
 export interface Solid extends Rect {
   kind: SolidKind;
   /** rotation of the rect about its center (rad); omitted = axis-aligned */
@@ -87,6 +88,10 @@ export interface InputState {
   /** level: garage engine rev (R / right trigger) */ rev?: boolean;
   /** edge-triggered: garage tune toggle (T / pad X) */ tune?: boolean;
   /** edge-triggered: save the selected drift clip on results (S / pad X) */ save?: boolean;
+  /** edge-triggered: settings tab prev / next (Q / E, pad LB / RB) */ tabPrev?: boolean;
+  tabNext?: boolean;
+  /** last-used device, for button prompts */ device?: 'kb' | 'pad';
+  padStyle?: 'ps' | 'xbox';
 }
 /** rpm normalized 0..1 */
 export interface CarState {

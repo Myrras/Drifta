@@ -7,7 +7,9 @@ import { createClipRecorder } from './clips';
 import { garage } from './maps/garage';
 import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
+import { tokyo } from './maps/tokyo';
 import { BEST_SCORE_KEY, DT } from './config';
+import { clearLibrary, importFiles, libraryBytes, MAX_BYTES } from './musicLibrary';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = createRenderer(canvas);
@@ -41,7 +43,37 @@ const bestFor = (name: string) => {
   };
 };
 const clips = createClipRecorder(canvas, () => audio.stream());
-const game = createGame([garage, docks, testpad], audio, bestFor, undefined, clips);
+const picker = document.createElement('input');
+picker.type = 'file';
+picker.multiple = true;
+picker.accept = '.mp3,audio/mpeg';
+let pickDone: (summary: string) => void = () => {};
+picker.addEventListener('change', async () => {
+  const files = [...(picker.files ?? [])];
+  picker.value = '';
+  if (!files.length) return;
+  const r = await importFiles(files);
+  const why = r.reason?.replace(/ \(.*\)/, '').toUpperCase();
+  const count = r.added ? `+${r.added} ADDED` : why ? '' : `${r.skipped} SKIPPED`;
+  pickDone([count, why].filter(Boolean).join(' · '));
+});
+const musicHost = {
+  // runs in the frame loop right after the keydown; transient user activation still holds
+  pick(done: (summary: string) => void) {
+    pickDone = done;
+    picker.click();
+  },
+  clear: clearLibrary,
+  size: async () => `${Math.round((await libraryBytes()) / 2 ** 20)} / ${MAX_BYTES / 2 ** 20} MB`,
+};
+const game = createGame(
+  [garage, docks, tokyo, testpad],
+  audio,
+  bestFor,
+  undefined,
+  clips,
+  musicHost,
+);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
@@ -51,41 +83,35 @@ document.addEventListener('visibilitychange', () => document.hidden && game.paus
 
 let last = performance.now();
 let acc = 0;
-const pending = {
-  pause: false,
-  restart: false,
-  confirm: false,
-  left: false,
-  right: false,
-  up: false,
-  down: false,
-  save: false,
-};
+/** edges latched across frames without a physics step */
+const EDGES = [
+  'pause',
+  'restart',
+  'confirm',
+  'left',
+  'right',
+  'up',
+  'down',
+  'save',
+  'tune',
+  'tabPrev',
+  'tabNext',
+  'skip',
+] as const;
+const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
+  (typeof EDGES)[number],
+  boolean
+>;
 function frame(now: number) {
   const frameDt = Math.min((now - last) / 1000, 0.25);
   last = now;
   acc += frameDt;
   const s = input.poll();
-  pending.pause ||= s.pause;
-  pending.restart ||= s.restart;
-  pending.confirm ||= s.confirm;
-  pending.left ||= s.left;
-  pending.right ||= s.right;
-  pending.up ||= !!s.up;
-  pending.down ||= !!s.down;
-  pending.save ||= !!s.save;
+  for (const k of EDGES) pending[k] ||= !!s[k];
   if (s.confirm) resume();
   while (acc >= DT) {
     game.update({ ...s, ...pending }, DT);
-    pending.pause =
-      pending.restart =
-      pending.confirm =
-      pending.left =
-      pending.right =
-      pending.up =
-      pending.down =
-      pending.save =
-        false;
+    for (const k of EDGES) pending[k] = false;
     acc -= DT;
   }
   const v = game.view();

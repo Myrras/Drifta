@@ -8,6 +8,9 @@ import type { Tune } from './engine';
 export const CLIP_QUALITIES = ['off', 'low', 'medium', 'high'] as const;
 export type ClipQuality = (typeof CLIP_QUALITIES)[number];
 
+export const MENU_THEMES = ['arcade', 'vhs'] as const;
+export type MenuTheme = (typeof MENU_THEMES)[number];
+
 export interface Settings {
   master: number;
   music: number;
@@ -17,6 +20,8 @@ export interface Settings {
   track: Track;
   /** drift clip recording quality */
   clips: ClipQuality;
+  /** title / settings look */
+  menuTheme: MenuTheme;
   car: PlayerModel;
   color: string;
   tune: Tune;
@@ -33,6 +38,7 @@ export const defaultSettings = (): Settings => ({
   shake: true,
   track: 'tokyo',
   clips: 'medium',
+  menuTheme: 'arcade',
   car: 'mx5',
   color: '#d32030',
   tune: 'street',
@@ -61,6 +67,9 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     shake: typeof raw.shake === 'boolean' ? raw.shake : d.shake,
     track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
     clips: CLIP_QUALITIES.includes(raw.clips as ClipQuality) ? (raw.clips as ClipQuality) : d.clips,
+    menuTheme: MENU_THEMES.includes(raw.menuTheme as MenuTheme)
+      ? (raw.menuTheme as MenuTheme)
+      : d.menuTheme,
     car: ok ? car : d.car,
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
     tune: raw.tune === 'performance' || raw.tune === 'street' ? raw.tune : d.tune,

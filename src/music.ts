@@ -1,4 +1,5 @@
-/** Procedural drift tracks (tokyo, eurobeat). Pattern logic is pure (testable); createMusic wires it to Web Audio. */
+/** Procedural drift tracks (tokyo, eurobeat) plus MY MUSIC (library MP3s). Pattern logic is pure (testable); createMusic wires it to Web Audio. */
+import { createShuffleBag, getBlob, listTracks } from './musicLibrary';
 
 export const BPM = 155;
 export const STEPS_PER_BAR = 16;
@@ -70,8 +71,13 @@ export function leadAt(bar: number, step: number, intensity: number): number | n
 
 /* ---- Tokyo: dark half-time hip-hop, D in-scale (miyako-bushi). Original patterns, style only. ---- */
 
-export const TRACKS = ['tokyo', 'eurobeat'] as const;
+export const TRACKS = ['tokyo', 'eurobeat', 'mine'] as const;
 export type Track = (typeof TRACKS)[number];
+export const TRACK_LABELS: Record<Track, string> = {
+  tokyo: 'TOKYO',
+  eurobeat: 'EUROBEAT',
+  mine: 'MY MUSIC',
+};
 export const TOKYO_BPM = 130;
 export const TOKYO_SCALE = [0, 1, 5, 7, 8]; // D Eb G A Bb
 const TOKYO_ROOT = 50; // D3
@@ -163,6 +169,74 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   let timer: ReturnType<typeof setInterval> | null = null;
   let nextTime = 0;
   let stepIdx = 0;
+
+  // MY MUSIC: library MP3s via an <audio> element into `out` (same bus as procedural music)
+  let el: HTMLAudioElement | null = null;
+  let url: string | null = null;
+  let bag: ReturnType<typeof createShuffleBag<string>> | null = null;
+  let mineCount = 0;
+  let running = false;
+  let loading = false;
+  let fails = 0;
+
+  function fallback(): void {
+    track = 'tokyo';
+    stepSec = 60 / TOKYO_BPM / 4;
+    stepIdx = 0;
+    el?.pause();
+  }
+
+  async function reload(): Promise<number> {
+    const ids = (await listTracks()).map((t) => t.id);
+    mineCount = ids.length;
+    bag = ids.length ? createShuffleBag(ids) : null;
+    return mineCount;
+  }
+
+  async function playNext(): Promise<void> {
+    if (loading) return;
+    loading = true;
+    let retry = false;
+    try {
+      if (!bag) await reload();
+      if (track !== 'mine' || !running) return;
+      const id = bag?.next();
+      const blob = id ? await getBlob(id) : undefined;
+      if (track !== 'mine' || !running) return;
+      if (!blob || fails > mineCount) return fallback();
+      if (!el) {
+        el = new Audio();
+        el.addEventListener('ended', () => void playNext());
+        el.addEventListener('error', () => {
+          fails++;
+          void playNext();
+        });
+        const g = ctx.createGain();
+        g.gain.value = 0.3; // match the procedural bus level
+        ctx.createMediaElementSource(el).connect(g).connect(out);
+      }
+      const old = url;
+      url = URL.createObjectURL(blob);
+      el.src = url;
+      if (old) URL.revokeObjectURL(old);
+      await el.play();
+      fails = 0;
+    } catch {
+      fails++;
+      retry = true;
+    } finally {
+      loading = false;
+    }
+    if (retry && track === 'mine' && running) {
+      if (fails > mineCount + 1) fallback();
+      else void playNext();
+    }
+  }
+
+  function startMine(): void {
+    if (el?.src && el.paused && !el.ended) el.play().catch(() => {});
+    else if (!el?.src || el.ended) void playNext();
+  }
 
   function env(g: GainNode, t: number, peak: number, dur: number): void {
     g.gain.setValueAtTime(0, t);
@@ -351,6 +425,7 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
 
   function tick(): void {
     if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05; // stalled timer: skip missed steps
+    if (track === 'mine') return;
     while (nextTime < ctx.currentTime + 0.1) {
       (track === 'tokyo' ? tokyoStep : scheduleStep)(nextTime, stepIdx);
       stepIdx++;
@@ -361,12 +436,16 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   const beat = 60 / BPM;
   return {
     start(): void {
+      running = true;
+      if (track === 'mine') startMine();
       if (timer) return;
       nextTime = ctx.currentTime + 0.05;
       stepIdx = 0;
       timer = setInterval(tick, 25);
     },
     stop(): void {
+      running = false;
+      el?.pause();
       if (timer) clearInterval(timer);
       timer = null;
     },
@@ -374,9 +453,21 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
     setTrack(t: Track): void {
       if (t === track) return;
       track = t;
+      if (t === 'mine') {
+        fails = 0;
+        void reload().then(() => running && startMine());
+        return;
+      }
+      el?.pause();
       stepSec = 60 / (t === 'tokyo' ? TOKYO_BPM : BPM) / 4;
       stepIdx = 0;
       lastBass = 0;
+    },
+    /** Re-read the library (after import/clear); returns the track count. */
+    reload,
+    myMusicCount: () => mineCount,
+    skip(): void {
+      if (track === 'mine' && running) void playNext();
     },
     setIntensity(x: number): void {
       intensity = clamp01(x);
