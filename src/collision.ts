@@ -21,21 +21,31 @@ export function inRect(p: Vec, r: Rect): boolean {
   return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 }
 
-function rectCorners(r: Rect): Vec[] {
+function rectCorners(r: Solid): Vec[] {
+  const a = r.angle ?? 0;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const hw = r.w / 2;
+  const hh = r.h / 2;
   return [
-    { x: r.x, y: r.y },
-    { x: r.x + r.w, y: r.y },
-    { x: r.x + r.w, y: r.y + r.h },
-    { x: r.x, y: r.y + r.h },
-  ];
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+  ].map(([l, m]) => ({ x: cx + l * c - m * s, y: cy + l * s + m * c }));
 }
 
-function hitOne(car: CarState, corners: Vec[], r: Rect): Hit | null {
+function hitOne(car: CarState, corners: Vec[], r: Solid): Hit | null {
   const c = Math.cos(car.angle);
   const s = Math.sin(car.angle);
+  const ra = r.angle ?? 0;
+  const rcos = Math.cos(ra);
+  const rsin = Math.sin(ra);
   const axes: Vec[] = [
-    { x: 1, y: 0 },
-    { x: 0, y: 1 },
+    { x: rcos, y: rsin },
+    { x: -rsin, y: rcos },
     { x: c, y: s },
     { x: -s, y: c },
   ];
@@ -90,7 +100,10 @@ function hitCircle(car: CarState, k: Circle): Hit | null {
 export function collide(car: CarState, solids: Solid[], circles: Circle[] = []): Hit | null {
   const corners = carCorners(car);
   let best: Hit | null = null;
+  const carR = Math.hypot(HL, HW) + 3;
   for (const s of solids) {
+    const d = Math.hypot(s.x + s.w / 2 - car.pos.x, s.y + s.h / 2 - car.pos.y);
+    if (d > carR + Math.hypot(s.w, s.h) / 2) continue;
     const h = hitOne(car, corners, s);
     if (h && (!best || h.depth > best.depth)) best = h;
   }
@@ -99,6 +112,19 @@ export function collide(car: CarState, solids: Solid[], circles: Circle[] = []):
     if (h && (!best || h.depth > best.depth)) best = h;
   }
   return best;
+}
+
+function pointSolidDist(p: Vec, r: Solid): number {
+  const a = r.angle ?? 0;
+  if (!a) return pointRectDist(p, r);
+  const dx = p.x - r.x - r.w / 2;
+  const dy = p.y - r.y - r.h / 2;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return pointRectDist(
+    { x: r.w / 2 + dx * c + dy * s, y: r.h / 2 - dx * s + dy * c },
+    { x: 0, y: 0, w: r.w, h: r.h },
+  );
 }
 
 function pointRectDist(p: Vec, r: Rect): number {
@@ -128,7 +154,7 @@ export function nearestDistance(car: CarState, solids: Solid[], circles: Circle[
   let min = Infinity;
   for (const k of circles) min = Math.min(min, circleGap(car, k));
   for (const r of solids) {
-    for (const p of corners) min = Math.min(min, pointRectDist(p, r));
+    for (const p of corners) min = Math.min(min, pointSolidDist(p, r));
     for (const p of rectCorners(r)) {
       const dx = p.x - car.pos.x;
       const dy = p.y - car.pos.y;
