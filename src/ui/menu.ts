@@ -113,7 +113,17 @@ const GARAGE_HINTS: [Action, string][] = [
   ['confirm', 'select'],
   ['back', 'back'],
 ];
+const STARTER_HINTS: [Action, string][] = [
+  ['adjust', 'car'],
+  ['confirm', 'choose'],
+];
+const PICK_HINTS: [Action, string][] = [
+  ['confirm', 'use car pick'],
+  ['back', 'cancel'],
+];
 const H = {
+  starter: '',
+  pick: '',
   device: '',
   pad: '',
   title: '',
@@ -132,6 +142,8 @@ function hintsFor(ui: UiContext): typeof H {
     H.drive = hintLine(DRIVE_HINTS, ui.device, ui.padStyle);
     H.settings = hintLine(SETTINGS_HINTS, ui.device, ui.padStyle);
     H.garage = hintLine(GARAGE_HINTS, ui.device, ui.padStyle);
+    H.starter = hintLine(STARTER_HINTS, ui.device, ui.padStyle);
+    H.pick = hintLine(PICK_HINTS, ui.device, ui.padStyle);
     [H.tabL, H.tabR] = glyph('tabs', ui.device, ui.padStyle).split('/');
   }
   return H;
@@ -485,7 +497,9 @@ function bar(
 function drawGarage(
   g: CanvasRenderingContext2D,
   m: NonNullable<MenuView['garage']>,
+  title: string,
   hint: string,
+  hint2: string,
 ): void {
   const { th, u, w, h, now } = F;
   const arcade = th.id === 'arcade';
@@ -544,8 +558,22 @@ function drawGarage(
   const s = scale * (0.85 + 0.15 * open);
   g.scale(s, s);
   g.globalAlpha = open;
+  if (m.lock) g.filter = 'grayscale(1) brightness(0.45)';
   g.drawImage(car, -CAR_HALF, -CAR_HALF, 2 * CAR_HALF, 2 * CAR_HALF);
   g.restore();
+  if (m.lock) {
+    padlock(g, carX, carY, scale * 0.9);
+    const n = m.lock.picks;
+    const note = m.lock.offer
+      ? `USE CAR PICK?  ${n} LEFT`
+      : n > 0
+        ? `LOCKED · ${n} CAR PICK${n > 1 ? 'S' : ''}`
+        : 'WIN 1ST ON A MAP OR CLEAR 3 DAILIES';
+    const f = th.font(800, 2.6 * u);
+    const px = fitPx(g, note, f, 2.6 * u, wide ? cardX - 6 * u : w - 8 * u);
+    const y = carY + R * 0.62 + 3 * u;
+    text(g, note, carX, y, th.font(800, px), m.lock.offer ? HAZARD : th.text, 'center');
+  }
 
   // spec card
   const e = enter(2, A.open);
@@ -615,12 +643,44 @@ function drawGarage(
   // page heading: over the card when side by side, over the car when stacked
   heading(
     g,
-    'GARAGE',
+    title,
     wide ? cardX + cw / 2 : w / 2,
     wide ? cardY - 9 * u : 19 * u,
     wide ? 0 : 40 * u,
   );
-  hints(g, hint, '');
+  hints(g, hint, hint2);
+}
+
+/** Padlock centred on (x, y); s = body width in px. */
+function padlock(g: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  g.save();
+  g.translate(x, y);
+  g.fillStyle = g.strokeStyle = HAZARD;
+  g.lineWidth = s * 0.18;
+  g.beginPath();
+  g.moveTo(-s * 0.3, s * 0.05);
+  g.arc(0, -s * 0.15, s * 0.3, Math.PI, 0);
+  g.lineTo(s * 0.3, s * 0.05);
+  g.stroke();
+  g.fillRect(-s * 0.5, 0, s, s * 0.75);
+  g.fillStyle = INK;
+  g.beginPath();
+  g.arc(0, s * 0.3, s * 0.1, 0, Math.PI * 2);
+  g.fill();
+  g.fillRect(-s * 0.04, s * 0.3, s * 0.08, s * 0.25);
+  g.restore();
+}
+
+/** Short notice at the top of the screen. */
+function toast(g: CanvasRenderingContext2D, s: string): void {
+  const { th, u, w } = F;
+  const y = 8 * u;
+  const f = th.font(800, 3 * u);
+  g.font = f;
+  const tw = g.measureText(s).width + 6 * u;
+  g.fillStyle = HAZARD;
+  g.fillRect(w / 2 - tw / 2, y - 2.8 * u, tw, 5.6 * u);
+  text(g, s, w / 2, y, f, INK, 'center');
 }
 
 // ---------- title ----------
@@ -699,9 +759,12 @@ export function drawMenu(
   const { th, u } = F;
   track(m, now);
   const hk = hintsFor(m.ui);
-  drawBackdrop(ctx, width, height, now, th, m.screen !== 'garage'); // attract scene behind
-  if (m.screen === 'garage') {
-    if (m.garage) drawGarage(ctx, m.garage, hk.garage);
+  const carScreen = m.screen === 'garage' || m.screen === 'starter';
+  drawBackdrop(ctx, width, height, now, th, !carScreen); // attract scene behind
+  if (carScreen) {
+    const gm = m.garage;
+    if (gm && m.screen === 'starter') drawGarage(ctx, gm, 'PICK YOUR STARTER', hk.starter, '');
+    else if (gm) drawGarage(ctx, gm, 'GARAGE', hk.garage, gm.lock?.offer ? hk.pick : '');
   } else if (m.screen === 'title') {
     drawTitle(ctx, v, m, hk);
   } else {
@@ -718,6 +781,7 @@ export function drawMenu(
     if (m.tabs) tabStrip(ctx, m.tabs.names, m.tabs.active, m.row === 0, top, ph, hk);
     hints(ctx, hk.settings, '');
   }
+  if (m.toast) toast(ctx, m.toast);
   drawOverlayFx(ctx, width, height, now, th);
   return true;
 }

@@ -29,6 +29,15 @@ import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
 import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
 import {
+  chooseStarter,
+  defaultProgress,
+  isCarUnlocked,
+  saveProgress,
+  spendCarPick,
+  STARTERS,
+  type Progress,
+} from './progress';
+import {
   CLIP_QUALITIES,
   loadSettings,
   saveSettings,
@@ -155,8 +164,19 @@ export function createGame(
   storage?: SettingsStorage,
   clips?: ClipRecorder,
   host?: MusicHost,
+  /** progression store; omitted = progression off (no starter pick, every car unlocked) */
+  prog: Progress = { ...defaultProgress(), starterChosen: true, unlocked: [...MODEL_IDS] },
 ) {
   const cfg = loadSettings(storage);
+  const persist = () => saveProgress(prog, storage);
+  // never drive a locked car, e.g. one picked during a cheat session
+  if (!isCarUnlocked(prog, cfg.car, false)) {
+    cfg.car = prog.unlocked[0] ?? STARTERS[0];
+    cfg.color = PLAYER_MODELS[cfg.car].colors[0];
+  }
+  let starter = 0; // index into STARTERS on the first-launch screen
+  let offerPick = false; // garage: confirm again spends a car pick on the locked car
+  let toastT = 0;
   const applyVolumes = () => {
     const { master, music, sfx, engine } = cfg;
     audio.setVolumes({ master, music, sfx, engine });
@@ -244,7 +264,15 @@ export function createGame(
     drifts: [] as Drift[],
     driftRow: 0,
   });
-  const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
+  const s = {
+    phase: (prog.starterChosen ? 'title' : 'starter') as Phase,
+    runId: 0,
+    handbrake: false,
+    brake: 0,
+    /** Konami cheat: every car and cosmetic usable this session; never saved */
+    cheat: false,
+    ...fresh(),
+  };
 
   // photo mode: frozen car, free camera. Enter from run or paused; leave back to the same one.
   let photoCam = newPhotoCam();
@@ -523,7 +551,7 @@ export function createGame(
   const save = () => saveSettings(cfg, storage);
   const go = (phase: Phase, at = 0) => {
     row = at;
-    confirmReset = confirmClear = false;
+    confirmReset = confirmClear = offerPick = false;
     tab = 0;
     if (phase === 'settings') afterChange();
     s.phase = phase;
@@ -538,12 +566,26 @@ export function createGame(
     if (dir) {
       gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
       gColor = PLAYER_MODELS[gCar].colors[0];
+      offerPick = false;
     }
     if (dv) {
       const cs = PLAYER_MODELS[gCar].colors;
       gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
     }
-    if (input.confirm) {
+    const locked = !isCarUnlocked(prog, gCar, s.cheat);
+    if (locked && input.confirm) {
+      if (offerPick && spendCarPick(prog, gCar)) {
+        persist();
+        offerPick = false;
+        audio.ui('confirm');
+      } else if (prog.carPicks > 0) {
+        offerPick = true;
+        audio.ui('move');
+      } else audio.ui('back'); // refused
+    } else if (offerPick && input.pause) {
+      offerPick = false;
+      audio.ui('back');
+    } else if (input.confirm) {
       Object.assign(cfg, { car: gCar, color: gColor, tune: gTune });
       save();
       Object.assign(s, fresh());
@@ -639,7 +681,12 @@ export function createGame(
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
       ];
-      return { ...base, screen: 'title', rows };
+      return {
+        ...base,
+        screen: 'title',
+        rows,
+        toast: toastT > 0 ? 'ALL CARS UNLOCKED' : undefined,
+      };
     }
     if (s.phase === 'settings') {
       const item = (id: string): MenuRow => {
@@ -680,26 +727,33 @@ export function createGame(
       const tabs = { names: TABS.map((t) => t.name), active: tab };
       return { ...base, screen: 'settings', rows, tabs };
     }
-    if (s.phase === 'garage') {
-      const m = PLAYER_MODELS[gCar];
+    if (s.phase === 'garage' || s.phase === 'starter') {
+      const first = s.phase === 'starter';
+      const car = first ? STARTERS[starter] : gCar;
+      const ids = first ? STARTERS : MODEL_IDS;
+      const m = PLAYER_MODELS[car];
       const n = (k: keyof CarStats) => {
         const [lo, hi] = statRange(k);
-        const v = tunedStats(gCar, gTune)[k];
+        const v = tunedStats(car, first ? 'street' : gTune)[k];
         return hi > lo ? Math.min(1, (v - lo) / (hi - lo)) : 0.5;
       };
       return {
         ...base,
-        screen: 'garage',
+        screen: first ? 'starter' : 'garage',
         rows: [],
         garage: {
-          model: gCar,
+          model: car,
           name: m.name,
-          color: gColor,
-          tune: gTune,
+          color: first ? m.colors[0] : gColor,
+          tune: first ? 'street' : gTune,
           colors: m.colors,
-          index: MODEL_IDS.indexOf(gCar),
-          count: MODEL_IDS.length,
+          index: ids.indexOf(car),
+          count: ids.length,
           stats: { power: n('power'), grip: n('grip'), weight: n('mass') },
+          lock:
+            first || isCarUnlocked(prog, car, s.cheat)
+              ? null
+              : { offer: offerPick, picks: prog.carPicks },
         },
       };
     }
@@ -709,6 +763,7 @@ export function createGame(
   return {
     update(input: InputState & { skip?: boolean }, dt: number): void {
       noteT = Math.max(0, noteT - dt);
+      toastT = Math.max(0, toastT - dt);
       if (input.device) ui.device = input.device;
       if (input.padStyle) ui.padStyle = input.padStyle;
       s.handbrake = input.handbrake;
@@ -719,7 +774,11 @@ export function createGame(
 
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-      const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
+      const inMenu =
+        s.phase === 'title' ||
+        s.phase === 'garage' ||
+        s.phase === 'settings' ||
+        s.phase === 'starter';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
       if (input.restart && !inMenu && s.phase !== 'photo') {
         newRun();
@@ -727,7 +786,31 @@ export function createGame(
       }
       if (s.phase === 'title' || s.phase === 'settings') stepAttract(dt);
       switch (s.phase) {
+        case 'starter':
+          if (dir) {
+            audio.ui('adjust');
+            starter = cycle(starter, dir, STARTERS.length);
+          }
+          if (input.confirm) {
+            audio.resume();
+            audio.ui('confirm');
+            chooseStarter(prog, STARTERS[starter]);
+            persist();
+            cfg.car = STARTERS[starter];
+            cfg.color = PLAYER_MODELS[cfg.car].colors[0];
+            save();
+            Object.assign(s, fresh());
+            go('title');
+          }
+          break;
         case 'title':
+          if (input.cheat) {
+            // pad Konami code; its final A must not also pick the row
+            s.cheat = true;
+            toastT = 2.5;
+            audio.ui('confirm');
+            break;
+          }
           if (dv) audio.ui('move');
           row = cycle(row, dv, TITLE_ROWS);
           if (dir && row === 0) {

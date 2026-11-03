@@ -94,6 +94,7 @@ export interface InputState {
   photoPan?: Vec;
   photoRot?: number;
   photoZoom?: number;
+  /** edge-triggered: Konami code finished on the pad (never from the keyboard) */ cheat?: boolean;
   /** last-used device, for button prompts */ device?: 'kb' | 'pad';
   padStyle?: 'ps' | 'xbox';
 }
@@ -147,4 +148,13 @@ export type ScoreEvent =
   | { type: 'trick'; trick: Trick }
   | { type: 'bank'; amount: number }
   | { type: 'fail'; lost: number };
-export type Phase = 'title' | 'garage' | 'settings' | 'countdown' | 'run' | 'paused' | 'photo' | 'results';
+export type Phase =
+  | 'starter'
+  | 'title'
+  | 'garage'
+  | 'settings'
+  | 'countdown'
+  | 'run'
+  | 'paused'
+  | 'photo'
+  | 'results';

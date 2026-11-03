@@ -10,7 +10,14 @@ import { garage, garageRoute } from './maps/garage';
 import { CAR_LENGTH, collide } from './collision';
 import { testpad } from './maps/testpad';
 import { COUNTDOWN_SECONDS, DT } from './config';
-import type { GameMap, InputState } from './types';
+import type { GameMap, InputState, PlayerModel } from './types';
+import {
+  chooseStarter,
+  defaultProgress,
+  loadProgress,
+  PROGRESS_KEY,
+  type Progress,
+} from './progress';
 import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
 import { settingsLayout } from './ui/menu';
@@ -1177,5 +1184,142 @@ describe('tokyo traffic', () => {
     g2.update(IDLE, DT);
     expect(g2.view().render.map).toBe(docks);
     expect(g2.view().render.traffic).toBeNull();
+  });
+});
+
+describe('progression: starter, locks, car picks, cheat', () => {
+  const rig = (prog = defaultProgress(), saved?: object) => {
+    const mem = new Map<string, string>(saved ? [[SETTINGS_KEY, JSON.stringify(saved)]] : []);
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+    };
+    const a = { ...audio, ui: vi.fn() };
+    const game = createGame(
+      [garage, testpad],
+      a,
+      () => memBest(),
+      storage,
+      undefined,
+      undefined,
+      prog,
+    );
+    const tap = (input: Partial<InputState>) => {
+      game.update({ ...IDLE, ...input }, DT);
+      game.update(IDLE, DT);
+    };
+    const g = () => game.view().hud.menu!.garage!;
+    const toGarage = () => {
+      tap({ down: true });
+      tap({ confirm: true });
+    };
+    const reload = () =>
+      createGame(
+        [garage],
+        audio,
+        () => memBest(),
+        storage,
+        undefined,
+        undefined,
+        loadProgress(storage),
+      );
+    return { game, a, tap, g, toGarage, mem, reload, prog };
+  };
+  const started = (car: PlayerModel, more: Partial<Progress> = {}) => {
+    const p = defaultProgress();
+    chooseStarter(p, car);
+    return Object.assign(p, more);
+  };
+
+  it('first launch shows the starter pick once, then the title', () => {
+    const { game, tap, g, mem, reload } = rig();
+    expect(game.view().hud.phase).toBe('starter');
+    expect(g().model).toBe('civic');
+    tap({ restart: true }); // no run from the starter screen
+    expect(game.view().hud.phase).toBe('starter');
+    tap({ right: true });
+    expect(g().model).toBe('rx8');
+    tap({ confirm: true });
+    expect(game.view().hud.phase).toBe('title');
+    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS.rx8.name);
+    expect(JSON.parse(mem.get(PROGRESS_KEY)!)).toMatchObject({
+      starterChosen: true,
+      unlocked: ['rx8'],
+    });
+    expect(reload().view().hud.phase).toBe('title');
+  });
+
+  it('a locked car is shown with a lock and refused', () => {
+    const { game, a, tap, g, toGarage, mem } = rig(started('civic'));
+    toGarage();
+    expect(g().lock).toBeNull();
+    tap({ right: true });
+    expect(g().model).not.toBe('civic');
+    expect(g().lock).toEqual({ offer: false, picks: 0 });
+    a.ui.mockClear();
+    tap({ confirm: true });
+    expect(a.ui).toHaveBeenCalledWith('back');
+    expect(game.view().hud.phase).toBe('garage');
+    expect(mem.get(SETTINGS_KEY)).toBeUndefined();
+  });
+
+  it('confirm on a locked car offers a car pick, confirm again spends it', () => {
+    const { game, tap, g, toGarage, mem, prog } = rig(started('civic', { carPicks: 1 }));
+    toGarage();
+    tap({ right: true });
+    const car = g().model;
+    tap({ confirm: true });
+    expect(g().lock).toEqual({ offer: true, picks: 1 });
+    tap({ pause: true }); // back cancels the offer only
+    expect(game.view().hud.phase).toBe('garage');
+    expect(g().lock).toEqual({ offer: false, picks: 1 });
+    tap({ confirm: true });
+    tap({ confirm: true });
+    expect(g().lock).toBeNull();
+    expect(prog.carPicks).toBe(0);
+    expect(JSON.parse(mem.get(PROGRESS_KEY)!).unlocked).toEqual(['civic', car]);
+    tap({ confirm: true }); // now selectable
+    expect(game.view().hud.phase).toBe('title');
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).car).toBe(car);
+  });
+
+  it('a saved locked car falls back to the starter', () => {
+    const { game } = rig(started('180sx'), { car: 'supra', color: '#ff7a00' });
+    expect(game.view().hud.menu!.rows[1].value).toBe(PLAYER_MODELS['180sx'].name);
+    expect(game.debug.car.stats).toEqual(PLAYER_MODELS['180sx'].stats);
+  });
+
+  it('cheat on the title unlocks every car for the session only', () => {
+    const { game, a, tap, g, toGarage, mem, reload } = rig(started('civic'));
+    tap({ cheat: true, confirm: true }); // the code's final A must not start a run
+    expect(game.view().hud.phase).toBe('title');
+    expect(game.view().hud.menu!.toast).toBe('ALL CARS UNLOCKED');
+    expect(a.ui).toHaveBeenCalledWith('confirm');
+    expect(game.debug.cheat).toBe(true);
+    toGarage();
+    tap({ right: true });
+    expect(g().lock).toBeNull();
+    tap({ confirm: true });
+    expect(game.view().hud.phase).toBe('title');
+    expect(mem.get(PROGRESS_KEY)).toBeUndefined(); // nothing about the cheat is saved
+    const next = reload();
+    expect(next.debug.cheat).toBe(false);
+    expect(next.debug.car.stats).toEqual(PLAYER_MODELS.civic.stats);
+  });
+
+  it('the cheat edge is ignored outside the title', () => {
+    const { game, tap, toGarage } = rig(started('civic'));
+    toGarage();
+    tap({ cheat: true });
+    expect(game.debug.cheat).toBe(false);
+  });
+
+  it('TEST PAD runs with an unlocked car', () => {
+    const { game, tap } = rig(started('rx8'));
+    tap({ right: true });
+    expect(game.view().hud.menu!.selected).toBe(1);
+    tap({ confirm: true });
+    expect(game.view().hud.phase).toBe('countdown');
+    expect(game.view().render.player.model).toBe('rx8');
   });
 });

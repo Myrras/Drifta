@@ -253,4 +253,84 @@ describe('createInput pad edge tracking', () => {
     state.pad = { connected: true, buttons, axes: [0, 0] };
     expect([input.poll().pause, input.poll().pause]).toEqual([true, false]);
   });
+
+  describe('Konami cheat', () => {
+    const BTN = { up: 12, down: 13, left: 14, right: 15, a: 0, b: 1 } as const;
+    const CODE = ['up', 'up', 'down', 'down', 'left', 'right', 'left', 'right', 'a'] as const;
+    const padRig = () => {
+      const r = setup();
+      r.state.pad = { connected: true, buttons: r.buttons, axes: [0, 0] };
+      /** press and release one pad button; returns the cheat flag of the press poll */
+      const press = (k: keyof typeof BTN) => {
+        r.buttons[BTN[k]].pressed = true;
+        const fired = !!r.input.poll().cheat;
+        r.buttons[BTN[k]].pressed = false;
+        r.input.poll();
+        return fired;
+      };
+      return { ...r, press };
+    };
+
+    it('fires once on the full pad sequence, with confirm on the final A', () => {
+      const { press, buttons, input } = padRig();
+      expect(CODE.slice(0, -1).map(press)).not.toContain(true);
+      buttons[0].pressed = true;
+      const last = input.poll();
+      expect([last.cheat, last.confirm]).toEqual([true, true]);
+    });
+
+    it('accepts stick edges for the directions', () => {
+      const { press, state, input } = padRig();
+      const stick = (x: number, y: number) => {
+        state.pad!.axes = [x, y];
+        const fired = !!input.poll().cheat;
+        state.pad!.axes = [0, 0];
+        input.poll();
+        return fired;
+      };
+      const dirs: [number, number][] = [
+        [0, -1],
+        [0, -1],
+        [0, 1],
+        [0, 1],
+        [-1, 0],
+        [1, 0],
+        [-1, 0],
+        [1, 0],
+      ];
+      expect(dirs.map(([x, y]) => stick(x, y))).not.toContain(true);
+      expect(press('a')).toBe(true);
+    });
+
+    it('a wrong press resets the sequence', () => {
+      const { press } = padRig();
+      for (const k of CODE.slice(0, 5)) press(k);
+      press('b');
+      expect(CODE.slice(5).map(press)).not.toContain(true);
+      expect(CODE.map(press).at(-1)).toBe(true);
+      // an extra up at the start still counts
+      expect((['up', ...CODE] as const).map(press).at(-1)).toBe(true);
+    });
+
+    it('the keyboard never triggers it', () => {
+      const { w, input } = setup();
+      const keys = [
+        'ArrowUp',
+        'ArrowUp',
+        'ArrowDown',
+        'ArrowDown',
+        'ArrowLeft',
+        'ArrowRight',
+        'ArrowLeft',
+        'ArrowRight',
+        'Enter',
+      ];
+      const fired = keys.map((code) => {
+        w.dispatchEvent(Object.assign(new Event('keydown'), { code, repeat: false }));
+        w.dispatchEvent(Object.assign(new Event('keyup'), { code }));
+        return input.poll().cheat;
+      });
+      expect(fired).not.toContain(true);
+    });
+  });
 });

@@ -2,6 +2,7 @@ import { savePhoto } from './photo';
 import { createRenderer } from './render';
 import { drawHud } from './hud';
 import { createGame } from './game';
+import { loadProgress } from './progress';
 import { createInput } from './input';
 import { createAudio } from './audio';
 import { createClipRecorder } from './clips';
@@ -74,6 +75,7 @@ const game = createGame(
   undefined,
   clips,
   musicHost,
+  loadProgress(),
 );
 
 const resume = () => audio.resume();
@@ -99,6 +101,7 @@ const EDGES = [
   'tabNext',
   'skip',
   'photo',
+  'cheat',
 ] as const;
 const pending = Object.fromEntries(EDGES.map((k) => [k, false])) as Record<
   (typeof EDGES)[number],

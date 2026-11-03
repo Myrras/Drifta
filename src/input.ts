@@ -144,6 +144,20 @@ const MAPPED = new Set([
   'NumpadEnter',
 ]);
 
+export const KONAMI = ['up', 'up', 'down', 'down', 'left', 'right', 'left', 'right', 'a'];
+
+/** Konami matcher fed with pad presses; true when the sequence completes. A wrong press resets. */
+export function konami(): (press: string) => boolean {
+  let i = 0;
+  return (p) => {
+    if (p === KONAMI[i]) i++;
+    else i = p === 'up' ? (i === 2 ? 2 : 1) : 0; // a stray 'up' may still start (or keep) the run
+    if (i < KONAMI.length) return false;
+    i = 0;
+    return true;
+  };
+}
+
 export type InputDevice = 'kb' | 'pad';
 export type PadStyle = 'ps' | 'xbox';
 /** InputState with the last-used device always set. */
@@ -221,6 +235,8 @@ export function createInput(
     tabNext: edgeTracker(),
     photo: edgeTracker(),
   };
+  const cheat = konami();
+  let prevButtons: boolean[] = [];
 
   return {
     poll() {
@@ -240,6 +256,23 @@ export function createInput(
         if (active) device = 'pad';
       }
       const m = mergeInput(kb, gp);
+      const padLeft = padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5);
+      const padRight = padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5);
+      const padUp = padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5);
+      const padDown = padEdge.down(
+        (pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5,
+      );
+      // the cheat reads pad presses only: d-pad / stick edges and A; any other button resets it
+      const presses: string[] = [];
+      if (padUp) presses.push('up');
+      if (padDown) presses.push('down');
+      if (padLeft) presses.push('left');
+      if (padRight) presses.push('right');
+      const buttons = pad ? Array.from(pad.buttons, (x) => x.pressed) : [];
+      buttons.forEach((on, i) => {
+        if (on && !prevButtons[i] && (i < 12 || i > 15)) presses.push(i === 0 ? 'a' : 'other');
+      });
+      prevButtons = buttons;
       return {
         ...m,
         device,
@@ -292,18 +325,10 @@ export function createInput(
         pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
         restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),
         confirm: pick(kbEdge.confirm.poll(kbRaw.confirm), padEdge.confirm(gp.confirm)),
-        left: pick(
-          kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')),
-          padEdge.left((pad?.buttons[14]?.pressed ?? false) || gp.steer <= -0.5),
-        ),
-        right: pick(
-          kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')),
-          padEdge.right((pad?.buttons[15]?.pressed ?? false) || gp.steer >= 0.5),
-        ),
-        up: pick(
-          kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')),
-          padEdge.up((pad?.buttons[12]?.pressed ?? false) || (pad?.axes[1] ?? 0) <= -0.5),
-        ),
+        cheat: presses.map(cheat).includes(true),
+        left: pick(kbEdge.left.poll(any(held, 'KeyA', 'ArrowLeft')), padLeft),
+        right: pick(kbEdge.right.poll(any(held, 'KeyD', 'ArrowRight')), padRight),
+        up: pick(kbEdge.up.poll(any(held, 'KeyW', 'ArrowUp')), padUp),
         rev: held.has('KeyR') || (pad?.buttons[7]?.value ?? 0) > 0.5,
         tune: pick(
           kbEdge.tune.poll(held.has('KeyT')),
@@ -313,10 +338,7 @@ export function createInput(
           kbEdge.save.poll(held.has('KeyS')),
           padEdge.save(pad?.buttons[2]?.pressed ?? false),
         ),
-        down: pick(
-          kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')),
-          padEdge.down((pad?.buttons[13]?.pressed ?? false) || (pad?.axes[1] ?? 0) >= 0.5),
-        ),
+        down: pick(kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')), padDown),
       };
     },
   };

@@ -79,7 +79,9 @@ export interface MenuRow {
 
 /** Title, garage and settings screens. */
 export interface MenuView {
-  screen: 'title' | 'garage' | 'settings';
+  screen: 'starter' | 'title' | 'garage' | 'settings';
+  /** short notice over the menu, e.g. the cheat */
+  toast?: string;
   rows: MenuRow[];
   /** settings only: tab strip drawn above rows. row 0 is the strip, row n is rows[n - 1] */
   tabs?: { names: string[]; active: number };
@@ -99,6 +101,8 @@ export interface MenuView {
     index: number;
     count: number;
     stats: { power: number; grip: number; weight: number };
+    /** locked car: null when drivable; offer = confirm again spends a car pick */
+    lock?: { offer: boolean; picks: number } | null;
   } | null;
 }
 
