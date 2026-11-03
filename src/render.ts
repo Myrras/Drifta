@@ -1765,6 +1765,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const ox = dpr * (cssW / 2 + sx - vx * scale);
     const oy = dpr * (cssH / 2 + sy - vy * scale);
     ctx.setTransform(ws, 0, 0, ws, ox, oy);
+    drawDecor(ctx, decorOf(v.map), 'sea', v.floorIndex, clock); // harbour past the floor edge
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
     const floors: [number, number][] = [[v.floorIndex, 1]];

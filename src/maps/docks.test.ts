@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { docks, docksRoute } from './docks';
+import { BAY_PAINT, docks, docksRoute } from './docks';
+import { drawDecor, type DecorLayer } from './decor';
 import { CAR_MODELS } from '../models';
 import type { Rect, Solid, Vec } from '../types';
 
@@ -148,5 +149,45 @@ describe('docks', () => {
     expect(docks.parTime).toBe(Math.round(length / 17));
     expect(docks.parTime).toBeGreaterThanOrEqual(55);
     expect(docks.parTime).toBeLessThanOrEqual(90);
+  });
+
+  it('parks exactly one car inside every painted bay', () => {
+    const cars = floor.solids.filter((s) => s.kind === 'car');
+    const bays = (docks.decor ?? []).flatMap((d) =>
+      d.kind === 'paint' && d.color === BAY_PAINT ? [[{ x: d.x, y: d.y }, ...d.to]] : [],
+    );
+    expect(bays.length).toBeGreaterThan(20);
+    for (const quad of bays) {
+      expect(quad).toHaveLength(4);
+      const inside = (p: Vec) => {
+        const cross = quad.map((a, i) => {
+          const b = quad[(i + 1) % 4];
+          return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        });
+        return cross.every((c) => c > 0) || cross.every((c) => c < 0);
+      };
+      expect(cars.filter((c) => corners(c).every(inside))).toHaveLength(1);
+      expect(cars.filter((c) => corners(c).some(inside))).toHaveLength(1);
+    }
+  });
+
+  it('draws every decor layer and restores the caller alpha', () => {
+    for (const layer of ['sea', 'floor', 'wall', 'light', 'glow', 'over'] as DecorLayer[]) {
+      const calls: string[] = [];
+      const state: Record<string | symbol, unknown> = { globalAlpha: 0.5 };
+      const ctx = new Proxy(state, {
+        get: (t, k) =>
+          k in t
+            ? t[k]
+            : () => {
+                calls.push(String(k));
+                return String(k).startsWith('create') ? { addColorStop: () => {} } : undefined;
+              },
+        set: (t, k, v) => ((t[k] = v), true),
+      }) as unknown as CanvasRenderingContext2D;
+      expect(() => drawDecor(ctx, docks.decor!, layer, 0, 0)).not.toThrow();
+      expect(calls.length).toBeGreaterThan(0);
+      expect(state.globalAlpha).toBe(0.5);
+    }
   });
 });
