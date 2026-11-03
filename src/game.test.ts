@@ -17,6 +17,7 @@ import { settingsLayout } from './ui/menu';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo } from './maps/tokyo';
 import { ENGINE_PROFILES } from './engine';
+import { loadProgress } from './progress';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -289,13 +290,23 @@ describe('top drift clips', () => {
     step({ save: true });
     expect(clips.save).not.toHaveBeenCalled();
     step({}, Math.ceil(0.5 / DT));
-    step({ down: true });
+    step({ right: true });
     expect(game.view().hud.results!.driftRow).toBe(1);
     step({ save: true, down: true }); // S also reports down
     expect(clips.save).toHaveBeenCalledWith(second, 'drifta-b2-meet-200.webm');
     const r = game.view().hud.results!;
     expect(r.driftRow).toBe(1);
     expect(r.drifts.map((x) => x.saved)).toEqual([false, true]);
+  });
+
+  it('passes each drift still to the results', () => {
+    const { game, clips, bank, finish } = rig();
+    const still = {} as HTMLCanvasElement;
+    clips.still = vi.fn(() => still);
+    const id = bank(300);
+    finish();
+    expect(game.view().hud.results!.drifts[0].still).toBe(still);
+    expect(clips.still).toHaveBeenCalledWith(id);
   });
 
   it('pauses capture with the game and clears it on quit', () => {
@@ -307,6 +318,75 @@ describe('top drift clips', () => {
     step({ pause: true });
     step({ pause: true });
     expect(clips.clear).toHaveBeenCalled();
+  });
+});
+
+describe('finish awards and car pick', () => {
+  function rig() {
+    const mem = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+    };
+    const game = createGame([garage], audio, () => memBest(), storage);
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    game.debug.scoring.banked = 1e6; // well past 1st, finished far under par
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+    step();
+    step({}, Math.ceil(0.5 / DT));
+    const r = () => game.view().hud.results!;
+    return { game, step, r, prog: () => loadProgress(storage) };
+  }
+
+  it('1st saves both map paints and a car pick', () => {
+    const { r, prog } = rig();
+    expect(r().position).toBe(1);
+    expect(r().newPaints).toEqual(['concrete-grey', 'b2-violet']);
+    expect(r().carPick).toBe(true);
+    expect(prog().carPicks).toBe(1);
+  });
+
+  it('confirm opens the chooser with locked cars; picking spends the pick', () => {
+    const { game, step, r, prog } = rig();
+    step({ confirm: true });
+    const cars = r().chooser!.cars.map((c) => c.model);
+    expect(cars).toEqual(Object.keys(PLAYER_MODELS)); // nothing unlocked yet
+    step({ right: true });
+    expect(r().chooser!.row).toBe(1);
+    step({ confirm: true });
+    expect(r().chooser).toBeNull();
+    expect(r().carPick).toBe(false);
+    expect(prog().unlocked).toEqual([cars[1]]);
+    expect(prog().carPicks).toBe(0);
+    step({ confirm: true });
+    expect(game.view().hud.phase).toBe('countdown');
+  });
+
+  it('LATER keeps the pick for the garage', () => {
+    const { game, step, r, prog } = rig();
+    step({ confirm: true });
+    step({ left: true }); // wraps to LATER, the last stop
+    expect(r().chooser!.row).toBe(r().chooser!.cars.length);
+    step({ confirm: true });
+    expect(r().chooser).toBeNull();
+    expect(r().carPick).toBe(false);
+    expect(prog().carPicks).toBe(1);
+    expect(prog().unlocked).toEqual([]);
+    expect(game.view().hud.phase).toBe('results');
+  });
+
+  it('back on the chooser acts as LATER and stays on results', () => {
+    const { game, step, r, prog } = rig();
+    step({ confirm: true });
+    step({ pause: true });
+    expect(r().chooser).toBeNull();
+    expect(game.view().hud.phase).toBe('results');
+    expect(prog().carPicks).toBe(1);
   });
 });
 

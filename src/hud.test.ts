@@ -6,11 +6,14 @@ import {
   easeOutElastic,
   formatScore,
   formatTime,
-  medalText,
   multColor,
+  nextTarget,
+  paintName,
   pauseHint,
+  positionLabel,
   resultsHint,
 } from './hud';
+import type { Results } from './view';
 
 describe('hud formatting', () => {
   it('formatTime', () => {
@@ -62,24 +65,61 @@ describe('hud animation helpers', () => {
   });
 });
 
-describe('medalText', () => {
-  it('shows medal and gap to next', () => {
-    const m = [100, 200, 300];
-    expect(medalText(50, m)).toBe('NO MEDAL · 50 to BRONZE');
-    expect(medalText(250, m)).toBe('SILVER · 50 to GOLD');
-    expect(medalText(300, m)).toBe('GOLD');
-    expect(medalText(50)).toBe('');
+describe('positions', () => {
+  it('labels the position, none reached is NO PLACE', () => {
+    expect([1, 2, 3, null].map((p) => positionLabel(p as 1 | 2 | 3 | null))).toEqual([
+      '1ST',
+      '2ND',
+      '3RD',
+      'NO PLACE',
+    ]);
   });
+  it('names the next position with its score and time limit', () => {
+    const m = [1000, 2000, 3000];
+    expect(nextTarget(null, m, 100)).toBe('NEXT: 3RD needs 1,000 pts & under 2:10');
+    expect(nextTarget(3, m, 100)).toBe('NEXT: 2ND needs 2,000 pts & under 1:55');
+    expect(nextTarget(2, m, 100)).toBe('NEXT: 1ST needs 3,000 pts & under 1:40');
+    expect(nextTarget(1, m, 100)).toBe('');
+    expect(nextTarget(null, undefined, 0)).toBe('');
+  });
+  it('paint ids read as names', () => expect(paintName('b2-violet')).toBe('B2 VIOLET'));
 });
 
 describe('hint lines', () => {
+  const kb = { theme: 'arcade', device: 'kb', padStyle: 'xbox' } as const;
+  const ps = { ...kb, device: 'pad', padStyle: 'ps' } as const;
+  const xbox = { ...kb, device: 'pad', padStyle: 'xbox' } as const;
+  const drift = { amount: 100, tricks: [], clip: true, saved: false };
+  const res: Results = {
+    comboPoints: 0,
+    timeBonus: 0,
+    total: 0,
+    time: 0,
+    best: 0,
+    newBest: false,
+    position: null,
+    newPaints: [],
+    carPick: false,
+    chooser: null,
+    drifts: [drift, { ...drift, saved: true }],
+    driftRow: 0,
+  };
+
   it('shows only the active device binds', () => {
-    const kb = { theme: 'arcade', device: 'kb', padStyle: 'xbox' } as const;
     expect(pauseHint(kb)).toContain('ENTER');
-    expect(resultsHint(kb)).toContain('ENTER');
-    const pad = { ...kb, device: 'pad', padStyle: 'ps' } as const;
-    expect(pauseHint(pad)).not.toContain('ENTER');
-    expect(pauseHint(pad)).toContain('SHARE');
-    expect(resultsHint(pad)).not.toContain('ENTER');
+    expect(pauseHint(ps)).not.toContain('ENTER');
+    expect(pauseHint(ps)).toContain('SHARE');
+  });
+  it('results bar: pick, save clip, retry, menu with device glyphs', () => {
+    expect(resultsHint(kb, res)).toBe('←→ pick · S save clip · ENTER retry · ESC menu');
+    expect(resultsHint(xbox, res)).toBe('D-PAD ←→ pick · X save clip · A retry · B menu');
+    expect(resultsHint(ps, res)).toBe('D-PAD ←→ pick · □ save clip · ✕ retry · ○ menu');
+    for (const ui of [ps, xbox]) expect(resultsHint(ui, res)).not.toMatch(/ENTER|ESC|\bS\b/);
+  });
+  it('results bar drops save on a saved card and offers the car pick', () => {
+    const r = { ...res, driftRow: 1, carPick: true };
+    expect(resultsHint(xbox, r)).toBe('D-PAD ←→ pick · A choose car · B menu');
+    const c = { ...r, chooser: { cars: [], row: 0 } };
+    expect(resultsHint(ps, c)).toBe('D-PAD ←→ car · ✕ choose · ○ later');
   });
 });
