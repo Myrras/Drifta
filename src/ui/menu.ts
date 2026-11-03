@@ -63,8 +63,18 @@ function rows(
   top: number,
   u: number,
 ): void {
-  const pw = 62 * u;
+  const pw = Math.min(72 * u, w * 0.94);
   const ph = 8 * u;
+  // label column | gap | bar column | gap | value column, all measured
+  g.save();
+  g.font = `italic 800 ${3.6 * u}px ${FONT}`;
+  const labelW = Math.max(
+    0,
+    ...list.filter((r) => r.bar !== undefined).map((r) => g.measureText(r.label).width),
+  );
+  g.font = `700 ${3 * u}px ${FONT}`;
+  const valW = Math.max(0, ...list.map((r) => (r.value ? g.measureText(r.value).width : 0)));
+  g.restore();
   list.forEach((r, i) => {
     const y = top + i * 10 * u;
     const on = i === sel;
@@ -73,11 +83,12 @@ function rows(
     const x1 = w / 2 + pw / 2 - 3 * u;
     text(g, r.label, x0, y, 3.6 * u, on ? '#fff' : '#cfcfd4', { italic: true });
     if (r.bar !== undefined) {
-      const bw = 20 * u;
+      const bx = x0 + labelW + 4 * u;
+      const bw = Math.max(6 * u, x1 - valW - 3 * u - bx);
       g.fillStyle = 'rgba(255,255,255,0.2)';
-      g.fillRect(x1 - bw - 9 * u, y - u, bw, 2 * u);
+      g.fillRect(bx, y - u, bw, 2 * u);
       g.fillStyle = on ? '#ffd23f' : '#fff';
-      g.fillRect(x1 - bw - 9 * u, y - u, bw * r.bar, 2 * u);
+      g.fillRect(bx, y - u, bw * r.bar, 2 * u);
     }
     if (r.value)
       text(g, r.value, x1, y, 3 * u, on ? '#ffd23f' : '#fff', { align: 'right', weight: 700 });
@@ -124,10 +135,26 @@ function drawGarage(
   g.fill();
   g.restore();
   // car, slowly rotating
+  // lit floor disc so dark paints separate from the backdrop
+  g.save();
+  g.translate(cx, cy);
+  g.scale(1, 0.55);
+  const disc = g.createRadialGradient(0, 0, 0, 0, 0, 30 * u);
+  disc.addColorStop(0, 'rgba(150,158,190,0.55)');
+  disc.addColorStop(0.8, 'rgba(100,108,140,0.32)');
+  disc.addColorStop(1, 'rgba(100,108,140,0)');
+  g.fillStyle = disc;
+  g.beginPath();
+  g.arc(0, 0, 30 * u, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
   g.save();
   g.translate(cx, cy);
   g.rotate((performance.now() / 1000) * 0.5);
   g.scale(13 * u, 13 * u);
+  // rim light: warm glow hugging the silhouette
+  g.shadowColor = 'rgba(255,225,170,0.9)';
+  g.shadowBlur = 1.1 * u;
   drawCar(g, m.model, m.color);
   g.restore();
 
