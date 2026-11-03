@@ -121,7 +121,10 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     // route A's hairpin: two tight corners turning the same way, back to back
     const a = tokyoCorners[0];
     expect(
-      a.some((c, i) => i > 0 && c.r < 16 && a[i - 1].r < 16 && Math.sign(c.turn) === Math.sign(a[i - 1].turn)),
+      a.some(
+        (c, i) =>
+          i > 0 && c.r < 16 && a[i - 1].r < 16 && Math.sign(c.turn) === Math.sign(a[i - 1].turn),
+      ),
     ).toBe(true);
   });
 
@@ -139,9 +142,12 @@ describe('tokyo (TOKYO NIGHTS)', () => {
   it('parks police cars by the on-ramp, close to both routes', () => {
     const cops = f.solids.filter((s) => s.kind === 'car' && s.police);
     expect(cops.length).toBeGreaterThanOrEqual(2);
-    for (const c of cops) expect(Math.hypot(c.x + c.w / 2 - 286, c.y + c.h / 2 - 20)).toBeLessThan(60);
+    for (const c of cops)
+      expect(Math.hypot(c.x + c.w / 2 - 286, c.y + c.h / 2 - 20)).toBeLessThan(60);
     for (const r of routes)
-      expect(Math.min(...samples(r).flatMap((p) => cops.map((c) => distToSolid(p, c))))).toBeLessThan(7);
+      expect(
+        Math.min(...samples(r).flatMap((p) => cops.map((c) => distToSolid(p, c)))),
+      ).toBeLessThan(7);
   });
 
   it('closes the side streets: only the routes are reachable from the start', () => {
@@ -162,7 +168,12 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     while (todo.length) {
       const i = todo.pop()!;
       const [x, y] = [i % f.w, Math.floor(i / f.w)];
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
         const [nx, ny] = [x + dx, y + dy];
         const j = ny * f.w + nx;
         if (nx < 0 || ny < 0 || nx >= f.w || ny >= f.h || seen[j] || blocked[j]) continue;
@@ -173,7 +184,14 @@ describe('tokyo (TOKYO NIGHTS)', () => {
     const reach = (x: number, y: number) => seen[Math.floor(y) * f.w + Math.floor(x)] === 1;
     for (const r of routes) for (const p of samples(r)) expect(reach(p.x, p.y)).toBe(true);
     // the scramble's closed arms and the side streets, mid way
-    for (const [x, y] of [[130, 125], [210, 175], [100, 90], [140, 180], [262, 175], [250, 80]])
+    for (const [x, y] of [
+      [130, 125],
+      [210, 175],
+      [100, 90],
+      [140, 180],
+      [262, 175],
+      [250, 80],
+    ])
       expect(reach(x, y)).toBe(false);
   });
 

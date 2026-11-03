@@ -663,7 +663,7 @@ function buildLights(map: GameMap, idx: number) {
 function policeLivery(g: Ctx, len: number, wid: number) {
   g.fillStyle = '#f2f2ee';
   g.beginPath();
-  g.roundRect(-len * 0.24, -wid / 2 + 0.12, len * 0.36, wid - 0.24, 0.2);
+  g.roundRect(-len * 0.2, -wid / 2 + 0.14, len * 0.26, wid - 0.28, 0.2);
   g.fill();
   g.fillStyle = '#111';
   g.fillRect(-0.32, -wid / 2 + 0.3, 0.44, wid - 0.6);

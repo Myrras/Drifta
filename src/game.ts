@@ -387,7 +387,10 @@ export function createGame(
           const dy = r.points[i + 1].y - a.y;
           const u = Math.max(
             0,
-            Math.min(1, ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1)),
+            Math.min(
+              1,
+              ((car.pos.x - a.x) * dx + (car.pos.y - a.y) * dy) / (dx * dx + dy * dy || 1),
+            ),
           );
           const d = Math.hypot(a.x + u * dx - car.pos.x, a.y + u * dy - car.pos.y);
           if (d < best) [best, seg, t, pts] = [d, i, u, r.points];

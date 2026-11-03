@@ -788,10 +788,16 @@ function drawRoadsign(g: Ctx, d: Of<'roadsign'>, layer: DecorLayer) {
   local(g, d.x, d.y + 0.5, 0, () => text(g, 'EXPWY', 0.55, true));
 }
 
-function drawLantern(g: Ctx, d: Of<'lantern'>, layer: DecorLayer) {
+function drawLantern(g: Ctx, d: Of<'lantern'>, layer: DecorLayer, t: number) {
   const c = rgb(d.color);
-  if (layer === 'light') return pool(g, d.x, d.y, 3.2, '255,255,255', 0.75);
-  if (layer === 'glow') return pool(g, d.x, d.y, 4.2, c, 0.45);
+  if (layer === 'over') {
+    // per frame, like neon: the static glow alone reads too faint on dark asphalt
+    g.globalAlpha *= 0.85 + 0.15 * Math.sin(t * 2.3 + d.x * 1.7 + d.y);
+    pool(g, d.x, d.y, 3, c, 0.45);
+    return pool(g, d.x, d.y, 0.7, '255,225,180', 0.7);
+  }
+  if (layer === 'light') return pool(g, d.x, d.y, 4.5, '255,255,255', 0.8);
+  if (layer === 'glow') return pool(g, d.x, d.y, 6, c, 0.55);
   g.fillStyle = d.color;
   g.beginPath();
   g.ellipse(d.x, d.y, 0.32, 0.42, 0, 0, Math.PI * 2);
@@ -824,6 +830,8 @@ function reach(d: Decor): [number, number, number] | null {
       ];
     case 'crowd':
       return [d.x, d.y, d.n * 0.4 + 2];
+    case 'lantern':
+      return [d.x, d.y, 3];
     case 'shaft':
     case 'screen':
       return [d.x, d.y, Math.max(d.w, d.h)];
@@ -945,7 +953,7 @@ export function drawDecor(
         if (layer !== 'floor' && layer !== 'over') drawRoadsign(g, d, layer);
         break;
       case 'lantern':
-        if (layer !== 'floor' && layer !== 'over') drawLantern(g, d, layer);
+        if (layer !== 'floor') drawLantern(g, d, layer, t);
         break;
     }
   }

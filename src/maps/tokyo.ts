@@ -80,7 +80,9 @@ function sub(p: Path, s0: number, s1: number): Vec[] {
 function dense(pts: Vec[], step = 2): Vec[] {
   const p = path(pts);
   const n = Math.max(1, Math.ceil(p.len / step));
-  return Array.from({ length: n + 1 }, (_, i) => v(at(p, (p.len * i) / n).x, at(p, (p.len * i) / n).y));
+  return Array.from({ length: n + 1 }, (_, i) =>
+    v(at(p, (p.len * i) / n).x, at(p, (p.len * i) / n).y),
+  );
 }
 /** Extra points on segments longer than `step`; every vertex (and so every kink) kept. */
 function densify(pts: Vec[], step = 2): Vec[] {
@@ -88,7 +90,8 @@ function densify(pts: Vec[], step = 2): Vec[] {
   for (let i = 1; i < pts.length; i++) {
     const [a, b] = [pts[i - 1], pts[i]];
     const n = Math.ceil(dist(a, b) / step);
-    for (let k = 1; k <= n; k++) out.push(v(a.x + ((b.x - a.x) * k) / n, a.y + ((b.y - a.y) * k) / n));
+    for (let k = 1; k <= n; k++)
+      out.push(v(a.x + ((b.x - a.x) * k) / n, a.y + ((b.y - a.y) * k) / n));
   }
   return out.filter((q, i) => !i || dist(q, out[i - 1]) > 1e-6);
 }
@@ -105,7 +108,10 @@ function cut(pts: Vec[], drop: (p: Vec) => boolean): Vec[][] {
 const segDist = (p: Vec, a: Vec, b: Vec) => {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+  const t = Math.max(
+    0,
+    Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)),
+  );
   return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
 };
 const polyDist = (p: Vec, pts: Vec[]) =>
@@ -137,7 +143,7 @@ function simplify(pts: Vec[], tol: number): Vec[] {
       const d = segDist(pts[m], pts[i], pts[j]);
       if (d > far) [k, far] = [m, d];
     }
-    if (k >= 0) (keep[k] = true), todo.push([i, k], [k, j]);
+    if (k >= 0) ((keep[k] = true), todo.push([i, k], [k, j]));
   }
   return pts.filter((_, i) => keep[i]);
 }
@@ -292,7 +298,8 @@ function course(ctl: number[][]) {
     if (Math.abs(wrap(headOf(from, c.s) - c.a1)) > 1e-3 && dist(from, c.s) > 1e-6)
       throw new Error(`corner ${c.mid.x},${c.mid.y} overlaps`);
     const g = Math.sign(c.turn);
-    const arc = (am: number, rr: number) => v(c.o.x + g * rr * Math.sin(am), c.o.y - g * rr * Math.cos(am));
+    const arc = (am: number, rr: number) =>
+      v(c.o.x + g * rr * Math.sin(am), c.o.y - g * rr * Math.cos(am));
     const n = Math.max(
       Math.ceil(Math.abs(c.turn) / (PI / 4) - 1e-9),
       Math.ceil(Math.abs(c.turn) / (2 * Math.acos(c.r / (c.r + 1.5)))),
@@ -305,7 +312,11 @@ function course(ctl: number[][]) {
   }
   line.push(P[P.length - 1]);
   fine.push(P[P.length - 1]);
-  return { line: line.filter((q, i) => !i || dist(q, line[i - 1]) > 1e-6), corners, fine: densify(fine) };
+  return {
+    line: line.filter((q, i) => !i || dist(q, line[i - 1]) > 1e-6),
+    corners,
+    fine: densify(fine),
+  };
 }
 
 // --- roads ---
@@ -416,7 +427,9 @@ function roundCorners(q: Poly, r = 6): Poly {
   const P = path([...q.pts, q.pts[0]], true);
   const sharp = new Map<number, number>(); // vertex -> tangent length
   for (let i = 0; i < n; i++) {
-    const turn = wrap(headOf(q.pts[i], at(P, cum[i] + 1.5)) - headOf(at(P, cum[i] - 1.5), q.pts[i]));
+    const turn = wrap(
+      headOf(q.pts[i], q.pts[(i + 1) % n]) - headOf(q.pts[(i + n - 1) % n], q.pts[i]),
+    );
     // curbs only: a rounded corner against a cap would open a gap into the block
     if (Math.abs(turn) > (50 * PI) / 180 && q.solid[(i + n - 1) % n] && q.solid[i])
       sharp.set(i, Math.min(10, r * Math.tan(Math.abs(turn) / 2)));
@@ -496,7 +509,10 @@ const blocks = BLOCKS.map(({ kind, spec }) => {
     h: Math.max(...ys) - Math.min(...ys),
   };
   /** Outline grown inward by d m, with the side flags. */
-  const inset = (d: number): Poly => ({ ...q, pts: offset([...q.pts, q.pts[0]], d, true).slice(0, -1) });
+  const inset = (d: number): Poly => ({
+    ...q,
+    pts: offset([...q.pts, q.pts[0]], d, true).slice(0, -1),
+  });
   return { kind, q, bbox, inset };
 });
 
@@ -645,7 +661,15 @@ for (let s = 0, last = -Infinity; s < loopPath.len; s += 1) {
   if (q.x > 90 || q.y < STATION[0] || q.y > STATION[1] || s - last < 7) continue;
   last = s;
   for (const side of [-1, 1])
-    columns.push(box(v(q.x - Math.sin(q.h) * 7.35 * side, q.y + Math.cos(q.h) * 7.35 * side), 1.1, 1.1, q.h, 'pillar'));
+    columns.push(
+      box(
+        v(q.x - Math.sin(q.h) * 7.35 * side, q.y + Math.cos(q.h) * 7.35 * side),
+        1.1,
+        1.1,
+        q.h,
+        'pillar',
+      ),
+    );
 }
 
 const solids: Solid[] = [
@@ -895,8 +919,24 @@ for (const run of cut(ring(17.7), (p) => inGap(p) && p.x > GAP[0] + 4)) paint(ru
       add({ kind: 'skid', points });
     }
 }
-add({ kind: 'text', x: 340, y: 10, angle: PI / 2, text: '80', size: 4, color: 'rgba(225,225,215,0.45)' });
-add({ kind: 'text', x: 390, y: 120, angle: PI, text: '80', size: 4, color: 'rgba(225,225,215,0.45)' });
+add({
+  kind: 'text',
+  x: 340,
+  y: 10,
+  angle: PI / 2,
+  text: '80',
+  size: 4,
+  color: 'rgba(225,225,215,0.45)',
+});
+add({
+  kind: 'text',
+  x: 390,
+  y: 120,
+  angle: PI,
+  text: '80',
+  size: 4,
+  color: 'rgba(225,225,215,0.45)',
+});
 add({
   kind: 'text',
   x: 250,
@@ -1017,12 +1057,19 @@ for (const b of blocks.filter((b) => b.kind === 'built')) {
       const f = v(Math.cos(h), Math.sin(h));
       const left = v(f.y, -f.x); // toward the street
       const pt = (s: number, o = 0) => v(a.x + f.x * s + left.x * o, a.y + f.y * s + left.y * o);
-      for (let s = 1 + rand() * 2; s < len - 4; ) {
+      for (let s = 1 + rand() * 2; s < len - 4;) {
         const l = Math.min(3.5 + rand() * 5.5, len - 1 - s);
         const mid = pt(s + l / 2);
         if (!inOpen(mid, 1) && !inOpen(pt(s), 0.5) && !inOpen(pt(s + l), 0.5)) {
           const color = pick(SHOP);
-          add({ kind: 'front', ...pt(s), angle: h, len: l, color, seed: Math.round(s * 7 + i * 13) });
+          add({
+            kind: 'front',
+            ...pt(s),
+            angle: h,
+            len: l,
+            color,
+            seed: Math.round(s * 7 + i * 13),
+          });
           const r = rand();
           if (r < 0.32) {
             const c2 = pt(s + l / 2, 1.7);
@@ -1129,7 +1176,14 @@ for (const b of blocks.filter((b) => b.kind === 'built')) {
       const a = toward + PI + (k - 1) * 0.9;
       const px = cx + Math.cos(a) * 3.2;
       const py = cy + Math.sin(a) * 3.2;
-      add({ kind: 'crowd', x: px, y: py, angle: toward, n: 6 + k, seed: Math.round(px * 7 + py * 13) });
+      add({
+        kind: 'crowd',
+        x: px,
+        y: py,
+        angle: toward,
+        n: 6 + k,
+        seed: Math.round(px * 7 + py * 13),
+      });
     }
   }
 }
@@ -1141,7 +1195,14 @@ for (const p of PLAZA) {
     [-3, -2],
     [3, 2],
   ])
-    add({ kind: 'crowd', x: c.x + dx, y: c.y + dy, angle: rand() * PI * 2, n: 5, seed: p.x + p.y + dx });
+    add({
+      kind: 'crowd',
+      x: c.x + dx,
+      y: c.y + dy,
+      angle: rand() * PI * 2,
+      n: 5,
+      seed: p.x + p.y + dx,
+    });
   const west = p.x < SCRAMBLE.x;
   add({
     kind: 'vending',
@@ -1154,8 +1215,17 @@ for (const p of PLAZA) {
 }
 // taxi rank
 paint([v(186.8, 237.7), v(186.8, 234.6), v(158, 234.6), v(158, 237.7)], 0.18, YELLOW);
-add({ kind: 'text', x: 154, y: 236.2, angle: PI / 2, text: 'TAXI', size: 1.4, color: 'rgba(225,170,40,0.7)' });
-for (const t of taxis) add({ kind: 'pool', x: t.x + t.w / 2, y: t.y + t.h / 2, r: 1.5, color: '#ffd060' });
+add({
+  kind: 'text',
+  x: 154,
+  y: 236.2,
+  angle: PI / 2,
+  text: 'TAXI',
+  size: 1.4,
+  color: 'rgba(225,170,40,0.7)',
+});
+for (const t of taxis)
+  add({ kind: 'pool', x: t.x + t.w / 2, y: t.y + t.h / 2, r: 1.5, color: '#ffd060' });
 
 // the canal under the expressway, the train viaduct along its bank, the station over route B's
 // chicane, lanterns along the quay
@@ -1186,6 +1256,19 @@ for (const run of cut(VIADUCT, (p) => !inCity(p))) {
     paint(offset(run, t), 0.05, 'rgba(160,170,185,0.5)', [6, 0.6], true);
   }
   paint(offset(run, -4.3), 0.7, '#6a6d76', [0.7, 24], true); // catenary masts
+  // signal lamps along the deck, so the viaduct reads in the dark
+  const p = path(run);
+  for (let s = 6; s < p.len; s += 24) add({ kind: 'pool', ...at(p, s), r: 5, color: '#8fb4ff' });
+}
+// shimmer on the water: light caught by the ripples
+{
+  const p = path(CANAL);
+  for (let s = 40; s < p.len - 40; s += 9) {
+    const q = at(p, s);
+    const o = Math.sin(s * 1.7) * 2.5;
+    const c = v(q.x - Math.sin(q.h) * o, q.y + Math.cos(q.h) * o);
+    if (inCity(c)) add({ kind: 'shaft', ...c, w: 4.5, h: 0.7, angle: q.h });
+  }
 }
 {
   // platforms either side of the tracks, a concourse bridging the road to the ticket hall
@@ -1209,7 +1292,17 @@ for (const run of cut(VIADUCT, (p) => !inCity(p))) {
       flicker: 0.1,
     });
   }
-  add({ kind: 'sign', x: 62, y, w: 10, h: 1.9, angle: 0, color: '#4dff9a', text: 'NEON-MAE', seed: 0 });
+  add({
+    kind: 'sign',
+    x: 62,
+    y,
+    w: 10,
+    h: 1.9,
+    angle: 0,
+    color: '#4dff9a',
+    text: 'NEON-MAE',
+    seed: 0,
+  });
   add({ kind: 'sign', x: 98, y, w: 5, h: 1.2, angle: PI / 2, color: '#2de2ff', seed: 7 });
   for (const x of [48, 62, 76]) add({ kind: 'pool', x, y, r: 7, color: '#cfe6ff' });
 }
@@ -1220,7 +1313,27 @@ for (let s = 0, k = 0; s < loopPath.len; s += 5) {
   const p = v(q.x - Math.sin(q.h) * (HALF + 1.4), q.y + Math.cos(q.h) * (HALF + 1.4));
   const color = k++ % 3 ? '#e8402a' : '#ffb03a';
   add({ kind: 'lantern', ...p, color });
-  if (p.x < 50 && p.y > 112 && p.y < 190) add({ kind: 'pool', x: p.x - 12.5, y: p.y, r: 2.6, color });
+  if (p.x < 50 && p.y > 112 && p.y < 190) add({ kind: 'pool', x: p.x - 13, y: p.y, r: 3.5, color });
+}
+// the closed side streets keep a few lamps; the scramble's arms are pedestrian streets, busy
+for (const id of CLOSED.map(([id]) => id)) {
+  const p = path(ROAD[id].c);
+  for (let s = 10; s < p.len - 10; s += 18) {
+    const q = at(p, s);
+    if (nearMouth(q, 4) || !inCity(q)) continue;
+    add({ kind: 'pool', x: q.x, y: q.y, r: 9, color: '#1e222b' });
+    if (id === 'west' || id === 'south') {
+      const o = (rand() - 0.5) * 8;
+      const c = v(q.x - Math.sin(q.h) * o, q.y + Math.cos(q.h) * o);
+      add({
+        kind: 'crowd',
+        ...c,
+        angle: q.h + (rand() < 0.5 ? 0 : PI),
+        n: 4 + Math.floor(rand() * 4),
+        seed: Math.round(c.x * 7 + c.y * 13),
+      });
+    }
+  }
 }
 
 // closures: striped barrier with blinkers, a no-entry sign, a row of cones
@@ -1229,8 +1342,20 @@ for (const c of closures) {
   const [a, b] = [along(c, 0, -e), along(c, 0, e)];
   paint([a, b], 0.8, '#e8e6e0', undefined, true);
   paint([a, b], 0.8, '#c0392b', [0.8, 0.8], true);
-  add({ kind: 'neon', a: along(c, 0, -e + 0.3), b: along(c, 0, -e + 0.7), color: '#ffb03a', flicker: 1 });
-  add({ kind: 'neon', a: along(c, 0, e - 0.7), b: along(c, 0, e - 0.3), color: '#ffb03a', flicker: 1 });
+  add({
+    kind: 'neon',
+    a: along(c, 0, -e + 0.3),
+    b: along(c, 0, -e + 0.7),
+    color: '#ffb03a',
+    flicker: 1,
+  });
+  add({
+    kind: 'neon',
+    a: along(c, 0, e - 0.7),
+    b: along(c, 0, e - 0.3),
+    color: '#ffb03a',
+    flicker: 1,
+  });
   add({ kind: 'roadsign', ...along(c, 0.9, 0), angle: c.q.h, sign: 'closed' });
   for (const p of conesOf(c)) add({ kind: 'cone', ...p });
   paint([along(c, -0.6, -e), along(c, -0.6, e)], 0.3, 'rgba(230,80,60,0.5)');
@@ -1303,7 +1428,6 @@ add({
   text: 'EXIT 7',
   seed: 0,
 });
-
 
 const total = A.line.slice(1).reduce((sum, b, i) => sum + dist(A.line[i], b), 0);
 // same scale as B2 MEET: the old 812 m route ran medals [4500, 10000, 17500]
