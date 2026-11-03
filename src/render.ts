@@ -28,7 +28,7 @@ import {
 import { drawCar, drawParkedCar } from './sprites';
 import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type Decor, type DecoratedMap } from './maps/decor';
-import type { RenderView } from './view';
+import type { RenderView, RivalView } from './view';
 import { boomAge, boomPulse, boomShake } from './audio';
 
 // --- visual tuning ---
@@ -132,6 +132,28 @@ const DRIFT_LOOK = 3; // m extra look-ahead toward the nose while drifting
 const ANGLE_MIN_KMH = 25; // no indicator below this speed
 const ANGLE_MAX = 0.2; // peak alpha
 const ANGLE_R = CAR_LENGTH * 0.8; // arc radius, m
+
+const GHOST_A = 0.35;
+const TAG_A = 0.65;
+const TAG_FONT = 'bold 11px sans-serif';
+const tagText = new Map<string, string>();
+const NO_RIVALS: RivalView[] = [];
+
+/** World point to CSS px through the world -> device transform (rc, rs, ox, oy), into out. */
+export function toScreen(
+  out: Vec,
+  x: number,
+  y: number,
+  rc: number,
+  rs: number,
+  ox: number,
+  oy: number,
+  dpr: number,
+): Vec {
+  out.x = (rc * x - rs * y + ox) / dpr;
+  out.y = (rs * x + rc * y + oy) / dpr;
+  return out;
+}
 
 /** Drift-angle arc: target alpha (0 when not drifting or too slow) and color band by |slip| rad. */
 export function angleArc(drifting: boolean, slip: number, kmh: number) {
@@ -1726,6 +1748,26 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     return s;
   }
 
+  type GhostPose = Omit<RivalView, 'name'>;
+  const tagAt: Vec = { x: 0, y: 0 };
+
+  function drawGhost(p: GhostPose) {
+    const gs = spritesFor(p.model, p.color, p.look);
+    ctx.save();
+    ctx.globalAlpha = GHOST_A;
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.angle);
+    ctx.drawImage(gs.car, -gs.w / 2, -gs.h / 2, gs.w, gs.h);
+    ctx.restore();
+  }
+
+  function ghostGlow(p: GhostPose) {
+    glowLight(ctx, p.look, GHOST_A, (g) => {
+      g.translate(p.x, p.y);
+      g.rotate(p.angle);
+    });
+  }
+
   function resize() {
     dpr = window.devicePixelRatio || 1;
     cssW = window.innerWidth;
@@ -2036,15 +2078,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     ctx.drawImage(spr.car, -spr.w / 2, -spr.h / 2, spr.w, spr.h);
     ctx.restore();
 
-    if (v.ghost) {
-      const gs = spritesFor(v.ghost.model, v.ghost.color, v.ghost.look);
-      ctx.save();
-      ctx.globalAlpha = 0.35;
-      ctx.translate(v.ghost.x, v.ghost.y);
-      ctx.rotate(v.ghost.angle);
-      ctx.drawImage(gs.car, -gs.w / 2, -gs.h / 2, gs.w, gs.h);
-      ctx.restore();
-    }
+    if (v.ghost) drawGhost(v.ghost);
+    const rivals = v.rivals ?? NO_RIVALS;
+    for (const r of rivals) if (visible(r.x, r.y, CAR_LENGTH)) drawGhost(r);
 
     const rgb = smokeColor(v.player.look);
     if (rgb !== puffRgb) puffs = puffSprites(3, (puffRgb = rgb));
@@ -2159,12 +2195,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     playerLenses(ctx, car, v.brake, model);
     ctx.restore();
     glowLight(ctx, v.player.look, 1, bodyFrame);
-    const gh = v.ghost;
-    if (gh)
-      glowLight(ctx, gh.look, 0.35, (g) => {
-        g.translate(gh.x, gh.y);
-        g.rotate(gh.angle);
-      });
+    if (v.ghost) ghostGlow(v.ghost);
+    for (const r of rivals) if (visible(r.x, r.y, CAR_LENGTH)) ghostGlow(r);
     if (v.traffic && !under) {
       // peds above the darkness like the decor crowds: dark clothes vanish under it
       for (const p of v.traffic.sim.peds) if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);
@@ -2206,6 +2238,27 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     }
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // rival name tags: screen-upright, fixed size, a car length above the car
+    if (!ph && rivals.length) {
+      ctx.globalAlpha = TAG_A;
+      ctx.font = TAG_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.fillStyle = '#fff';
+      const lift = CAR_LENGTH * scale;
+      for (const r of rivals) {
+        if (!visible(r.x, r.y, CAR_LENGTH)) continue;
+        let t = tagText.get(r.name);
+        if (t === undefined) tagText.set(r.name, (t = r.name.toUpperCase()));
+        toScreen(tagAt, r.x, r.y, rc, rs, ox, oy, dpr);
+        ctx.strokeText(t, tagAt.x, tagAt.y - lift);
+        ctx.fillText(t, tagAt.x, tagAt.y - lift);
+      }
+      ctx.globalAlpha = 1;
+    }
     // speed: dark vignette + faint lines streaming past the screen edges
     const sf = Math.max(0, Math.min(1, (kmh - SPEED_FX_KMH) / (SPEED_FX_FULL - SPEED_FX_KMH)));
     if (sf > 0) {
