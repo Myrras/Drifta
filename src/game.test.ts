@@ -142,6 +142,26 @@ describe('game', () => {
     expect(game.view().hud.popups.some((p) => p.kind === 'fail')).toBe(false);
   });
 
+  it('photo mode: freezes, saves on confirm, returns to where it came from', () => {
+    const { game, step, toRun } = setup();
+    toRun();
+    step({ photo: true });
+    expect(game.view().hud.phase).toBe('photo');
+    const t = game.view().hud.time;
+    step({ photoPan: { x: 1, y: 0 } }, 10);
+    expect(game.view().hud.time).toBe(t);
+    expect(game.view().render.photo?.x).not.toBe(game.debug.car.pos.x);
+    step({ confirm: true });
+    expect(game.takeShot()).toBe(true);
+    expect(game.takeShot()).toBe(false);
+    step({ pause: true });
+    expect(game.view().hud.phase).toBe('run');
+    step({ pause: true });
+    step({ photo: true });
+    step({ pause: true });
+    expect(game.view().hud.phase).toBe('paused');
+  });
+
   it('pauses and resumes', () => {
     const { game, step, toRun } = setup();
     toRun();

@@ -137,6 +137,9 @@ const MAPPED = new Set([
   'KeyN',
   'KeyQ',
   'KeyE',
+  'KeyP',
+  'KeyZ',
+  'KeyX',
   'Enter',
   'NumpadEnter',
 ]);
@@ -171,6 +174,7 @@ export function createInput(
     skip: latchedEdge(),
     tabPrev: latchedEdge(),
     tabNext: latchedEdge(),
+    photo: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -187,6 +191,7 @@ export function createInput(
     KeyN: kbEdge.skip,
     KeyQ: kbEdge.tabPrev,
     KeyE: kbEdge.tabNext,
+    KeyP: kbEdge.photo,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
@@ -214,6 +219,7 @@ export function createInput(
     skip: edgeTracker(),
     tabPrev: edgeTracker(),
     tabNext: edgeTracker(),
+    photo: edgeTracker(),
   };
 
   return {
@@ -250,6 +256,38 @@ export function createInput(
         tabNext: pick(
           kbEdge.tabNext.poll(held.has('KeyE')),
           padEdge.tabNext(pad?.buttons[5]?.pressed ?? false),
+        ),
+        photo: pick(
+          kbEdge.photo.poll(held.has('KeyP')),
+          padEdge.photo(pad?.buttons[11]?.pressed ?? false), // R3
+        ),
+        photoPan: {
+          x: clamp(
+            gp.steer +
+              (any(held, 'KeyD', 'ArrowRight') ? 1 : 0) -
+              (any(held, 'KeyA', 'ArrowLeft') ? 1 : 0),
+            -1,
+            1,
+          ),
+          y: clamp(
+            deadzone(pad?.axes[1] ?? 0, 0.15) +
+              (any(held, 'KeyS', 'ArrowDown') ? 1 : 0) -
+              (any(held, 'KeyW', 'ArrowUp') ? 1 : 0),
+            -1,
+            1,
+          ),
+        },
+        photoRot: clamp(
+          deadzone(pad?.axes[2] ?? 0, 0.15) +
+            (held.has('KeyX') ? 1 : 0) -
+            (held.has('KeyZ') ? 1 : 0),
+          -1,
+          1,
+        ),
+        photoZoom: clamp(
+          gp.throttle - gp.brake + (held.has('KeyE') ? 1 : 0) - (held.has('KeyQ') ? 1 : 0),
+          -1,
+          1,
         ),
         pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
         restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),

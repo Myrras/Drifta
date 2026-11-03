@@ -19,6 +19,7 @@ import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
+import { newPhotoCam, PHOTO_VIEW_H, stepPhoto } from './photo';
 import { createAttractDriver } from './attract';
 import { engineProfile, engineRpm } from './engine';
 import { collide, inRect, nearestDistance } from './collision';
@@ -244,6 +245,27 @@ export function createGame(
     driftRow: 0,
   });
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
+
+  // photo mode: frozen car, free camera. Enter from run or paused; leave back to the same one.
+  let photoCam = newPhotoCam();
+  let photoFrom: 'run' | 'paused' = 'run';
+  let shot = false; // a save was requested; main.ts takes it after drawing the HUD-less frame
+  const enterPhoto = () => {
+    photoFrom = s.phase === 'paused' ? 'paused' : 'run';
+    photoCam = newPhotoCam();
+    if (s.phase === 'run') {
+      audio.stop();
+      clips?.pause(true);
+    }
+    s.phase = 'photo';
+  };
+  const leavePhoto = () => {
+    s.phase = photoFrom;
+    if (photoFrom === 'run') {
+      Object.assign(s.car, { clutchHeld: false, clutchKick: 0 });
+      clips?.pause(false);
+    }
+  };
 
   const newRun = () => {
     attract = null;
@@ -699,7 +721,7 @@ export function createGame(
       const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
       const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
-      if (input.restart && !inMenu) {
+      if (input.restart && !inMenu && s.phase !== 'photo') {
         newRun();
         return;
       }
@@ -741,14 +763,21 @@ export function createGame(
           if (s.countdown <= EPS) s.phase = 'run';
           break;
         case 'run':
-          if (input.pause) {
+          if (input.photo) enterPhoto();
+          else if (input.pause) {
             s.phase = 'paused';
             audio.stop();
             clips?.pause(true);
           } else run(input, dt);
           break;
+        case 'photo':
+          if (input.pause) leavePhoto();
+          else if (input.confirm) shot = true;
+          else photoCam = stepPhoto(photoCam, input, dt, PHOTO_VIEW_H);
+          break;
         case 'paused':
-          if (input.confirm) {
+          if (input.photo) enterPhoto();
+          else if (input.confirm) {
             s.phase = 'run';
             Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
             clips?.pause(false);
@@ -815,6 +844,15 @@ export function createGame(
             runId: s.runId,
             clip: drift.drifting ? s.clip : null,
             traffic: s.traffic && { sim: s.traffic, city: CITIES.get(map)! },
+            photo:
+              s.phase === 'photo'
+                ? {
+                    x: car.pos.x + photoCam.x,
+                    y: car.pos.y + photoCam.y,
+                    zoom: photoCam.zoom,
+                    rot: photoCam.rot,
+                  }
+                : undefined,
           };
       return {
         render,
@@ -834,6 +872,7 @@ export function createGame(
           ui: { theme: cfg.menuTheme, ...ui },
           rpm: engineRpm(car.rpm, prof),
           redline: prof.limit - REDLINE_BELOW_LIMIT,
+          photoShot: shot,
           gear: gearOf(car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle)),
           results:
             s.phase === 'results' && s.results
@@ -851,6 +890,16 @@ export function createGame(
         },
       };
     },
+
+    /** true once per save request; the caller then saves the HUD-less frame (see main.ts) */
+    takeShot(): boolean {
+      const r = shot;
+      shot = false;
+      return r;
+    },
+
+    /** current map name, for the photo file name */
+    mapName: () => map.name,
 
     pause(): void {
       if (s.phase === 'countdown') return toTitle();
