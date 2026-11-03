@@ -203,12 +203,14 @@ export class EngineDSP {
       this.envFollow += 0.01 * (pulse - this.envFollow);
 
       // combustion turbulence rides on the pulse: the rasp
-      const raspy = pulse * (1 + (0.5 + 0.9 * thr) * this.rand());
+      const raspy = pulse * (1 + (0.35 + 0.65 * thr) * this.rand());
 
       // exhaust: header -> mid pipe -> muffler
       const p = this.pipe.run(this.header.run(raspy));
       const muf =
-        this.mufLp.run(p) + 0.6 * this.mufBody.run(p) + (0.3 + 0.9 * bright) * this.mufRasp.run(p);
+        this.mufLp.run(p) +
+        0.6 * this.mufBody.run(p) +
+        (0.22 + 0.65 * bright) * this.mufRasp.run(p);
 
       // intake roar pulsed by the cylinder events, and valvetrain hiss
       const intake =

@@ -67,3 +67,33 @@ describe('EngineDSP', () => {
     expect(engineRpm(1)).toBe(7600);
   });
 });
+
+/** Share of spectral energy above 1 kHz (naive DFT over 2048 samples, 3 windows averaged). */
+function highShare(x: Float32Array): number {
+  const N = 2048;
+  let hi = 0;
+  let all = 0;
+  for (let w = 0; w < 3; w++) {
+    for (let k = 1; k < N / 2; k++) {
+      let re = 0;
+      let im = 0;
+      for (let n = 0; n < N; n++) {
+        const a = (2 * Math.PI * k * n) / N;
+        re += x[w * N + n] * Math.cos(a);
+        im -= x[w * N + n] * Math.sin(a);
+      }
+      const e = re * re + im * im;
+      all += e;
+      if ((k * SR) / N > 1000) hi += e;
+    }
+  }
+  return hi / all;
+}
+
+describe('rasp', () => {
+  it('has a lower >1 kHz energy share at full throttle', () => {
+    const share = highShare(steady(5000, 1).subarray(0, 6144));
+    // before the rasp reduction: 0.151; after: 0.107
+    expect(share).toBeLessThan(0.13);
+  });
+});
