@@ -36,6 +36,11 @@ describe('settings', () => {
     expect(loadSettings(fake(JSON.stringify({ tune: 'x' }))).tune).toBe('street');
     expect(loadSettings(fake()).tune).toBe('street');
   });
+  it('validates the clip quality', () => {
+    expect(loadSettings(fake(JSON.stringify({ clips: 'off' }))).clips).toBe('off');
+    expect(loadSettings(fake(JSON.stringify({ clips: '4k' }))).clips).toBe('medium');
+  });
+
   it('persists', () => {
     const st = fake();
     saveSettings(

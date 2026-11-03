@@ -120,6 +120,20 @@ describe('createInput left/right edges', () => {
     const a = input.poll();
     expect([a.up, a.down, input.poll().up]).toEqual([true, true, false]);
   });
+
+  it('S fires save and down; ArrowDown fires only down', () => {
+    const w = new EventTarget() as unknown as Window;
+    const input = createInput(w);
+    const tap = (code: string) => {
+      w.dispatchEvent(Object.assign(new Event('keydown'), { code, repeat: false }));
+      w.dispatchEvent(Object.assign(new Event('keyup'), { code }));
+      return input.poll();
+    };
+    const s = tap('KeyS');
+    expect([s.save, s.down]).toEqual([true, true]);
+    const d = tap('ArrowDown');
+    expect([d.save, d.down]).toEqual([false, true]);
+  });
 });
 
 describe('createInput pad edge tracking', () => {

@@ -58,6 +58,7 @@ export function createAudio() {
   let intensity = 0.15;
   let track: Track = 'tokyo';
   let vols = { master: 0.8, music: 0.6, sfx: 0.8, engine: 0.8 };
+  let tap: MediaStreamAudioDestinationNode | null = null;
 
   function applyVolumes(): void {
     if (!ctx) return;
@@ -229,6 +230,19 @@ export function createAudio() {
       if (!ctx) return;
       set(engGain.gain, 0, 0.1);
       set(sqGain.gain, 0, 0.1);
+    },
+    /** master mix as a MediaStream for clip recording; null before the context exists */
+    stream(): MediaStream | null {
+      if (!ctx) return null;
+      try {
+        if (!tap) {
+          tap = ctx.createMediaStreamDestination();
+          master.connect(tap);
+        }
+        return tap.stream;
+      } catch {
+        return null;
+      }
     },
   };
 }

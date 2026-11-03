@@ -154,6 +154,7 @@ export function createInput(
     up: latchedEdge(),
     down: latchedEdge(),
     tune: latchedEdge(),
+    save: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -175,6 +176,7 @@ export function createInput(
     e.preventDefault();
     held.add(e.code);
     if (!e.repeat) latchFor[e.code]?.latch();
+    if (!e.repeat && e.code === 'KeyS') kbEdge.save.latch(); // S is also menu down
   });
   win.addEventListener('keyup', (e) => held.delete(e.code));
   win.addEventListener('blur', () => held.clear());
@@ -188,6 +190,7 @@ export function createInput(
     up: edgeTracker(),
     down: edgeTracker(),
     tune: edgeTracker(),
+    save: edgeTracker(),
   };
 
   return {
@@ -222,6 +225,10 @@ export function createInput(
         tune: pick(
           kbEdge.tune.poll(held.has('KeyT')),
           padEdge.tune(pad?.buttons[2]?.pressed ?? false),
+        ),
+        save: pick(
+          kbEdge.save.poll(held.has('KeyS')),
+          padEdge.save(pad?.buttons[2]?.pressed ?? false),
         ),
         down: pick(
           kbEdge.down.poll(any(held, 'KeyS', 'ArrowDown')),

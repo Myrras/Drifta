@@ -84,9 +84,10 @@ function rows(
   w: number,
   top: number,
   u: number,
+  step = 10 * u,
 ): void {
   const pw = Math.min(72 * u, w * 0.94);
-  const ph = 8 * u;
+  const ph = Math.min(8 * u, step - 1.2 * u);
   // label column | gap | bar column | gap | value column, all measured
   g.save();
   g.font = `italic 800 ${3.6 * u}px ${FONT}`;
@@ -98,7 +99,7 @@ function rows(
   const valW = Math.max(0, ...list.map((r) => (r.value ? g.measureText(r.value).width : 0)));
   g.restore();
   list.forEach((r, i) => {
-    const y = top + i * 10 * u;
+    const y = top + i * step;
     const on = i === sel;
     plate(g, w / 2, y, pw, ph, on);
     const x0 = w / 2 - pw / 2 + 3 * u;
@@ -266,7 +267,7 @@ export function drawMenu(
       weight: 900,
       stroke: '#e8262b',
     });
-    rows(ctx, m.rows, m.row, width, height * 0.28, u);
+    rows(ctx, m.rows, m.row, width, height * 0.25, u, 7.8 * u);
     hints(ctx, '↑/↓ move · ←/→ change · ENTER select · ESC back', width, height, u);
   }
   return true;

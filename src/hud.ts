@@ -708,8 +708,9 @@ export function drawHud(
   if (!r) return;
   overlay(ctx, width, height, 0.7);
   const pw = Math.min(width * 0.9, 60 * u);
-  const top = height / 2 - 28 * u;
-  plate(ctx, cx - pw / 2 - 6 * u, top, pw, 56 * u, 'rgba(12,14,28,0.94)', AMBER, 1.4 * u);
+  const ex = r.drifts.length ? 5 + 4.5 * r.drifts.length : 0; // top drifts block
+  const top = height / 2 - (28 + ex / 2) * u;
+  plate(ctx, cx - pw / 2 - 6 * u, top, pw, (56 + ex) * u, 'rgba(12,14,28,0.94)', AMBER, 1.4 * u);
   text(ctx, 'FINISHED', cx, top + 6.5 * u, 8 * u, WHITE, { align: 'center' });
   const rows: [string, string][] = [
     ['Combo points', formatScore(r.comboPoints)],
@@ -733,13 +734,59 @@ export function drawHud(
   const mt = medalText(r.total, r.medals);
   if (mt)
     text(ctx, mt, cx - 2 * u, top + 37.5 * u, 2.8 * u, AMBER, { align: 'center', font: 'label' });
+  if (r.drifts.length) drawTopDrifts(ctx, r, cx, pw, top + 46 * u, u);
   if (r.newBest && Math.floor(nowS * 3) % 2 === 0)
-    text(ctx, 'NEW BEST!', cx - 3 * u, top + 47 * u, 5 * u, GREEN, {
+    text(ctx, 'NEW BEST!', cx - 3 * u, top + (47 + ex) * u, 5 * u, GREEN, {
       align: 'center',
       glow: GREEN,
     });
-  text(ctx, 'ENTER / A race again', cx - 4 * u, top + 53 * u, 2.8 * u, WHITE, {
+  text(ctx, 'ENTER / A race again', cx - 4 * u, top + (53 + ex) * u, 2.8 * u, WHITE, {
     align: 'center',
     font: 'label',
+  });
+}
+
+/** Results list of the run's best combos with their clip save state. */
+function drawTopDrifts(
+  ctx: CanvasRenderingContext2D,
+  r: NonNullable<HudView['results']>,
+  cx: number,
+  pw: number,
+  y: number,
+  u: number,
+): void {
+  const x0 = cx - pw / 2;
+  const xR = cx + pw / 2 - 5 * u;
+  text(ctx, 'TOP DRIFTS', x0 + 3 * u, y, 2.8 * u, AMBER, { font: 'label' });
+  if (r.drifts.some((d) => d.clip))
+    text(ctx, '↑/↓ pick · S / X save clip', xR, y, 2.2 * u, STEEL, {
+      align: 'right',
+      font: 'label',
+      stroke: null,
+    });
+  r.drifts.forEach((d, i) => {
+    const ry = y + (4.5 + i * 4.5) * u;
+    const sel = i === r.driftRow;
+    if (sel)
+      plate(ctx, x0 - 1 * u, ry - 1.9 * u, pw - 8 * u, 3.8 * u, 'rgba(255,178,26,0.18)', AMBER);
+    text(ctx, `${i + 1}`, x0 + 3 * u, ry, 2.8 * u, sel ? AMBER : STEEL);
+    text(ctx, formatScore(d.amount), x0 + 7 * u, ry, 3.2 * u, WHITE);
+    const str = comboString(d.tricks);
+    const maxW = pw - 36 * u;
+    const size = 2.2 * u * Math.min(1, maxW / Math.max(1, measure(ctx, str, 2.2 * u, 'label')));
+    text(ctx, str, x0 + 21 * u, ry, size, STEEL, { font: 'label', stroke: null });
+    if (d.clip)
+      text(
+        ctx,
+        d.saved ? 'SAVED' : 'SAVE',
+        xR,
+        ry,
+        2.6 * u,
+        d.saved ? GREEN : sel ? AMBER : WHITE,
+        {
+          align: 'right',
+          font: 'label',
+        },
+      );
   });
 }

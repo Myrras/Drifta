@@ -5,6 +5,9 @@ import type { PlayerModel } from './types';
 export type { Tune } from './engine';
 import type { Tune } from './engine';
 
+export const CLIP_QUALITIES = ['off', 'low', 'medium', 'high'] as const;
+export type ClipQuality = (typeof CLIP_QUALITIES)[number];
+
 export interface Settings {
   master: number;
   music: number;
@@ -12,6 +15,8 @@ export interface Settings {
   engine: number;
   shake: boolean;
   track: Track;
+  /** drift clip recording quality */
+  clips: ClipQuality;
   car: PlayerModel;
   color: string;
   tune: Tune;
@@ -27,6 +32,7 @@ export const defaultSettings = (): Settings => ({
   engine: 0.8,
   shake: true,
   track: 'tokyo',
+  clips: 'medium',
   car: 'mx5',
   color: '#d32030',
   tune: 'street',
@@ -54,6 +60,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     engine: vol(raw.engine, d.engine),
     shake: typeof raw.shake === 'boolean' ? raw.shake : d.shake,
     track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
+    clips: CLIP_QUALITIES.includes(raw.clips as ClipQuality) ? (raw.clips as ClipQuality) : d.clips,
     car: ok ? car : d.car,
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
     tune: raw.tune === 'performance' || raw.tune === 'street' ? raw.tune : d.tune,

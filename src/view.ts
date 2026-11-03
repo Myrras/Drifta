@@ -1,4 +1,4 @@
-import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect } from './types';
+import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel, Rect, Trick } from './types';
 
 export interface RenderView {
   map: GameMap;
@@ -34,6 +34,15 @@ export interface Popup {
   age: number;
 }
 
+/** one of the run's best banked combos */
+export interface TopDrift {
+  amount: number;
+  tricks: Trick[];
+  /** a video clip exists and can be saved */
+  clip: boolean;
+  saved: boolean;
+}
+
 export interface Results {
   comboPoints: number;
   timeBonus: number;
@@ -43,6 +52,10 @@ export interface Results {
   newBest: boolean;
   /** thresholds [bronze, silver, gold] of the map, if any */
   medals?: [number, number, number];
+  /** best banked combos, highest first (max 3) */
+  drifts: TopDrift[];
+  /** selected index in drifts */
+  driftRow: number;
 }
 
 export interface MenuRow {

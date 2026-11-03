@@ -1,4 +1,5 @@
 import type {
+  Combo,
   DriftInfo,
   GameMap,
   Helix,
@@ -8,6 +9,7 @@ import type {
   PlayerModel,
   Rect,
   ScoreEvent,
+  Trick,
 } from './types';
 import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
 import type { createAudio } from './audio';
@@ -18,7 +20,14 @@ import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { PLAYER_MODELS, type CarStats } from './models';
-import { loadSettings, saveSettings, type SettingsStorage, type Tune } from './settings';
+import {
+  CLIP_QUALITIES,
+  loadSettings,
+  saveSettings,
+  type ClipQuality,
+  type SettingsStorage,
+  type Tune,
+} from './settings';
 import {
   comboValue,
   createScoring,
@@ -34,6 +43,31 @@ export type AudioLike = ReturnType<typeof createAudio>;
 export interface BestStore {
   get(): number;
   set(v: number): void;
+}
+/** Video capture of drifts, keyed by combo id. */
+export interface ClipRecorder {
+  /** run starts: drop old clips, start rolling capture ('off' records nothing) */
+  begin(quality: ClipQuality): void;
+  /** combo started: pin footage from about a second ago onward */
+  mark(id: number): void;
+  /** combo banked into the top drifts: finish its clip after a short tail */
+  keep(id: number): void;
+  /** combo failed or left the top drifts: discard its clip */
+  drop(id: number): void;
+  pause(on: boolean): void;
+  /** run over: stop capture, keep finished clips (tails still complete) */
+  stop(): void;
+  /** drop everything */
+  clear(): void;
+  has(id: number): boolean;
+  /** download the clip */
+  save(id: number, filename: string): void;
+}
+interface Drift {
+  id: number;
+  amount: number;
+  tricks: Trick[];
+  saved: boolean;
 }
 
 const HARD_HIT_SPEED = 1.5; // m/s into the wall; below this it is a scrape
@@ -51,6 +85,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
 const NEAR_RANGE = 8; // m; solids farther than this cannot matter for collide or near-miss
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
+const TOP_DRIFTS = 3;
 const MODEL_IDS = Object.keys(PLAYER_MODELS) as PlayerModel[];
 const statRange = (k: keyof CarStats) => {
   const v = MODEL_IDS.map((m) => PLAYER_MODELS[m].stats[k]);
@@ -58,7 +93,7 @@ const statRange = (k: keyof CarStats) => {
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
-const SETTINGS_ROWS = 8; // 4 volumes, shake, music, reset, back
+const SETTINGS_ROWS = 9; // 4 volumes, shake, music, clip quality, reset, back
 /** Stats with the tune applied. */
 export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
   const st = PLAYER_MODELS[m].stats;
@@ -72,6 +107,7 @@ export function createGame(
   audio: AudioLike,
   best: (mapName: string) => BestStore,
   storage?: SettingsStorage,
+  clips?: ClipRecorder,
 ) {
   const cfg = loadSettings(storage);
   const applyVolumes = () => {
@@ -91,6 +127,7 @@ export function createGame(
   let map = maps[0];
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
+  let comboIds = 0;
   const fresh = () => ({
     car: createCar(map.start, tunedStats(cfg.car, cfg.tune)),
     floorIndex: map.start.floor,
@@ -105,10 +142,14 @@ export function createGame(
     helix: null as Helix | null,
     p: 0,
     drifted: 0,
-    results: null as Results | null,
+    results: null as Omit<Results, 'drifts' | 'driftRow'> | null,
     resultsAge: 0,
     stuck: 0,
     clip: null as Rect | null,
+    /** live combo with its clip id */
+    live: null as { id: number; combo: Combo } | null,
+    drifts: [] as Drift[],
+    driftRow: 0,
   });
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
@@ -117,9 +158,29 @@ export function createGame(
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
+    clips?.begin(cfg.clips);
   };
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
     s.popups.push({ kind, text, amount, age: 0 });
+
+  /** give a newly started combo an id and start its clip */
+  function track(): void {
+    const c = s.scoring.combo;
+    if (!c || s.live?.combo === c) return;
+    s.live = { id: ++comboIds, combo: c };
+    clips?.mark(s.live.id);
+  }
+
+  function bankDrift(amount: number): void {
+    const live = s.live;
+    s.live = null;
+    if (!live) return;
+    const list = [...s.drifts, { id: live.id, amount, tricks: live.combo.tricks, saved: false }];
+    list.sort((a, b) => b.amount - a.amount);
+    for (const d of list.splice(TOP_DRIFTS)) clips?.drop(d.id);
+    s.drifts = list;
+    if (list.some((d) => d.id === live.id)) clips?.keep(live.id);
+  }
 
   function handle(events: ScoreEvent[], failText = 'BAILED'): void {
     for (const e of events) {
@@ -127,11 +188,22 @@ export function createGame(
       else if (e.type === 'bank') {
         popup('bank', `+${e.amount}`, e.amount);
         audio.bank();
+        bankDrift(e.amount);
       } else {
         popup('fail', failText, e.lost);
         audio.fail();
+        if (s.live) clips?.drop(s.live.id);
+        s.live = null;
       }
     }
+  }
+
+  function saveDrift(): void {
+    const d = s.drifts[s.driftRow];
+    if (!d || !clips?.has(d.id)) return;
+    const slug = map.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    clips.save(d.id, `drifta-${slug}-${d.amount}.webm`);
+    d.saved = true;
   }
 
   const smooth = (x: number) => x * x * (3 - 2 * x);
@@ -180,6 +252,7 @@ export function createGame(
 
   function finish(): void {
     handle(forceBank(s.scoring));
+    clips?.stop();
     const comboPoints = s.scoring.banked;
     const bonus = timeBonus(s.time, map.parTime);
     const total = comboPoints + bonus;
@@ -254,6 +327,7 @@ export function createGame(
   }
 
   function run(input: InputState, dt: number): void {
+    track();
     s.time += dt;
     let hard = false;
     const car = s.car;
@@ -299,6 +373,7 @@ export function createGame(
         dt,
       ),
     );
+    track();
 
     if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
   }
@@ -306,6 +381,7 @@ export function createGame(
   const toTitle = () => {
     audio.stop();
     audio.music(false);
+    clips?.clear();
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
@@ -359,12 +435,16 @@ export function createGame(
     } else if (row === 5 && (dir || input.confirm)) {
       audio.setTrack((cfg.track = cfg.track === 'tokyo' ? 'eurobeat' : 'tokyo'));
       save();
-    } else if (row === 6 && input.confirm) {
+    } else if (row === 6 && (dir || input.confirm)) {
+      const n = CLIP_QUALITIES.length;
+      cfg.clips = CLIP_QUALITIES[cycle(CLIP_QUALITIES.indexOf(cfg.clips), dir || 1, n)];
+      save();
+    } else if (row === 7 && input.confirm) {
       if (confirmReset) {
         stores.forEach((b, i) => b.set((bests[i] = 0)));
         confirmReset = false;
       } else confirmReset = true;
-    } else if ((row === 7 && input.confirm) || input.pause) go('title', 2);
+    } else if ((row === 8 && input.confirm) || input.pause) go('title', 2);
   }
 
   const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
@@ -389,6 +469,7 @@ export function createGame(
         })),
         { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' },
         { label: 'MUSIC', value: cfg.track.toUpperCase() },
+        { label: 'CLIP QUALITY', value: cfg.clips.toUpperCase() },
         { label: 'RESET BEST SCORES', value: confirmReset ? 'ENTER TO CONFIRM' : undefined },
         { label: 'BACK' },
       ];
@@ -470,19 +551,27 @@ export function createGame(
           if (input.pause) {
             s.phase = 'paused';
             audio.stop();
+            clips?.pause(true);
           } else run(input, dt);
           break;
         case 'paused':
           if (input.confirm) {
             s.phase = 'run';
             Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
+            clips?.pause(false);
           } else if (input.pause) toTitle();
           break;
-        case 'results':
+        case 'results': {
           s.resultsAge += dt;
+          const ready = s.resultsAge >= RESULTS_LOCKOUT;
+          const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
           if (input.pause) toTitle();
-          else if (input.confirm && s.resultsAge >= RESULTS_LOCKOUT) newRun();
+          else if (input.confirm && ready) newRun();
+          else if (input.save) {
+            if (ready) saveDrift(); // S also sets down: don't move
+          } else if (dv && s.drifts.length) s.driftRow = cycle(s.driftRow, dv, s.drifts.length);
           break;
+        }
       }
     },
 
@@ -528,7 +617,19 @@ export function createGame(
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
           best: bests[sel],
           menu: menuView(),
-          results: s.phase === 'results' ? s.results : null,
+          results:
+            s.phase === 'results' && s.results
+              ? {
+                  ...s.results,
+                  drifts: s.drifts.map((d) => ({
+                    amount: d.amount,
+                    tricks: d.tricks,
+                    clip: clips?.has(d.id) ?? false,
+                    saved: d.saved,
+                  })),
+                  driftRow: s.driftRow,
+                }
+              : null,
         },
       };
     },
@@ -538,6 +639,7 @@ export function createGame(
       if (s.phase !== 'run') return;
       s.phase = 'paused';
       audio.stop();
+      clips?.pause(true);
     },
 
     /** test hook: live internal state (car, floorIndex, phase, scoring, ...) */

@@ -3,12 +3,14 @@ import { drawHud } from './hud';
 import { createGame } from './game';
 import { createInput } from './input';
 import { createAudio } from './audio';
+import { createClipRecorder } from './clips';
 import { garage } from './maps/garage';
 import { docks } from './maps/docks';
 import { testpad } from './maps/testpad';
 import { BEST_SCORE_KEY, DT } from './config';
 
-const renderer = createRenderer(document.getElementById('game') as HTMLCanvasElement);
+const canvas = document.getElementById('game') as HTMLCanvasElement;
+const renderer = createRenderer(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
 const input = createInput(window);
@@ -38,7 +40,8 @@ const bestFor = (name: string) => {
     },
   };
 };
-const game = createGame([garage, docks, testpad], audio, bestFor);
+const clips = createClipRecorder(canvas, () => audio.stream());
+const game = createGame([garage, docks, testpad], audio, bestFor, undefined, clips);
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
@@ -56,6 +59,7 @@ const pending = {
   right: false,
   up: false,
   down: false,
+  save: false,
 };
 function frame(now: number) {
   const frameDt = Math.min((now - last) / 1000, 0.25);
@@ -69,6 +73,7 @@ function frame(now: number) {
   pending.right ||= s.right;
   pending.up ||= !!s.up;
   pending.down ||= !!s.down;
+  pending.save ||= !!s.save;
   if (s.confirm) resume();
   while (acc >= DT) {
     game.update({ ...s, ...pending }, DT);
@@ -79,12 +84,14 @@ function frame(now: number) {
       pending.right =
       pending.up =
       pending.down =
+      pending.save =
         false;
     acc -= DT;
   }
   const v = game.view();
   renderer.draw(v.render, frameDt);
   drawHud(renderer.ctx, v.hud, renderer.width(), renderer.height());
+  clips.frame();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

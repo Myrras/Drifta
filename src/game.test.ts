@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createGame, type AudioLike, type BestStore } from './game';
+import { createGame, type AudioLike, type BestStore, type ClipRecorder } from './game';
 import { garage, garageRoute } from './maps/garage';
 import { collide } from './collision';
 import { testpad } from './maps/testpad';
@@ -20,6 +20,7 @@ const audio: AudioLike = {
   setIntensity: noop,
   setVolumes: noop,
   setTrack: noop,
+  stream: () => null,
 };
 const IDLE: InputState = {
   steer: 0,
@@ -201,6 +202,97 @@ describe('game', () => {
     game.view();
     game.view();
     expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('top drift clips', () => {
+  function rig() {
+    const kept = new Set<number>();
+    const clips: ClipRecorder = {
+      begin: vi.fn(),
+      mark: vi.fn((id: number) => void kept.add(id)),
+      keep: vi.fn(),
+      drop: vi.fn((id: number) => void kept.delete(id)),
+      pause: vi.fn(),
+      stop: vi.fn(),
+      clear: vi.fn(() => kept.clear()),
+      has: (id) => kept.has(id),
+      save: vi.fn(),
+    };
+    const game = createGame([garage], audio, () => memBest(), undefined, clips);
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    /** bank a combo worth `points`; returns its clip id */
+    const bank = (points: number) => {
+      game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
+      step({}, 10);
+      expect(game.debug.scoring.combo).toBeNull();
+      return vi.mocked(clips.mark).mock.lastCall![0];
+    };
+    const finish = () => {
+      game.debug.floorIndex = 2;
+      game.debug.car.pos = { x: 134, y: 12 };
+      step();
+    };
+    return { game, step, clips, bank, finish };
+  }
+
+  it('keeps the three best banked combos and drops the rest', () => {
+    const { game, clips, bank, finish } = rig();
+    expect(clips.begin).toHaveBeenCalledExactlyOnceWith('medium');
+    const [a, b, c, d] = [100, 400, 200, 300].map(bank);
+    expect(clips.drop).toHaveBeenCalledWith(a);
+    expect(clips.keep).toHaveBeenCalledWith(b);
+    expect(clips.keep).toHaveBeenCalledWith(c);
+    expect(clips.keep).toHaveBeenCalledWith(d);
+    bank(50); // not top 3: dropped right away
+    expect(clips.drop).toHaveBeenLastCalledWith(vi.mocked(clips.mark).mock.lastCall![0]);
+    finish();
+    expect(clips.stop).toHaveBeenCalled();
+    const r = game.view().hud.results!;
+    expect(r.drifts.map((x) => x.amount)).toEqual([400, 300, 200]);
+    expect(r.drifts.every((x) => x.clip && !x.saved)).toBe(true);
+  });
+
+  it('drops the clip of a failed combo', () => {
+    const { game, step, clips } = rig();
+    startCombo(game);
+    Object.assign(game.debug.car, { pos: { x: 136, y: 12.5 }, angle: 0, vel: { x: 20, y: 0 } });
+    step({}, 10);
+    const id = vi.mocked(clips.mark).mock.lastCall![0];
+    expect(clips.drop).toHaveBeenCalledWith(id);
+    expect(clips.keep).not.toHaveBeenCalled();
+  });
+
+  it('selects and saves a drift on results after the lockout', () => {
+    const { game, step, clips, bank, finish } = rig();
+    bank(300);
+    const second = bank(200);
+    finish();
+    step({ save: true });
+    expect(clips.save).not.toHaveBeenCalled();
+    step({}, Math.ceil(0.5 / DT));
+    step({ down: true });
+    expect(game.view().hud.results!.driftRow).toBe(1);
+    step({ save: true, down: true }); // S also reports down
+    expect(clips.save).toHaveBeenCalledWith(second, 'drifta-japan-garage-200.webm');
+    const r = game.view().hud.results!;
+    expect(r.driftRow).toBe(1);
+    expect(r.drifts.map((x) => x.saved)).toEqual([false, true]);
+  });
+
+  it('pauses capture with the game and clears it on quit', () => {
+    const { step, clips } = rig();
+    step({ pause: true });
+    expect(clips.pause).toHaveBeenLastCalledWith(true);
+    step({ confirm: true });
+    expect(clips.pause).toHaveBeenLastCalledWith(false);
+    step({ pause: true });
+    step({ pause: true });
+    expect(clips.clear).toHaveBeenCalled();
   });
 });
 
@@ -580,11 +672,27 @@ describe('main menu, garage, settings', () => {
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).track).toBe('eurobeat');
   });
 
+  it('clip quality row cycles and persists', () => {
+    const { game, tap, mem } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 6; i++) tap({ down: true });
+    expect(game.view().hud.menu!.rows[6]).toEqual({ label: 'CLIP QUALITY', value: 'MEDIUM' });
+    tap({ right: true });
+    expect(game.view().hud.menu!.rows[6].value).toBe('HIGH');
+    tap({ right: true });
+    expect(game.view().hud.menu!.rows[6].value).toBe('OFF');
+    tap({ right: true }); // wraps
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).clips).toBe('low');
+    tap({ left: true });
+    expect(game.view().hud.menu!.rows[6].value).toBe('OFF');
+  });
+
   it('reset best scores needs a second enter', () => {
     const { game, tap, stores } = rig();
     tap({ up: true });
     tap({ confirm: true });
-    for (let i = 0; i < 6; i++) tap({ down: true });
+    for (let i = 0; i < 7; i++) tap({ down: true });
     tap({ confirm: true });
     expect(stores[0].get()).toBe(50);
     tap({ confirm: true });
