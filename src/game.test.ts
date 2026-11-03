@@ -2645,3 +2645,68 @@ describe('time limit', () => {
     expect(game.view().hud.timeUp).toBe(true);
   });
 });
+
+describe('top drifts with late (not counted) drifts', () => {
+  function rig() {
+    const kept = new Set<number>();
+    const clips: ClipRecorder = {
+      begin: vi.fn(),
+      mark: vi.fn((id: number) => void kept.add(id)),
+      keep: vi.fn(),
+      drop: vi.fn((id: number) => void kept.delete(id)),
+      pause: vi.fn(),
+      stop: vi.fn(),
+      clear: vi.fn(() => kept.clear()),
+      has: (id) => kept.has(id),
+      save: vi.fn(),
+    };
+    const game = createGame([garage], audio, () => memBest(), undefined, clips);
+    const step = (frames = 1, confirm = false) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, confirm }, DT);
+    };
+    step(1, true);
+    step(Math.round(COUNTDOWN_SECONDS / DT));
+    const bank = (points: number) => {
+      game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
+      step(10);
+      return vi.mocked(clips.mark).mock.lastCall![0];
+    };
+    const lock = () => {
+      game.debug.time = garage.parTime * 1.3 + 1;
+      step(2);
+    };
+    const finish = () => {
+      game.debug.floorIndex = garage.finish.floor;
+      game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+      step();
+      return game.view().hud.results!.drifts.map((d) => [d.amount, d.late]);
+    };
+    return { clips, bank, lock, finish };
+  }
+
+  it('a bigger late drift never pushes out 3 counted ones', () => {
+    const { clips, bank, lock, finish } = rig();
+    bank(100);
+    bank(200);
+    bank(300);
+    lock();
+    const late = bank(900);
+    expect(clips.drop).toHaveBeenCalledWith(late);
+    expect(finish()).toEqual([
+      [300, false],
+      [200, false],
+      [100, false],
+    ]);
+  });
+
+  it('shows a late drift when fewer than 3 are counted', () => {
+    const { bank, lock, finish } = rig();
+    bank(100);
+    lock();
+    bank(900);
+    expect(finish()).toEqual([
+      [100, false],
+      [900, true],
+    ]);
+  });
+});
