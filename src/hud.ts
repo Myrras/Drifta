@@ -413,7 +413,7 @@ function drawPopup(
     ctx,
     'BAILED',
     cx + amp * Math.sin(a * 95),
-    baseY + amp * 0.5 * Math.cos(a * 77),
+    baseY - 9 * u + amp * 0.5 * Math.cos(a * 77),
     9 * u,
     RED,
     {
@@ -435,7 +435,7 @@ function drawPopup(
       ctx,
       s[i],
       x + cw / 2 + r * 10 * u * c0,
-      baseY + 7 * u + 3 * u * c0 + 45 * u * c0 * c0,
+      baseY - 0.5 * u + 3 * u * c0 + 45 * u * c0 * c0,
       size,
       '#ff8a92',
       {
@@ -486,13 +486,16 @@ export function drawHud(
       });
 
     // ---- top-center: floor
-    const fw = measure(ctx, v.floorName, 3 * u, 'label') + 6 * u;
-    plate(ctx, cx - fw / 2 - 1 * u, pad, fw, 5.5 * u, INK);
-    text(ctx, v.floorName, cx, pad + 2.75 * u, 3 * u, WHITE, {
-      align: 'center',
-      font: 'label',
-      stroke: null,
-    });
+    // hidden while the start gantry is still on screen
+    if (!(v.phase === 'run' && v.time < 0.8)) {
+      const fw = measure(ctx, v.floorName, 3 * u, 'label') + 6 * u;
+      plate(ctx, cx - fw / 2 - 1 * u, pad, fw, 5.5 * u, INK);
+      text(ctx, v.floorName, cx, pad + 2.75 * u, 3 * u, WHITE, {
+        align: 'center',
+        font: 'label',
+        stroke: null,
+      });
+    }
 
     // ---- top-right: total score, ticks up once banked points land
     let pending = 0;
@@ -530,6 +533,8 @@ export function drawHud(
     // ---- combo
     const baseY = height - 16 * u;
     const c = v.combo;
+    // on a fail the old plate is hidden at once so BAILED and the lost amount read cleanly
+    const failed = v.popups.some((p) => p.kind === 'fail');
     if (!c) {
       anim.tricks = 0;
       anim.mult = 0;
@@ -541,65 +546,67 @@ export function drawHud(
       anim.mult = c.multiplier;
       anim.combo = approach(anim.combo, v.comboValue, dt, 10);
 
-      const str = comboString(c.tricks);
-      const tk = nowS - anim.trickAt;
-      const mk = nowS - anim.multAt;
-      const m = c.multiplier;
-      const col = multColor(m);
-      // shrink long chains to stay clear of the speedometer
-      const maxW = Math.max(40 * u, Math.min(90 * u, width - 64 * u));
-      const strSize = 3.6 * u * Math.min(1, maxW / measure(ctx, str, 3.6 * u, 'label'));
-      const pw = Math.max(measure(ctx, str, strSize, 'label'), 30 * u) + 12 * u;
-      plate(ctx, cx - pw / 2 - 2 * u, baseY - 4.5 * u, pw, 17.5 * u, INK, col);
-      text(ctx, str, cx, baseY, strSize, AMBER, {
-        align: 'center',
-        font: 'label',
-        scale: 1 + 0.3 * (1 - easeOutElastic(tk / 0.7)),
-        stroke: OUTLINE,
-      });
+      if (!failed) {
+        const str = comboString(c.tricks);
+        const tk = nowS - anim.trickAt;
+        const mk = nowS - anim.multAt;
+        const m = c.multiplier;
+        const col = multColor(m);
+        // shrink long chains to stay clear of the speedometer
+        const maxW = Math.max(40 * u, Math.min(90 * u, width - 64 * u));
+        const strSize = 3.6 * u * Math.min(1, maxW / measure(ctx, str, 3.6 * u, 'label'));
+        const pw = Math.max(measure(ctx, str, strSize, 'label'), 30 * u) + 12 * u;
+        plate(ctx, cx - pw / 2 - 2 * u, baseY - 4.5 * u, pw, 17.5 * u, INK, col);
+        text(ctx, str, cx, baseY, strSize, AMBER, {
+          align: 'center',
+          font: 'label',
+          scale: 1 + 0.3 * (1 - easeOutElastic(tk / 0.7)),
+          stroke: OUTLINE,
+        });
 
-      const shake = 0.9 * u * Math.exp(-mk * 9);
-      const multSize = 6.5 * u * (1 + Math.min(m - 1, 12) * 0.06);
-      text(
-        ctx,
-        `×${m}`,
-        cx - 2 * u + shake * Math.sin(mk * 90),
-        baseY + 6.5 * u + shake * Math.cos(mk * 70),
-        multSize,
-        col,
-        {
-          align: 'right',
-          scale: 1 + 0.6 * Math.exp(-mk * 10),
-          glow: m >= 3 ? col : undefined,
-        },
-      );
-      text(ctx, formatScore(anim.combo), cx + 2 * u, baseY + 6.5 * u, 5.4 * u, WHITE, {});
-
-      const bw = 28 * u;
-      const bh = 1.1 * u;
-      const g = clamp01(c.grace / COMBO_GRACE);
-      const low = g < 0.35 ? 0.5 + 0.5 * Math.sin(nowS * 28) : 0;
-      plate(ctx, cx - bw / 2 - u, baseY + 11 * u, bw, bh, 'rgba(0,0,0,0.6)');
-      plate(ctx, cx - bw / 2 - u, baseY + 11 * u, bw * g, bh, low > 0.5 ? RED : col);
-      if (low) {
-        ctx.save();
-        ctx.globalAlpha = low * 0.6;
-        plate(
+        const shake = 0.9 * u * Math.exp(-mk * 9);
+        const multSize = 6.5 * u * (1 + Math.min(m - 1, 12) * 0.06);
+        text(
           ctx,
-          cx - bw / 2 - 1.6 * u,
-          baseY + 10.4 * u,
-          bw + 1.2 * u,
-          bh + 1.2 * u,
-          'rgba(255,43,58,0.35)',
+          `×${m}`,
+          cx - 2 * u + shake * Math.sin(mk * 90),
+          baseY + 6.5 * u + shake * Math.cos(mk * 70),
+          multSize,
+          col,
+          {
+            align: 'right',
+            scale: 1 + 0.6 * Math.exp(-mk * 10),
+            glow: m >= 3 ? col : undefined,
+          },
         );
-        ctx.restore();
+        text(ctx, formatScore(anim.combo), cx + 2 * u, baseY + 6.5 * u, 5.4 * u, WHITE, {});
+
+        const bw = 28 * u;
+        const bh = 1.1 * u;
+        const g = clamp01(c.grace / COMBO_GRACE);
+        const low = g < 0.35 ? 0.5 + 0.5 * Math.sin(nowS * 28) : 0;
+        plate(ctx, cx - bw / 2 - u, baseY + 11 * u, bw, bh, 'rgba(0,0,0,0.6)');
+        plate(ctx, cx - bw / 2 - u, baseY + 11 * u, bw * g, bh, low > 0.5 ? RED : col);
+        if (low) {
+          ctx.save();
+          ctx.globalAlpha = low * 0.6;
+          plate(
+            ctx,
+            cx - bw / 2 - 1.6 * u,
+            baseY + 10.4 * u,
+            bw + 1.2 * u,
+            bh + 1.2 * u,
+            'rgba(255,43,58,0.35)',
+          );
+          ctx.restore();
+        }
       }
     }
 
     // popups are appended oldest-first; keep the 3 newest tricks, newest lowest
     const live = v.popups
       .filter((p) => p.kind !== 'trick')
-      .concat(v.popups.filter((p) => p.kind === 'trick').slice(-3));
+      .concat(failed ? [] : v.popups.filter((p) => p.kind === 'trick').slice(-3));
     const tricks = live.filter((p) => p.kind === 'trick');
     live.forEach((p) =>
       drawPopup(
