@@ -187,6 +187,12 @@ describe('car', () => {
 });
 
 describe('clutch kick', () => {
+  it('in-gear rpm stays below the limiter at top speed', () => {
+    const c = movingCar(400);
+    run(c, input({ throttle: 1 }), 1);
+    expect(c.rpm).toBeLessThanOrEqual(0.97);
+  });
+
   const peakSlip = (c: CarState, revSeconds: number) => {
     run(c, input({ throttle: 1, clutch: true, steer: 1 }), revSeconds);
     return Math.max(...run(c, input({ throttle: 1, steer: 1 }), 0.8).map((d) => Math.abs(d.slip)));

@@ -185,7 +185,7 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   }
   car.rpm = clutch
     ? clamp(car.rpm + (rawThrottle > 0 ? 1 : -1) * T.clutchRevRate * dt, 0.15, 1)
-    : clamp(0.15 + 0.75 * t + 0.1 * throttle, 0, 1);
+    : clamp(0.15 + 0.75 * t + 0.1 * throttle, 0, 0.97); // <1: only clutch revving reaches the limiter
 
   return driftInfo(car);
 }

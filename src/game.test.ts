@@ -382,6 +382,18 @@ describe('menu', () => {
     expect(game.view().render.map).toBe(testpad);
   });
 
+  it('clears clutch state on pause resume', () => {
+    const { game, step } = rig();
+    step({ confirm: true });
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    step({ throttle: 1, clutch: true }, 60);
+    expect(game.debug.car.clutchHeld).toBe(true);
+    step({ pause: true });
+    step({ confirm: true });
+    expect(game.debug.car.clutchHeld).toBe(false);
+    expect(game.debug.car.clutchKick).toBe(0);
+  });
+
   it('paused: enter resumes, esc goes to the title', () => {
     const { game, step } = rig();
     step({ confirm: true });
@@ -579,6 +591,14 @@ describe('main menu, garage, settings', () => {
         f.solids.length = n;
       }
     };
+
+    it('revving with the clutch held does not count as stuck', () => {
+      wedge(garage, ({ game, step }) => {
+        const { x, y } = garage.start.pos;
+        step({ throttle: 1, clutch: true }, Math.round(3 / DT));
+        expect(Math.hypot(game.debug.car.pos.x - x, game.debug.car.pos.y - y)).toBeLessThan(0.5);
+      });
+    });
 
     it('puts a wedged car on the route, heading along it, and loses the combo', () => {
       wedge(garage, ({ game, step }) => {

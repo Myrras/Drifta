@@ -193,6 +193,7 @@ export function createGame(
   /** put the car on the route (or start) nearest to it, heading along it, clear of solids */
   function recover(): void {
     const car = s.car;
+    Object.assign(car, { clutchHeld: false, clutchKick: 0 });
     const floor = map.floors[s.floorIndex];
     const clear = () => !collide(car, floor.solids, floor.circles);
     const place = (pos: Vec, angle: number) =>
@@ -270,7 +271,7 @@ export function createGame(
       } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
     const nearDist = s.drift.drifting ? nearestDistance(car, solids, circles) : Infinity;
-    const pushing = Math.max(input.throttle, input.brake) > STUCK_INPUT;
+    const pushing = Math.max(input.clutch ? 0 : input.throttle, input.brake) > STUCK_INPUT;
     const touching = hit !== null || nearestDistance(car, solids, circles) < STUCK_NEAR;
     const slow = Math.hypot(car.vel.x, car.vel.y) < STUCK_SPEED;
     s.stuck = pushing && slow && touching && !s.helix ? s.stuck + dt : 0;
@@ -455,8 +456,10 @@ export function createGame(
           } else run(input, dt);
           break;
         case 'paused':
-          if (input.confirm) s.phase = 'run';
-          else if (input.pause) toTitle();
+          if (input.confirm) {
+            s.phase = 'run';
+            Object.assign(s.car, { clutchHeld: false, clutchKick: 0 }); // no stale kick on resume
+          } else if (input.pause) toTitle();
           break;
         case 'results':
           s.resultsAge += dt;
