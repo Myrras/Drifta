@@ -29,7 +29,11 @@ export interface Settings {
   tune: Tune;
   /** player name, for multiplayer name tags */
   name: string;
+  /** per-map option (traffic / pillars) by map name; missing = on */
+  hazards: Record<string, boolean>;
 }
+
+export const hazardsOn = (s: Settings, mapName: string): boolean => s.hazards[mapName] !== false;
 
 export const NAME_RE = /^[A-Z0-9_]{1,12}$/;
 export function cleanName(s: string): string {
@@ -59,6 +63,7 @@ export const defaultSettings = (): Settings => ({
   color: '#d32030',
   tune: 'street',
   name: guestName(),
+  hazards: {},
 });
 
 const vol = (v: unknown, d: number) =>
@@ -74,6 +79,11 @@ const readRaw = (storage?: SettingsStorage): Record<string, unknown> | null => {
 };
 
 const validName = (v: unknown): v is string => typeof v === 'string' && NAME_RE.test(v);
+
+const bools = (v: unknown): Record<string, boolean> =>
+  v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v).filter(([, b]) => typeof b === 'boolean'))
+    : {};
 
 /** true when storage holds a valid name (else loadSettings made up a guest name) */
 export const hasStoredName = (storage?: SettingsStorage): boolean =>
@@ -102,6 +112,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
     tune: raw.tune === 'performance' || raw.tune === 'street' ? raw.tune : d.tune,
     name: validName(raw.name) ? raw.name : d.name,
+    hazards: bools(raw.hazards),
   };
 }
 

@@ -49,6 +49,7 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo, tokyoCity, tokyoRoute } from './maps/tokyo';
 import { drivethru, drivethruRoute } from './maps/drivethru';
+import { mapOption, OPTION_LABEL, withoutPillars } from './maps/options';
 import { dailyFor, finishDaily, liveStreak, localDate, type Daily } from './daily';
 import { createTraffic, type CityGraph } from './traffic';
 import { PLAYER_MODELS, type CarStats } from './models';
@@ -66,6 +67,7 @@ import {
   CLIP_QUALITIES,
   cleanName,
   hasStoredName,
+  hazardsOn,
   loadSettings,
   saveSettings,
   type ClipQuality,
@@ -150,12 +152,8 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-const TITLE_ROWS = 6;
-const MP_ROW = 2;
-const GARAGE_ROW = 3;
-const SETTINGS_ROW = 4;
-const USERNAME_ROW = TITLE_ROWS - 1;
-type LobbyId = 'map' | 'ready' | 'garage' | 'start' | 'leave';
+type TitleId = 'play' | 'option' | 'daily' | 'mp' | 'garage' | 'settings' | 'username';
+type LobbyId = 'map' | 'option' | 'ready' | 'garage' | 'start' | 'leave';
 const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
@@ -226,6 +224,7 @@ export function createGame(
   let mp: Session | null = null;
   let mpMode: 'host' | 'join' = 'host';
   let mpWait = -1;
+  let mpHazards = true; // agreed at race start
   let mpOpen = false; // connect overlay is up: title ignores input
   let garageFromMp = false; // garage opened from the lobby: exits back to it
   const inMp = () => mp !== null;
@@ -322,6 +321,20 @@ export function createGame(
     const hit = collide(a.car, solids, circles);
     if (hit) bounce(a.car, hit);
   }
+  /** the map's option (traffic / pillars) for this run: MP uses the host's choice */
+  const hazards = () => !mapOption(map) || (mp ? mpHazards : hazardsOn(cfg, map.name));
+  /** geometry the run drives on; `map` stays the identity for bests, routes, cities */
+  const geo = () => (mapOption(map) === 'pillars' && !hazards() ? withoutPillars(map) : map);
+  const titleIds = (): TitleId[] => [
+    'play',
+    ...(mapOption(map) ? (['option'] as const) : []),
+    'daily',
+    'mp',
+    'garage',
+    'settings',
+    'username',
+  ];
+  const titleRow = (id: TitleId) => titleIds().indexOf(id);
   const fresh = () => ({
     car: createCar(map.start, tunedStats(cfg.car, cfg.tune)),
     floorIndex: map.start.floor,
@@ -331,7 +344,7 @@ export function createGame(
     countdown: COUNTDOWN_SECONDS,
     /** live traffic, new seed every run */
     traffic: CITIES.has(map)
-      ? createTraffic(CITIES.get(map)!, (Math.random() * 2 ** 32) >>> 0)
+      ? createTraffic(CITIES.get(map)!, (Math.random() * 2 ** 32) >>> 0, { cars: hazards() })
       : null,
     popups: [] as Popup[],
     shake: 0,
@@ -400,6 +413,7 @@ export function createGame(
     daily = dailyFor(dailyDate, maps);
     sel = maps.indexOf(daily.map);
     map = daily.map;
+    row = titleRow('daily');
     if (daily.car && !carBackup) {
       carBackup = { car: cfg.car, color: cfg.color };
       cfg.car = daily.car;
@@ -564,7 +578,7 @@ export function createGame(
   function recover(): void {
     const car = s.car;
     Object.assign(car, { clutchHeld: false, clutchKick: 0 });
-    const floor = map.floors[s.floorIndex];
+    const floor = geo().floors[s.floorIndex];
     const clear = () => !collide(car, floor.solids, floor.circles);
     const place = (pos: Vec, angle: number) =>
       Object.assign(car, { pos: { ...pos }, angle, vel: { x: 0, y: 0 }, angVel: 0 });
@@ -636,7 +650,7 @@ export function createGame(
     rec.add(s.time, s.car.pos.x, s.car.pos.y, s.car.angle, s.floorIndex);
     let hard = false;
     const car = s.car;
-    const floor = map.floors[s.floorIndex];
+    const floor = geo().floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle, cfg.car, cfg.tune);
     if (floor !== boomFloor) boomList = boomCars((boomFloor = floor).solids);
@@ -693,8 +707,9 @@ export function createGame(
     }
     const yawDelta = car.angVel * dt;
     const rampDrift = stepHelix();
-    const clip = (s.clip = zoneAt(car.pos, map.floors[s.floorIndex].clipZones));
-    const bonusAll = map.floors[s.floorIndex].bonusZones ?? [];
+    const here = geo().floors[s.floorIndex];
+    const clip = (s.clip = zoneAt(car.pos, here.clipZones));
+    const bonusAll = here.bonusZones ?? [];
     const bonus = bonusAll.filter((z) => inRect(car.pos, z));
     const nearPolice = s.drift.drifting
       ? nearestDistance(
@@ -758,7 +773,7 @@ export function createGame(
   function exitMp(msg = ''): void {
     if (s.phase === 'garage') prog.looks = structuredClone(savedLooks); // drop the draft
     toTitle();
-    go('title', MP_ROW);
+    go('title', titleRow('mp'));
     if (msg) [toastMsg, toastT] = [msg, 3];
   }
   /** rematch: back to the lobby with a fresh run; the session keeps the map */
@@ -783,20 +798,26 @@ export function createGame(
     if (!r) return;
     [mpGone, mpToastT] = [false, 0];
     const m = (mp = createSession(r.link, r.role, meInfo()));
-    m.onStart((name, inMs) => {
+    m.onStart((name, inMs, hz) => {
       if (mp !== m) return;
       const i = maps.findIndex((x) => x.name === name);
       if (i < 0) return exitMp();
       map = maps[(sel = i)];
+      mpHazards = hz;
       mpWait = inMs / 1000;
     });
     go('mplobby');
   }
+  const lobbyOption = (m: Session) => {
+    const x = maps.find((x) => x.name === m.map);
+    return x ? mapOption(x) : null;
+  };
   const lobbyIds = (m: Session): LobbyId[] =>
     m.phase === 'handshake'
       ? ['leave']
       : [
           'map',
+          ...(lobbyOption(m) ? (['option'] as const) : []),
           'ready',
           ...(m.phase === 'lobby' && mpWait < 0 ? (['garage'] as const) : []),
           ...(m.role === 'host' ? (['start'] as const) : []),
@@ -813,7 +834,8 @@ export function createGame(
       }
       return;
     }
-    if (m.role === 'host' && m.phase === 'lobby' && m.map === null) m.pickMap(maps[0].name);
+    if (m.role === 'host' && m.phase === 'lobby' && m.map === null)
+      m.pickMap(maps[0].name, hazardsOn(cfg, maps[0].name));
     const ids = lobbyIds(m);
     row = Math.min(row, ids.length - 1);
     if (dv) {
@@ -827,7 +849,12 @@ export function createGame(
     } else if (id === 'map' && dir && m.role === 'host') {
       audio.ui('adjust');
       const i = maps.findIndex((x) => x.name === m.map);
-      m.pickMap(maps[cycle(Math.max(0, i), dir, maps.length)].name);
+      const name = maps[cycle(Math.max(0, i), dir, maps.length)].name;
+      m.pickMap(name, hazardsOn(cfg, name));
+    } else if (id === 'option' && m.map !== null && (input.confirm || dir) && m.role === 'host') {
+      audio.ui(dir ? 'adjust' : 'confirm');
+      m.setHazards((cfg.hazards[m.map] = !m.hazards));
+      save();
     } else if (id === 'ready' && (input.confirm || dir)) {
       audio.ui('confirm');
       m.setReady(!m.ready);
@@ -851,7 +878,7 @@ export function createGame(
   /** back to where the garage was opened from */
   function leaveGarage(): void {
     if (garageFromMp && mp) go('mplobby', Math.max(0, lobbyIds(mp).indexOf('garage')));
-    else go('title', GARAGE_ROW);
+    else go('title', titleRow('garage'));
     garageFromMp = false;
   }
   function garageInput(input: InputState, dir: number, dt: number): void {
@@ -973,7 +1000,7 @@ export function createGame(
       } else confirmReset = true;
     } else if ((row === back && input.confirm) || input.pause) {
       audio.ui('back');
-      go('title', SETTINGS_ROW);
+      go('title', titleRow('settings'));
     }
   }
 
@@ -995,26 +1022,36 @@ export function createGame(
       const date = today();
       const dl = dailyFor(date, maps);
       const done = prog.daily.lastClear === date;
-      const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` },
-        {
-          label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
-          value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
-        },
-        {
-          label: 'MULTIPLAYER',
-          value: (row === MP_ROW && noteT > 0 && note) || `◀ ${mpMode.toUpperCase()} ▶`,
-        },
-        { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
-        { label: 'SETTINGS' },
-        {
-          label: 'USERNAME',
-          value:
-            draft !== null
-              ? draft + (caretT % 1 < 0.5 ? '_' : ' ')
-              : (row === USERNAME_ROW && noteT > 0 && note) || cfg.name,
-        },
-      ];
+      const ids = titleIds();
+      const noted = (id: TitleId) => ids[row] === id && noteT > 0 && note;
+      const opt = mapOption(map);
+      const rows = ids.map((id): MenuRow => {
+        switch (id) {
+          case 'play':
+            return { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` };
+          case 'option':
+            return { label: OPTION_LABEL[opt!], value: hazardsOn(cfg, map.name) ? 'ON' : 'OFF' };
+          case 'daily':
+            return {
+              label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
+              value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
+            };
+          case 'mp':
+            return { label: 'MULTIPLAYER', value: noted('mp') || `◀ ${mpMode.toUpperCase()} ▶` };
+          case 'garage':
+            return { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name };
+          case 'settings':
+            return { label: 'SETTINGS' };
+          case 'username':
+            return {
+              label: 'USERNAME',
+              value:
+                draft !== null
+                  ? draft + (caretT % 1 < 0.5 ? '_' : ' ')
+                  : noted('username') || cfg.name,
+            };
+        }
+      });
       return {
         ...base,
         screen: 'title',
@@ -1032,6 +1069,8 @@ export function createGame(
             label: 'MAP',
             value: m.map === null ? '-' : m.role === 'host' ? `◀ ${m.map} ▶` : m.map,
           };
+        if (id === 'option')
+          return { label: OPTION_LABEL[lobbyOption(m)!], value: m.hazards ? 'ON' : 'OFF' };
         if (id === 'ready') return { label: 'READY', value: m.ready ? 'YES' : 'NO' };
         if (id === 'garage') return { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name };
         return { label: id.toUpperCase() };
@@ -1192,7 +1231,7 @@ export function createGame(
             go('title');
           }
           break;
-        case 'title':
+        case 'title': {
           if (draft !== null || swallow || mpOpen) break;
           if (input.cheat) {
             // pad Konami code; its final A must not also pick the row
@@ -1201,40 +1240,49 @@ export function createGame(
             audio.ui('confirm');
             break;
           }
+          const ids = titleIds();
           if (dv) audio.ui('move');
-          row = cycle(row, dv, TITLE_ROWS);
-          if (dir && row === 0) {
+          row = cycle(Math.min(row, ids.length - 1), dv, ids.length);
+          const id = ids[row];
+          if (id === 'option' && (dir || input.confirm)) {
+            audio.ui(dir ? 'adjust' : 'confirm');
+            cfg.hazards[map.name] = !hazardsOn(cfg, map.name);
+            save();
+            break;
+          }
+          if (dir && id === 'play') {
             audio.ui('adjust');
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
             Object.assign(s, fresh(), { runId: s.runId + 1 });
-          } else if (dir && row === MP_ROW) {
+          } else if (dir && id === 'mp') {
             audio.ui('adjust');
             mpMode = mpMode === 'host' ? 'join' : 'host';
           }
           if (input.confirm) {
             audio.resume();
             audio.ui('confirm');
-            if (row === 0) newRun();
-            else if (row === 1) startDaily();
-            else if (row === MP_ROW) {
+            if (id === 'play') newRun();
+            else if (id === 'daily') startDaily();
+            else if (id === 'mp') {
               if (ui.device === 'pad' || !mpHost) [note, noteT] = ['USE KEYBOARD + MOUSE', 3];
               else {
                 mpOpen = true;
                 mpHost.open(mpMode, joinMp);
               }
-            } else if (row === USERNAME_ROW) {
+            } else if (id === 'username') {
               if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
               else [draft, caretT, noteT] = [cfg.name, 0, 0];
             } else {
               openGarage();
-              go(row === GARAGE_ROW ? 'garage' : 'settings');
+              go(id === 'garage' ? 'garage' : 'settings');
             }
           }
           break;
+        }
         case 'mplobby':
           if (mp) mpLobbyInput(mp, input, dir, dv, dt);
-          else go('title', MP_ROW);
+          else go('title', titleRow('mp'));
           break;
         case 'garage':
           garageInput(input, dir, dt);
@@ -1391,7 +1439,7 @@ export function createGame(
             traffic: null,
           }
         : {
-            map,
+            map: geo(),
             floorIndex: s.floorIndex,
             car,
             drift,

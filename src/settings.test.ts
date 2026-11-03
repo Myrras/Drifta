@@ -4,6 +4,7 @@ import {
   defaultSettings,
   guestName,
   hasStoredName,
+  hazardsOn,
   loadSettings,
   NAME_RE,
   saveSettings,
@@ -81,6 +82,18 @@ describe('settings', () => {
   it('validates the clip quality', () => {
     expect(loadSettings(fake(JSON.stringify({ clips: 'off' }))).clips).toBe('off');
     expect(loadSettings(fake(JSON.stringify({ clips: '4k' }))).clips).toBe('medium');
+  });
+  it('keeps only boolean map options; missing ones read as on', () => {
+    const s = loadSettings(fake(JSON.stringify({ hazards: { A: false, B: true, C: 'no', D: 0 } })));
+    expect(s.hazards).toEqual({ A: false, B: true });
+    expect([hazardsOn(s, 'A'), hazardsOn(s, 'B'), hazardsOn(s, 'C'), hazardsOn(s, 'X')]).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
+    for (const hazards of [null, [false], 'off', 3])
+      expect(loadSettings(fake(JSON.stringify({ hazards }))).hazards).toEqual({});
   });
 
   it('persists', () => {

@@ -86,11 +86,11 @@ const AMBIENT = 0.82; // darkness inside the garage
 const BELOW_GLOW = 0.8;
 const BELOW_GREY = 0.45;
 const BELOW_DIM = 0.45;
-const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
-  [garage, garageRoute],
-  [docks, docksRoute],
-  [tokyo, tokyoRoute],
-  [drivethru, drivethruRoute],
+const ROUTES = new Map<string, { floor: number; points: Vec[] }[]>([
+  [garage.name, garageRoute],
+  [docks.name, docksRoute],
+  [tokyo.name, tokyoRoute],
+  [drivethru.name, drivethruRoute],
 ]);
 const LIGHT_R = 7; // ceiling pool radius
 const HEAD_LEN = 25; // player headlight cones
@@ -828,7 +828,7 @@ function paintArrows(map: GameMap, idx: number): HTMLCanvasElement {
   g.lineJoin = 'round';
   g.lineCap = 'round';
 
-  const routes = (ROUTES.get(map) ?? []).filter((r) => r.floor === idx).map((r) => r.points);
+  const routes = (ROUTES.get(map.name) ?? []).filter((r) => r.floor === idx).map((r) => r.points);
   const rings = map.helixes.filter((h) => h.from === idx || h.from + 1 === idx);
   const blocked = (p: Vec) =>
     p.x < 1 ||
