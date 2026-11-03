@@ -401,6 +401,21 @@ describe('tunes', () => {
     expect(lift(perf, 6000, 1).out).not.toEqual(lift({ ...perf, pops: [0, 0, 0] }, 6000, 1).out);
   });
 
+  // a NaN from the surge filters reaches the master bus and mutes every sound
+  it.each(TURBO)('%s street: lift-off stays finite at 44.1, 48 and 96 kHz', (m) => {
+    for (const sr of [44100, 48000, 96000]) {
+      const dsp = new EngineDSP(sr, engineProfile(m, 'street'));
+      const out = new Float32Array(Math.round(sr * 2.5));
+      for (let i = 0; i < out.length; i += 128) {
+        dsp.setParams({ rpm: 6000, throttle: i < sr ? 1 : 0 });
+        dsp.process(out.subarray(i, i + 128));
+      }
+      expect(dsp.chirps).toBeGreaterThan(0);
+      expect(out.every(Number.isFinite)).toBe(true);
+      expect(peak(out)).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('performance turbo cars still blow off', () => {
     for (const m of TURBO) {
       const { dsp } = lift(engineProfile(m, 'performance'), 6000);

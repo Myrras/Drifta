@@ -503,9 +503,11 @@ function lpcRefit(
   for (let i = 1; i <= P; i++) lpcStep(a, i, fr[i]);
   const M = 1024;
   const r = new Float64Array(P + 1);
-  for (let q = 0; q <= M && (q * sr) / (2 * M) / warp < 24000; q++) {
-    // A at the template frequency heard at bin q (powers of e^-jw by rotation), then cos(m pi q / M) by recurrence
-    const w = (Math.PI * q * sr) / M / warp / 48000;
+  for (let q = 0; q <= M; q++) {
+    // A at the template frequency heard at bin q (powers of e^-jw by rotation), then cos(m pi q / M) by recurrence;
+    // past the template's 24 kHz: its edge level -30 dB, an empty band makes the refit singular (unstable at 96 kHz)
+    const wq = (Math.PI * q * sr) / M / warp / 48000;
+    const w = Math.min(wq, Math.PI);
     const cw = Math.cos(w);
     const sw = Math.sin(w);
     let c = 1;
@@ -519,7 +521,7 @@ function lpcRefit(
       sn = sn * cw + c * sw;
       c = c2;
     }
-    const s = (q === 0 || q === M ? 0.5 : 1) / (re * re + im * im);
+    const s = ((q === 0 || q === M ? 0.5 : 1) * (wq > Math.PI ? 1e-3 : 1)) / (re * re + im * im);
     const c1 = Math.cos((Math.PI * q) / M);
     let cPrev = 1;
     let cm = c1;

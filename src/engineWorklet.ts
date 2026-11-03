@@ -11,13 +11,16 @@ type Msg = { rpm: number; throttle: number } | { profile: EngineProfile };
 
 class EngineProcessor extends AudioWorkletProcessor {
   private dsp = new EngineDSP(sampleRate);
+  private profile?: EngineProfile;
 
   constructor() {
     super();
     // a car change rebuilds the DSP here, outside process(), so the audio loop never allocates
     this.port.onmessage = (e: MessageEvent<Msg>) => {
-      if ('profile' in e.data) this.dsp = new EngineDSP(sampleRate, e.data.profile);
-      else this.dsp.setParams(e.data);
+      if ('profile' in e.data) {
+        this.profile = e.data.profile;
+        this.dsp = new EngineDSP(sampleRate, this.profile);
+      } else this.dsp.setParams(e.data);
     };
   }
 
@@ -25,6 +28,11 @@ class EngineProcessor extends AudioWorkletProcessor {
     const [first, ...rest] = outputs[0];
     if (!first) return true;
     this.dsp.process(first);
+    // a NaN would reach the master bus and mute every sound: drop the block and restart the engine
+    if (!first.every(Number.isFinite)) {
+      first.fill(0);
+      this.dsp = new EngineDSP(sampleRate, this.profile);
+    }
     for (const ch of rest) ch.set(first);
     return true;
   }
