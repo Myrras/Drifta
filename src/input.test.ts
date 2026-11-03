@@ -203,6 +203,36 @@ describe('createInput pad edge tracking', () => {
     state.pad = { connected: true, buttons, axes: [0, 0] };
     expect([input.poll().skip, input.poll().skip]).toEqual([true, false]);
   });
+  it('tab edges fire once for Q/E and LB/RB', () => {
+    const { w, buttons, state, input } = setup();
+    const tabs = () => {
+      const p = input.poll();
+      return [p.tabPrev, p.tabNext];
+    };
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyQ', repeat: false }));
+    w.dispatchEvent(Object.assign(new Event('keyup'), { code: 'KeyQ' }));
+    expect([tabs(), tabs()]).toEqual([
+      [true, false],
+      [false, false],
+    ]);
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyE', repeat: false }));
+    expect([tabs(), tabs()]).toEqual([
+      [false, true],
+      [false, false],
+    ]);
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    buttons[4].pressed = true;
+    expect([tabs(), tabs()]).toEqual([
+      [true, false],
+      [false, false],
+    ]);
+    buttons[4].pressed = false;
+    buttons[5].pressed = true;
+    expect([tabs(), tabs()]).toEqual([
+      [false, true],
+      [false, false],
+    ]);
+  });
   it('pad B (button 1) fires pause once', () => {
     const { buttons, state, input } = setup();
     buttons[1].pressed = true;

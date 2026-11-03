@@ -135,13 +135,15 @@ const MAPPED = new Set([
   'KeyR',
   'KeyT',
   'KeyN',
+  'KeyQ',
+  'KeyE',
   'Enter',
   'NumpadEnter',
 ]);
 
 export type InputDevice = 'kb' | 'pad';
 export type PadStyle = 'ps' | 'xbox';
-/** InputState plus last-used device info (types.ts is untouched). */
+/** InputState with the last-used device always set. */
 export type PolledInput = InputState & { device: InputDevice; padStyle: PadStyle; skip: boolean };
 
 export const padStyleOf = (id: string): PadStyle =>
@@ -170,6 +172,8 @@ export function createInput(
     tune: latchedEdge(),
     save: latchedEdge(),
     skip: latchedEdge(),
+    tabPrev: latchedEdge(),
+    tabNext: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -184,6 +188,8 @@ export function createInput(
     ArrowUp: kbEdge.up,
     KeyT: kbEdge.tune,
     KeyN: kbEdge.skip,
+    KeyQ: kbEdge.tabPrev,
+    KeyE: kbEdge.tabNext,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
@@ -209,6 +215,8 @@ export function createInput(
     tune: edgeTracker(),
     save: edgeTracker(),
     skip: edgeTracker(),
+    tabPrev: edgeTracker(),
+    tabNext: edgeTracker(),
   };
 
   return {
@@ -236,6 +244,15 @@ export function createInput(
         skip: pick(
           kbEdge.skip.poll(held.has('KeyN')),
           padEdge.skip(pad?.buttons[5]?.pressed ?? false),
+        ),
+        // LB / RB are clutch / skip in-game; only the settings screen reads the tab edges
+        tabPrev: pick(
+          kbEdge.tabPrev.poll(held.has('KeyQ')),
+          padEdge.tabPrev(pad?.buttons[4]?.pressed ?? false),
+        ),
+        tabNext: pick(
+          kbEdge.tabNext.poll(held.has('KeyE')),
+          padEdge.tabNext(pad?.buttons[5]?.pressed ?? false),
         ),
         pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
         restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),

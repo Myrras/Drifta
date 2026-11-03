@@ -1,5 +1,7 @@
 import type {
+  CarState,
   Combo,
+  Floor,
   DriftInfo,
   GameMap,
   Helix,
@@ -11,11 +13,13 @@ import type {
   ScoreEvent,
   Trick,
 } from './types';
-import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
+import type { FrameView, MenuRow, MenuView, Popup, RenderView, Results, UiContext } from './view';
 import type { createAudio } from './audio';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
+import { createAttractDriver } from './attract';
+import { engineProfile, engineRpm } from './engine';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
@@ -82,7 +86,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
 ]);
-const NEAR_RANGE = 8; // m; solids farther than this cannot matter for collide or near-miss
+const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const TOP_DRIFTS = 3;
@@ -99,7 +103,21 @@ const TABS = [
   { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
   { name: 'GAME', ids: ['reset'] },
 ] as const;
-const UI_DEVICE = { device: 'kb', padStyle: 'xbox' } as const; // a later task wires the real input
+const REDLINE_BELOW_LIMIT = 200; // rpm; profiles only store the limiter (Celica 7200 -> 7000)
+const ATTRACT_ROUTE = docksRoute[0].points;
+const ATTRACT_END = 10; // m from the route end: loop back to the start
+const pick = <T>(xs: readonly T[]) => xs[Math.floor(Math.random() * xs.length)];
+/** solids near the car: farther ones cannot matter for collide or near-miss */
+const nearby = (car: CarState, floor: Floor) => {
+  const near = (x: number, y: number, r: number) =>
+    (x - car.pos.x) ** 2 + (y - car.pos.y) ** 2 <= (r + NEAR_RANGE) ** 2;
+  return {
+    solids: floor.solids.filter((o) =>
+      near(o.x + o.w / 2, o.y + o.h / 2, Math.hypot(o.w, o.h) / 2),
+    ),
+    circles: floor.circles.filter((o) => near(o.x, o.y, o.r)),
+  };
+};
 /** HUD gear, derived from forward speed like car.ts's rpm sawtooth (TUNING.gearTops). */
 const gearOf = (vf: number): string => {
   if (vf < -0.5) return 'R';
@@ -142,6 +160,37 @@ export function createGame(
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   let comboIds = 0;
+  const ui: Pick<UiContext, 'device' | 'padStyle'> = { device: 'kb', padStyle: 'xbox' };
+
+  /** menu background: an AI car drifting the docks. Silent, own state, never touches the run. */
+  let attractLoops = 0;
+  const newAttract = () => {
+    const model = pick(MODEL_IDS);
+    return {
+      car: createCar(docks.start, PLAYER_MODELS[model].stats),
+      driver: createAttractDriver(ATTRACT_ROUTE),
+      player: { model, color: pick(PLAYER_MODELS[model].colors) },
+      drift: IDLE,
+      handbrake: false,
+      brake: 0,
+      runId: -++attractLoops, // never equals a real runId, so the renderer resets on every switch
+    };
+  };
+  let attract: ReturnType<typeof newAttract> | null = newAttract();
+  function stepAttract(dt: number): void {
+    const end = ATTRACT_ROUTE[ATTRACT_ROUTE.length - 1];
+    const at = attract?.car.pos;
+    if (!attract || !at || Math.hypot(at.x - end.x, at.y - end.y) < ATTRACT_END)
+      attract = newAttract(); // the docks route is open: teleport back to the start
+    const a = attract;
+    const input = a.driver.input(a.car, dt);
+    a.drift = stepCar(a.car, input, dt);
+    a.handbrake = input.handbrake;
+    a.brake = input.brake;
+    const { solids, circles } = nearby(a.car, docks.floors[0]);
+    const hit = collide(a.car, solids, circles);
+    if (hit) bounce(a.car, hit);
+  }
   const fresh = () => ({
     car: createCar(map.start, tunedStats(cfg.car, cfg.tune)),
     floorIndex: map.start.floor,
@@ -168,6 +217,7 @@ export function createGame(
   const s = { phase: 'title' as Phase, runId: 0, handbrake: false, brake: 0, ...fresh() };
 
   const newRun = () => {
+    attract = null;
     audio.stop();
     audio.music(true);
     audio.setIntensity((intensity = 0.15));
@@ -350,12 +400,7 @@ export function createGame(
     audio.update(car, s.drift, input.throttle, cfg.car, cfg.tune);
     const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
     if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
-    const near = (x: number, y: number, r: number) =>
-      (x - car.pos.x) ** 2 + (y - car.pos.y) ** 2 <= (r + NEAR_RANGE) ** 2;
-    const solids = floor.solids.filter((o) =>
-      near(o.x + o.w / 2, o.y + o.h / 2, Math.hypot(o.w, o.h) / 2),
-    );
-    const circles = floor.circles.filter((o) => near(o.x, o.y, o.r));
+    const { solids, circles } = nearby(car, floor);
     const hit = collide(car, solids, circles);
     s.scrape = 0;
     if (hit) {
@@ -433,10 +478,7 @@ export function createGame(
     }
   }
 
-  function settingsInput(
-    input: InputState & { tabPrev?: boolean; tabNext?: boolean },
-    dir: number,
-  ): void {
+  function settingsInput(input: InputState, dir: number): void {
     const back = TABS[tab].ids.length + 1;
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (dv) {
@@ -484,7 +526,7 @@ export function createGame(
 
   function menuView(): MenuView | null {
     const base = {
-      ui: { theme: cfg.menuTheme, ...UI_DEVICE },
+      ui: { theme: cfg.menuTheme, ...ui },
       row,
       items: maps.map((m) => m.name),
       selected: sel,
@@ -553,6 +595,8 @@ export function createGame(
 
   return {
     update(input: InputState, dt: number): void {
+      if (input.device) ui.device = input.device;
+      if (input.padStyle) ui.padStyle = input.padStyle;
       s.handbrake = input.handbrake;
       s.brake = input.brake;
       for (const p of s.popups) p.age += dt;
@@ -565,6 +609,7 @@ export function createGame(
         newRun();
         return;
       }
+      if (s.phase === 'title' || s.phase === 'settings') stepAttract(dt);
       switch (s.phase) {
         case 'title':
           row = cycle(row, (input.down ? 1 : 0) - (input.up ? 1 : 0), TITLE_ROWS);
@@ -637,23 +682,43 @@ export function createGame(
           ? { toFloor: h.from + 1, t }
           : { toFloor: h.from, t: 1 - t }
         : null;
+      const a = s.phase === 'title' || s.phase === 'settings' ? attract : null;
+      const prof = engineProfile(cfg.car, cfg.tune); // same mapping as the engine audio
+      const render: RenderView = a
+        ? {
+            map: docks,
+            floorIndex: 0,
+            car: a.car,
+            drift: a.drift,
+            handbrake: a.handbrake,
+            brake: a.brake,
+            fade: 0,
+            blend: null,
+            shake: 0,
+            player: a.player,
+            scrape: 0,
+            impact: 0,
+            runId: a.runId,
+            clip: null,
+          }
+        : {
+            map,
+            floorIndex: s.floorIndex,
+            car,
+            drift,
+            handbrake: s.handbrake,
+            brake: s.brake,
+            fade: 0,
+            blend,
+            shake: cfg.shake ? s.shake : 0,
+            player: { model: cfg.car, color: cfg.color },
+            scrape: s.scrape,
+            impact: cfg.shake ? s.shake : 0,
+            runId: s.runId,
+            clip: drift.drifting ? s.clip : null,
+          };
       return {
-        render: {
-          map,
-          floorIndex: s.floorIndex,
-          car,
-          drift,
-          handbrake: s.handbrake,
-          brake: s.brake,
-          fade: 0,
-          blend,
-          shake: cfg.shake ? s.shake : 0,
-          player: { model: cfg.car, color: cfg.color },
-          scrape: s.scrape,
-          impact: cfg.shake ? s.shake : 0,
-          runId: s.runId,
-          clip: drift.drifting ? s.clip : null,
-        },
+        render,
         hud: {
           phase: s.phase,
           time: s.time,
@@ -667,9 +732,9 @@ export function createGame(
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
           best: bests[sel],
           menu: menuView(),
-          ui: { theme: cfg.menuTheme, ...UI_DEVICE },
-          rpm: car.rpm,
-          redline: 1,
+          ui: { theme: cfg.menuTheme, ...ui },
+          rpm: engineRpm(car.rpm, prof),
+          redline: prof.limit - REDLINE_BELOW_LIMIT,
           gear: gearOf(car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle)),
           results:
             s.phase === 'results' && s.results
