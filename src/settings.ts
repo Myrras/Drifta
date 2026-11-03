@@ -2,7 +2,8 @@ import { PLAYER_MODELS } from './models';
 import { TRACKS, type Track } from './music';
 import type { PlayerModel } from './types';
 
-export type Tune = 'performance' | 'street';
+export type { Tune } from './engine';
+import type { Tune } from './engine';
 
 export interface Settings {
   master: number;

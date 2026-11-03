@@ -1,11 +1,8 @@
 import type { CarState, DriftInfo, PlayerModel } from './types';
-import { ENGINE_PROFILES, engineRpm } from './engine';
+import { engineProfile, engineRpm } from './engine';
 import engineWorkletUrl from './engineWorklet.ts?worker&url';
 import { createMusic, type Track } from './music';
 import type { Tune } from './settings';
-
-// shortcut: replaced by engineProfile(model, tune) from ./engine at merge
-const profileFor = (model: PlayerModel, _tune: Tune) => ENGINE_PROFILES[model];
 
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
@@ -184,7 +181,7 @@ export function createAudio() {
       if (!ctx) return;
       if (engNode && ctx.currentTime - lastPost >= 1 / 60) {
         lastPost = ctx.currentTime;
-        const prof = profileFor(model, tune);
+        const prof = engineProfile(model, tune);
         if (`${model}/${tune}` !== engKey) {
           engKey = `${model}/${tune}`;
           engNode.port.postMessage({ profile: prof });
