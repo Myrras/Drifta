@@ -1,7 +1,9 @@
 import { savePhoto } from './photo';
 import { createRenderer } from './render';
 import { drawHud } from './hud';
-import { createGame } from './game';
+import { createGame, type MpHost } from './game';
+import { createConnector } from './net/link';
+import { openLobby } from './ui/lobby';
 import { loadProgress } from './progress';
 import { createInput } from './input';
 import { createAudio } from './audio';
@@ -69,6 +71,9 @@ const musicHost = {
   clear: clearLibrary,
   size: async () => `${Math.round((await libraryBytes()) / 2 ** 20)} / ${MAX_BYTES / 2 ** 20} MB`,
 };
+const mpHost: MpHost = {
+  open: (mode, done) => void openLobby(mode, createConnector(), done),
+};
 const game = createGame(
   [garage, docks, tokyo, drivethru, testpad],
   audio,
@@ -77,6 +82,8 @@ const game = createGame(
   clips,
   musicHost,
   loadProgress(),
+  undefined,
+  mpHost,
 );
 
 const resume = () => audio.resume();

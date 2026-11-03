@@ -127,6 +127,12 @@ const PICK_HINTS: [Action, string][] = [
   ['confirm', 'use car pick'],
   ['back', 'cancel'],
 ];
+const LOBBY_HINTS: [Action, string][] = [
+  ['navigate', 'move'],
+  ['adjust', 'map'],
+  ['confirm', 'select'],
+  ['back', 'leave'],
+];
 const H = {
   starter: '',
   pick: '',
@@ -136,6 +142,7 @@ const H = {
   drive: '',
   settings: '',
   garage: '',
+  lobby: '',
   tabL: '',
   tabR: '',
 };
@@ -150,6 +157,7 @@ function hintsFor(ui: UiContext): typeof H {
     H.garage = hintLine(GARAGE_HINTS, ui.device, ui.padStyle);
     H.starter = hintLine(STARTER_HINTS, ui.device, ui.padStyle);
     H.pick = hintLine(PICK_HINTS, ui.device, ui.padStyle);
+    H.lobby = hintLine(LOBBY_HINTS, ui.device, ui.padStyle);
     [H.tabL, H.tabR] = glyph('tabs', ui.device, ui.padStyle).split('/');
   }
   return H;
@@ -330,6 +338,7 @@ function rows(
   first: number,
   base: number,
   hi: number,
+  dim = -1,
 ): void {
   const { th, u, w } = F;
   const pw = Math.min(72 * u, w * 0.94);
@@ -363,7 +372,7 @@ function rows(
     const r = list[i];
     const e = enter(i + first, base);
     if (e <= 0) continue;
-    g.globalAlpha = e;
+    g.globalAlpha = i === dim ? e * 0.4 : e;
     const y = top + i * step;
     const on = i === sel;
     const x0 = cx - pw / 2 + 3.4 * u + (1 - e) * dx;
@@ -747,6 +756,30 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   hints(g, hk.title, hk.drive);
 }
 
+// ---------- multiplayer lobby ----------
+
+function drawMpLobby(g: CanvasRenderingContext2D, m: MenuView, hk: typeof H): void {
+  const { th, u, w, h, now } = F;
+  const step = 10 * u;
+  const pw = Math.min(72 * u, w * 0.94);
+  const top = h * 0.2;
+  const mp = m.mp;
+  heading(g, mp ? `VS ${mp.rival}` : 'MULTIPLAYER', w / 2, top, pw);
+  const sub = vhs() ? th.accent : th.accent2;
+  g.globalAlpha = enter(1, A.open);
+  if (m.note) text(g, m.note, w / 2, top + 9 * u, th.font(700, 3 * u, vhs()), sub, 'center');
+  if (mp) {
+    const s = mp.rivalReady ? `${mp.rival} READY` : `WAITING FOR ${mp.rival}`;
+    text(g, s, w / 2, top + 13.6 * u, th.font(600, 2.6 * u), th.dim, 'center');
+  }
+  g.globalAlpha = 1;
+  const start = m.rows.findIndex((r) => r.label === 'START');
+  const off = start >= 0 && !(mp?.ready && mp.rivalReady) ? start : -1;
+  const rowsTop = Math.min(top + 24 * u, h - 9 * u - 4 * u - (m.rows.length - 1) * step);
+  rows(g, m.rows, m.row, rowsTop, step, 0, A.rowsOpen, selPos(now), off);
+  hints(g, hk.lobby, '');
+}
+
 /** Draws title / garage / settings; returns false when no menu is active. */
 export function drawMenu(
   ctx: CanvasRenderingContext2D,
@@ -773,6 +806,8 @@ export function drawMenu(
     else if (gm) drawGarage(ctx, gm, 'GARAGE', hk.garage, m.row, gm.lock?.offer ? hk.pick : '');
   } else if (m.screen === 'title') {
     drawTitle(ctx, v, m, hk);
+  } else if (m.screen === 'mplobby') {
+    drawMpLobby(ctx, m, hk);
   } else {
     const pw = Math.min(72 * u, width * 0.94);
     heading(ctx, 'SETTINGS', width / 2, height * 0.14, pw);

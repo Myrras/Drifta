@@ -134,7 +134,17 @@ export interface Hit {
   depth: number;
 }
 export type Trick =
-  'DRIFT' | 'CLOSE CALL' | 'SWITCHBACK' | 'LONG DRIFT' | '360' | 'RAMP DRIFT' | 'CLIP' | 'NEAR MISS' | 'SCRAMBLE' | 'DRIVE-THRU' | 'COP SHOW';
+  | 'DRIFT'
+  | 'CLOSE CALL'
+  | 'SWITCHBACK'
+  | 'LONG DRIFT'
+  | '360'
+  | 'RAMP DRIFT'
+  | 'CLIP'
+  | 'NEAR MISS'
+  | 'SCRAMBLE'
+  | 'DRIVE-THRU'
+  | 'COP SHOW';
 /** frozen = floor fade in progress: grace timer paused, no scoring */
 export interface ScoreFrame {
   drift: DriftInfo;
@@ -171,6 +181,7 @@ export type Phase =
   | 'title'
   | 'garage'
   | 'settings'
+  | 'mplobby'
   | 'countdown'
   | 'run'
   | 'paused'

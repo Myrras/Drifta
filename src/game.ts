@@ -63,6 +63,8 @@ import {
   type Tune,
 } from './settings';
 import { comboValue, createScoring, forceBank, stepScoring, timeBonus, zoneAt } from './scoring';
+import type { Link, PlayerInfo } from './net/protocol';
+import { createSession, type Session } from './net/session';
 
 export type AudioLike = ReturnType<typeof createAudio>;
 /** MY MUSIC library hooks (browser side, see main.ts). */
@@ -72,6 +74,13 @@ export interface MusicHost {
   clear(): Promise<void>;
   /** e.g. '84 / 500 MB' */
   size(): Promise<string>;
+}
+/** Multiplayer connect flow (browser side, see main.ts); done(null) = cancelled. */
+export interface MpHost {
+  open(
+    mode: 'host' | 'join',
+    done: (r: { link: Link; role: 'host' | 'guest' } | null) => void,
+  ): void;
 }
 export interface BestStore {
   get(): number;
@@ -131,7 +140,10 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-const TITLE_ROWS = 5;
+const TITLE_ROWS = 6;
+const MP_ROW = 2;
+const GARAGE_ROW = 3;
+const SETTINGS_ROW = 4;
 const USERNAME_ROW = TITLE_ROWS - 1;
 const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
@@ -181,6 +193,7 @@ export function createGame(
   prog: Progress = { ...defaultProgress(), starterChosen: true, unlocked: [...MODEL_IDS] },
   /** local date, YYYY-MM-DD; injectable for tests */
   today: () => string = localDate,
+  mpHost?: MpHost,
 ) {
   const cfg = loadSettings(storage);
   if (!hasStoredName(storage)) saveSettings(cfg, storage);
@@ -197,6 +210,13 @@ export function createGame(
   let starter = 0; // index into STARTERS on the first-launch screen
   let offerPick = false; // garage: confirm again spends a car pick on the locked car
   let toastT = 0;
+  let toastMsg = '';
+  // multiplayer session; mpWait = s until the synced countdown (< 0: none)
+  let mp: Session | null = null;
+  let mpMode: 'host' | 'join' = 'host';
+  let mpWait = -1;
+  let mpOpen = false; // connect overlay is up: title ignores input
+  const inMp = () => mp !== null;
   let boomFloor: Floor | null = null; // floor whose boom cars boomList holds
   let boomList: Vec[] = [];
   // daily / legend run in progress; a legend swaps in its car until the title
@@ -357,7 +377,7 @@ export function createGame(
     audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
     rec = createRecorder();
-    ghost = loadGhost(map.name);
+    ghost = inMp() ? null : loadGhost(map.name);
     clips?.begin(cfg.clips);
   };
   function startDaily(): void {
@@ -668,6 +688,9 @@ export function createGame(
       raceLook = lookOf(cfg.car);
     }
     daily = null;
+    mp?.leave();
+    mp = null;
+    mpWait = -1;
     Object.assign(s, fresh(), { phase: 'title', runId: s.runId + 1 });
   };
   const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
@@ -679,6 +702,73 @@ export function createGame(
     if (phase === 'settings') afterChange();
     s.phase = phase;
   };
+
+  /** back to the title on the MULTIPLAYER row, with an optional toast */
+  function exitMp(msg = ''): void {
+    toTitle();
+    go('title', MP_ROW);
+    if (msg) [toastMsg, toastT] = [msg, 3];
+  }
+  function joinMp(r: { link: Link; role: 'host' | 'guest' } | null): void {
+    mpOpen = false;
+    editEnded = true; // the key that closed the overlay may still be latched
+    if (!r) return;
+    const me: PlayerInfo = {
+      name: cfg.name,
+      car: cfg.car,
+      color: cfg.color,
+      look: { ...raceLook, color: cfg.color } as Record<string, unknown>,
+    };
+    const m = (mp = createSession(r.link, r.role, me));
+    m.onStart((name, inMs) => {
+      if (mp !== m) return;
+      const i = maps.findIndex((x) => x.name === name);
+      if (i < 0) return exitMp();
+      map = maps[(sel = i)];
+      mpWait = inMs / 1000;
+    });
+    go('mplobby');
+  }
+  const lobbyIds = (m: Session) =>
+    m.phase === 'handshake'
+      ? (['leave'] as const)
+      : m.role === 'host'
+        ? (['map', 'ready', 'start', 'leave'] as const)
+        : (['map', 'ready', 'leave'] as const);
+
+  function mpLobbyInput(m: Session, input: InputState, dir: number, dv: number, dt: number): void {
+    if (mpWait >= 0) {
+      if (input.pause) return exitMp();
+      mpWait -= dt;
+      if (mpWait <= EPS) {
+        mpWait = -1;
+        newRun();
+      }
+      return;
+    }
+    if (m.role === 'host' && m.phase === 'lobby' && m.map === null) m.pickMap(maps[0].name);
+    const ids = lobbyIds(m);
+    row = Math.min(row, ids.length - 1);
+    if (dv) {
+      row = cycle(row, dv, ids.length);
+      audio.ui('move');
+    }
+    const id = ids[row];
+    if (input.pause || (id === 'leave' && input.confirm)) {
+      audio.ui('back');
+      exitMp();
+    } else if (id === 'map' && dir && m.role === 'host') {
+      audio.ui('adjust');
+      const i = maps.findIndex((x) => x.name === m.map);
+      m.pickMap(maps[cycle(Math.max(0, i), dir, maps.length)].name);
+    } else if (id === 'ready' && (input.confirm || dir)) {
+      audio.ui('confirm');
+      m.setReady(!m.ready);
+    } else if (id === 'start' && input.confirm) {
+      audio.ui(m.canStart() ? 'confirm' : 'back');
+      m.start();
+    }
+  }
 
   function garageInput(input: InputState, dir: number, dt: number): void {
     if (input.tune) gTune = gTune === 'street' ? 'performance' : 'street';
@@ -724,14 +814,14 @@ export function createGame(
       Object.assign(s, fresh());
       audio.stop();
       audio.ui('confirm');
-      go('title', 2);
+      go('title', GARAGE_ROW);
     } else if (input.pause) {
       prog.looks = structuredClone(savedLooks); // drop the draft
       gTune = cfg.tune;
       gLoad(cfg.car, cfg.color);
       audio.stop();
       audio.ui('back');
-      go('title', 2);
+      go('title', GARAGE_ROW);
     }
   }
 
@@ -798,7 +888,7 @@ export function createGame(
       } else confirmReset = true;
     } else if ((row === back && input.confirm) || input.pause) {
       audio.ui('back');
-      go('title', 3);
+      go('title', SETTINGS_ROW);
     }
   }
 
@@ -826,6 +916,10 @@ export function createGame(
           label: dl.kind === 'legend' ? 'LEGEND' : 'DAILY',
           value: `${dl.map.name} · ${dl.target.toLocaleString('en-US')}`,
         },
+        {
+          label: 'MULTIPLAYER',
+          value: (row === MP_ROW && noteT > 0 && note) || `◀ ${mpMode.toUpperCase()} ▶`,
+        },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
         {
@@ -841,7 +935,31 @@ export function createGame(
         screen: 'title',
         rows,
         note: `STREAK ${liveStreak(prog, date)}${done ? ' · CLEARED' : ''}`,
-        toast: toastT > 0 ? 'ALL CARS UNLOCKED' : undefined,
+        toast: toastT > 0 ? toastMsg : undefined,
+      };
+    }
+    if (s.phase === 'mplobby' && mp) {
+      const m = mp;
+      const info = m.rival.info;
+      const rows = lobbyIds(m).map((id): MenuRow => {
+        if (id === 'map')
+          return {
+            label: 'MAP',
+            value: m.map === null ? '-' : m.role === 'host' ? `◀ ${m.map} ▶` : m.map,
+          };
+        if (id === 'ready') return { label: 'READY', value: m.ready ? 'YES' : 'NO' };
+        return { label: id.toUpperCase() };
+      });
+      const i = maps.findIndex((x) => x.name === m.map);
+      return {
+        ...base,
+        screen: 'mplobby',
+        rows,
+        selected: i < 0 ? sel : i,
+        note: mpWait >= 0 ? 'GET READY' : info ? PLAYER_MODELS[info.car].name : 'CONNECTING...',
+        mp: info
+          ? { role: m.role, rival: info.name, ready: m.ready, rivalReady: m.rival.ready }
+          : undefined,
       };
     }
     if (s.phase === 'settings') {
@@ -948,13 +1066,23 @@ export function createGame(
         s.phase === 'title' ||
         s.phase === 'garage' ||
         s.phase === 'settings' ||
-        s.phase === 'starter';
+        s.phase === 'starter' ||
+        s.phase === 'mplobby';
       if (input.skip && !inMenu) audio.skipTrack(); // RB is tab-next in menus
       if (input.restart && !inMenu && s.phase !== 'photo') {
         newRun();
         return;
       }
-      if (s.phase === 'title' || s.phase === 'settings') stepAttract(dt);
+      if (mp) {
+        mp.tick();
+        if (mp.phase === 'closed' && s.phase === 'mplobby')
+          exitMp(
+            mp.error === 'version'
+              ? 'VERSION MISMATCH - REFRESH'
+              : `${mp.rival.info?.name ?? 'RIVAL'} LEFT`,
+          );
+      }
+      if (s.phase === 'title' || s.phase === 'settings' || s.phase === 'mplobby') stepAttract(dt);
       switch (s.phase) {
         case 'starter':
           if (dir) {
@@ -974,11 +1102,11 @@ export function createGame(
           }
           break;
         case 'title':
-          if (draft !== null || swallow) break;
+          if (draft !== null || swallow || mpOpen) break;
           if (input.cheat) {
             // pad Konami code; its final A must not also pick the row
             s.cheat = true;
-            toastT = 2.5;
+            [toastMsg, toastT] = ['ALL CARS UNLOCKED', 2.5];
             audio.ui('confirm');
             break;
           }
@@ -989,22 +1117,35 @@ export function createGame(
             sel = cycle(sel, dir, maps.length);
             map = maps[sel];
             Object.assign(s, fresh(), { runId: s.runId + 1 });
+          } else if (dir && row === MP_ROW) {
+            audio.ui('adjust');
+            mpMode = mpMode === 'host' ? 'join' : 'host';
           }
           if (input.confirm) {
             audio.resume();
             audio.ui('confirm');
             if (row === 0) newRun();
             else if (row === 1) startDaily();
-            else if (row === USERNAME_ROW) {
+            else if (row === MP_ROW) {
+              if (ui.device === 'pad' || !mpHost) [note, noteT] = ['USE KEYBOARD + MOUSE', 3];
+              else {
+                mpOpen = true;
+                mpHost.open(mpMode, joinMp);
+              }
+            } else if (row === USERNAME_ROW) {
               if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
               else [draft, caretT, noteT] = [cfg.name, 0, 0];
             } else {
               gTune = cfg.tune;
               gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
-              go(row === 2 ? 'garage' : 'settings');
+              go(row === GARAGE_ROW ? 'garage' : 'settings');
             }
           }
+          break;
+        case 'mplobby':
+          if (mp) mpLobbyInput(mp, input, dir, dv, dt);
+          else go('title', MP_ROW);
           break;
         case 'garage':
           garageInput(input, dir, dt);
@@ -1097,7 +1238,8 @@ export function createGame(
           ? { toFloor: h.from + 1, t }
           : { toFloor: h.from, t: 1 - t }
         : null;
-      const a = s.phase === 'title' || s.phase === 'settings' ? attract : null;
+      const a =
+        s.phase === 'title' || s.phase === 'settings' || s.phase === 'mplobby' ? attract : null;
       const prof = engineProfile(cfg.car, cfg.tune); // same mapping as the engine audio
       const render: RenderView = a
         ? {
