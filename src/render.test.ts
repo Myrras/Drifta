@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { angleArc } from './render';
+import { angleArc, toScreen } from './render';
+
+describe('toScreen', () => {
+  it('maps through the world transform into CSS px', () => {
+    const out = { x: 0, y: 0 };
+    expect(toScreen(out, 3, 4, 2, 0, 10, 20, 2)).toBe(out);
+    expect(out).toEqual({ x: 8, y: 14 });
+  });
+  it('follows camera rotation', () => {
+    // 90° rotation, scale 1: world +x is screen +y
+    const p = toScreen({ x: 0, y: 0 }, 5, 0, 0, 1, 100, 100, 1);
+    expect(p.x).toBeCloseTo(100);
+    expect(p.y).toBeCloseTo(105);
+  });
+});
 
 describe('angleArc', () => {
   it('is off when not drifting or slow', () => {
