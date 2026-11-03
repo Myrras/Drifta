@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { bounce, createCar, stepCar, TUNING } from './car';
 import { DT } from './config';
+import { PLAYER_MODELS, type CarStats } from './models';
 import type { CarState, DriftInfo, InputState } from './types';
 
 const input = (o: Partial<InputState> = {}): InputState => ({
@@ -215,3 +216,50 @@ function trackRun(c: CarState, segments: [InputState, number][]) {
   }
   return t;
 }
+
+describe('model stats', () => {
+  const kmh100 = (stats?: CarStats) => {
+    const c = createCar({ pos: { x: 0, y: 0 }, angle: 0 }, stats);
+    let t = 0;
+    while (c.vel.x < 100 / 3.6 && t < 60) {
+      stepCar(c, input({ throttle: 1 }), DT);
+      t += DT;
+    }
+    return t;
+  };
+  it('default stats match no stats', () => {
+    const a = createCar({ pos: { x: 0, y: 0 }, angle: 0 });
+    const b = createCar({ pos: { x: 0, y: 0 }, angle: 0 }, { power: 1, grip: 1, mass: 1 });
+    run(a, drift(), 2);
+    run(b, drift(), 2);
+    expect(b.pos).toEqual(a.pos);
+  });
+  it('Supra accelerates faster than AE86', () => {
+    expect(kmh100(PLAYER_MODELS.supra.stats)).toBeLessThan(kmh100(PLAYER_MODELS.ae86.stats));
+  });
+  for (const [key, m] of Object.entries(PLAYER_MODELS)) {
+    it(`${key}: accelerates, drifts through a corner, reverses stable`, () => {
+      const a = createCar({ pos: { x: 0, y: 0 }, angle: 0 }, m.stats);
+      run(a, input({ throttle: 1 }), 2.5);
+      expect(speed(a)).toBeGreaterThan(10);
+
+      const c = movingCar(70);
+      c.stats = m.stats;
+      const track = trackRun(c, [
+        [kick, 0.3],
+        [drift(), 2.7],
+      ]);
+      expect(track.drifting).toBeGreaterThanOrEqual(1);
+      expect(track.rotation).toBeGreaterThanOrEqual((70 * Math.PI) / 180);
+
+      const r = movingCar(-15);
+      r.stats = m.stats;
+      let maxAng = 0;
+      for (let i = 0; i < Math.round(4 / DT); i++) {
+        stepCar(r, input({ brake: 1, steer: 0.5 }), DT);
+        maxAng = Math.max(maxAng, Math.abs(r.angVel));
+      }
+      expect(maxAng).toBeLessThan(1.5);
+    });
+  }
+});

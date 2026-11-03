@@ -1,4 +1,5 @@
 import type { CarState, DriftInfo, Hit, InputState, Spawn } from './types';
+import type { CarStats } from './models';
 import { DRIFT_MIN_SLIP_DEG, DRIFT_MIN_SPEED_KMH } from './config';
 
 /** All car physics tuning. Forces are per unit mass (m/s²), so there is no mass term. */
@@ -57,8 +58,17 @@ const DRIFT_MAX_SLIP = (135 * Math.PI) / 180;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-export function createCar(spawn: Spawn): CarState {
-  return { pos: { ...spawn.pos }, vel: { x: 0, y: 0 }, angle: spawn.angle, angVel: 0, rpm: 0 };
+const DEFAULT_STATS: CarStats = { power: 1, grip: 1, mass: 1 };
+
+export function createCar(spawn: Spawn, stats?: CarStats): CarState {
+  return {
+    pos: { ...spawn.pos },
+    vel: { x: 0, y: 0 },
+    angle: spawn.angle,
+    angVel: 0,
+    rpm: 0,
+    stats,
+  };
 }
 
 function slipOf(vf: number, vl: number, speed: number): number {
@@ -66,6 +76,7 @@ function slipOf(vf: number, vl: number, speed: number): number {
 }
 
 export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo {
+  const { power, grip, mass } = car.stats ?? DEFAULT_STATS;
   const cos = Math.cos(car.angle);
   const sin = Math.sin(car.angle);
   // car frame: forward = (cos, sin), right = (-sin, cos)
@@ -77,7 +88,7 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   const brake = clamp(input.brake, 0, 1);
 
   // longitudinal
-  let drive = throttle * T.engineAccel;
+  let drive = (throttle * T.engineAccel * power) / mass;
   let stop = 0; // decel opposing vf, cannot reverse direction
   if (vf < -T.reverseEngageSpeed) {
     drive = 0;
@@ -110,11 +121,11 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   const alphaF = slipF * (1 - T.selfAlign * assist) - steer * steerDir;
   const alphaR = Math.atan2(vl - car.angVel * T.cgToRear, denom);
 
-  const capR = T.rearMaxGrip * rearGrip;
-  const capF = T.frontMaxGrip * (1 + (T.driftFrontGrip - 1) * assist);
-  const fyF = clamp(-T.frontStiffness * alphaF, -capF, capF);
-  const fyR = clamp(-T.rearStiffness * alphaR * rearGrip, -capR, capR);
-  const ay = fyR + fyF * Math.cos(steer);
+  const capR = T.rearMaxGrip * rearGrip * grip;
+  const capF = T.frontMaxGrip * grip * (1 + (T.driftFrontGrip - 1) * assist);
+  const fyF = clamp(-T.frontStiffness * grip * alphaF, -capF, capF);
+  const fyR = clamp(-T.rearStiffness * grip * alphaR * rearGrip, -capR, capR);
+  const ay = (fyR + fyF * Math.cos(steer)) / mass;
   const torque = T.cgToFront * fyF * Math.cos(steer) - T.cgToRear * fyR;
 
   // integrate in car frame
@@ -133,7 +144,7 @@ export function stepCar(car: CarState, input: InputState, dt: number): DriftInfo
   // drift assist: pull yaw rate toward the velocity's turn rate, so the slip angle holds
   const pathRate =
     Math.atan2(oldX * car.vel.y - oldY * car.vel.x, oldX * car.vel.x + oldY * car.vel.y) / dt;
-  let angVel = car.angVel + (torque / T.yawInertia) * dt;
+  let angVel = car.angVel + (torque / (T.yawInertia * mass ** 1.5)) * dt; // inertia grows faster than mass: heavy = lazier yaw
   const yawDamp = forward ? T.assistYawDamp * assist : T.reverseYawDamp;
   angVel -= (angVel - pathRate) * Math.min(1, yawDamp * dt);
   if (speed < 1) angVel *= speed; // no yaw when parked

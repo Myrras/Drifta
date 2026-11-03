@@ -1,3 +1,5 @@
+import type { CarStats } from './models';
+
 export type Vec = { x: number; y: number };
 export type SolidKind = 'wall' | 'pillar' | 'car';
 /** meters, top-left origin, axis-aligned */
@@ -83,6 +85,7 @@ export interface CarState {
   angle: number;
   angVel: number;
   rpm: number;
+  stats?: CarStats;
 }
 /** slip: signed angle between heading and velocity, radians */
 export interface DriftInfo {
