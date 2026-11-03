@@ -31,13 +31,21 @@ export function formatScore(n: number): string {
     .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-export function comboString(tricks: string[]): string {
+export function comboString(all: string[]): string {
+  // NEAR MISS always follows a CLOSE CALL, so it would never group: count it once, after the last CLOSE CALL
+  const tricks = all.filter((t) => t !== 'NEAR MISS');
+  const nm = all.length - tricks.length;
   const groups: string[] = [];
   for (let i = 0; i < tricks.length;) {
     let j = i;
     while (j < tricks.length && tricks[j] === tricks[i]) j++;
     groups.push(j - i > 1 ? `${tricks[i]} ×${j - i}` : tricks[i]);
     i = j;
+  }
+  if (nm) {
+    let at = groups.length;
+    while (at > 0 && !groups[at - 1].startsWith('CLOSE CALL')) at--;
+    groups.splice(at, 0, nm > 1 ? `NEAR MISS ×${nm}` : 'NEAR MISS');
   }
   if (groups.length > 6) return '… + ' + groups.slice(-6).join(' + ');
   return groups.join(' + ');
@@ -625,7 +633,7 @@ export function drawHud(
         const multSize = 6.5 * u * (1 + Math.min(m - 1, 12) * 0.06);
         text(
           ctx,
-          `×${m}`,
+          `×${+m.toFixed(1)}`,
           cx - 2 * u + shake * Math.sin(mk * 90),
           baseY + 6.5 * u + shake * Math.cos(mk * 70),
           multSize,

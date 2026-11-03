@@ -74,3 +74,15 @@ export function smokeColor(look?: Look): string {
   const n = parseInt(hex.slice(1), 16);
   return `${n >> 16},${(n >> 8) & 255},${n & 255}`;
 }
+
+/** Cache key from only the Look fields that change the drawn car (not smoke), in fixed order. */
+export function lookKey(l: Look = {}): string {
+  return [l.paint, l.skin, l.underglow, l.spoiler, l.hood ? 1 : 0, l.tint].map((x) => x ?? '').join(',');
+}
+
+/** Insert into a Map used as a cache, evicting the oldest entries beyond max. */
+export function cacheSet<K, V>(m: Map<K, V>, k: K, v: V, max = 24): V {
+  m.set(k, v);
+  while (m.size > max) m.delete(m.keys().next().value as K);
+  return v;
+}

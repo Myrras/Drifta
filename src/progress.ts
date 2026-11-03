@@ -112,9 +112,10 @@ export function recordDailyClear(p: Progress, date: string): { streak: number; c
   return { streak: d.streak, carPick };
 }
 
-export function loadProgress(storage: Pick<Storage, 'getItem'> = localStorage): Progress {
+export function loadProgress(storage?: Pick<Storage, 'getItem'>): Progress {
   const base = defaultProgress();
   try {
+    storage ??= localStorage;
     const raw = storage.getItem(PROGRESS_KEY);
     const o = raw ? JSON.parse(raw) : null;
     if (!o || typeof o !== 'object' || o.v !== 1) return base;
@@ -124,8 +125,9 @@ export function loadProgress(storage: Pick<Storage, 'getItem'> = localStorage): 
   }
 }
 
-export function saveProgress(p: Progress, storage: Pick<Storage, 'setItem'> = localStorage): void {
+export function saveProgress(p: Progress, storage?: Pick<Storage, 'setItem'>): void {
   try {
+    storage ??= localStorage;
     storage.setItem(PROGRESS_KEY, JSON.stringify(p));
   } catch { /* storage full or blocked: progress stays in memory */ }
 }

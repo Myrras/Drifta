@@ -156,7 +156,8 @@ export function stepScoring(s: Scoring, f: ScoreFrame, dt: number): ScoreEvent[]
     if (f.nearDist < CLOSE_CALL_DIST && s.closeCooldown <= 0) {
       addTrick(s, ev, 'CLOSE CALL', CLOSE_CALL_BONUS);
       s.closeCooldown = CLOSE_CALL_COOLDOWN;
-      c.multiplier += ++s.nearMisses * 0.1;
+      s.nearMisses++;
+      c.multiplier = Math.round((c.multiplier + Math.min(s.nearMisses, 10) * 0.1) * 10) / 10;
       c.tricks.push('NEAR MISS');
       ev.push({ type: 'trick', trick: 'NEAR MISS' });
     }

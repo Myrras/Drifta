@@ -30,6 +30,9 @@ describe('hud formatting', () => {
     expect(comboString([])).toBe('');
     expect(comboString(['DRIFT', 'DRIFT', 'DRIFT'])).toBe('DRIFT ×3');
     expect(comboString(['A', 'B', 'B'])).toBe('A + B ×2');
+    expect(
+      comboString(['DRIFT', 'CLOSE CALL', 'NEAR MISS', 'CLOSE CALL', 'NEAR MISS', 'CLIP']),
+    ).toBe('DRIFT + CLOSE CALL ×2 + NEAR MISS ×2 + CLIP');
     expect(comboString(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'])).toBe('… + C + D + E + F + G + H');
   });
 });

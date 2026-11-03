@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SMOKE, itemById, paintsForMap, SKINS, smokeColor, type Look } from './cosmetics';
+import { cacheSet, lookKey, DEFAULT_SMOKE, itemById, paintsForMap, SKINS, smokeColor, type Look } from './cosmetics';
 import { PLAYER_MODELS } from './models';
 import { drawCar } from './sprites';
 import type { PlayerModel } from './types';
@@ -58,5 +58,19 @@ describe('cosmetics', () => {
     const g = stubCtx();
     drawCar(g, m, '#fff', full);
     expect(g.fills).toBeGreaterThan(plain.fills);
+  });
+});
+
+describe('cache helpers', () => {
+  it('lookKey ignores smoke and key order', () => {
+    expect(lookKey({ paint: 'a', smoke: 'x' })).toBe(lookKey({ smoke: 'y', paint: 'a' }));
+    expect(lookKey({ paint: 'a' })).not.toBe(lookKey({ paint: 'a', hood: true }));
+  });
+  it('cacheSet evicts the oldest', () => {
+    const m = new Map<number, number>();
+    for (let i = 0; i < 30; i++) cacheSet(m, i, i);
+    expect(m.size).toBe(24);
+    expect(m.has(5)).toBe(false);
+    expect(m.has(6)).toBe(true);
   });
 });

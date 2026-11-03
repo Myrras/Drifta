@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   awardFinish, chooseStarter, defaultProgress, isCarUnlocked, loadProgress, ownsCosmetic,
   positionFor, recordDailyClear, saveProgress, spendCarPick,
@@ -81,6 +81,12 @@ describe('load', () => {
     expect(loadProgress({ getItem: () => '{nope' })).toEqual(defaultProgress());
     expect(loadProgress({ getItem: () => null })).toEqual(defaultProgress());
     expect(loadProgress({ getItem: () => { throw new Error('x'); } })).toEqual(defaultProgress());
+  });
+  it('survives blocked global localStorage', () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } });
+    expect(loadProgress()).toEqual(defaultProgress());
+    expect(() => saveProgress(defaultProgress())).not.toThrow();
+    vi.unstubAllGlobals();
   });
   it('round-trips', () => {
     const s = mem();

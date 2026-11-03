@@ -1,6 +1,6 @@
 import type { HudView, MenuRow, MenuView, UiContext } from '../view';
 import { drawCar } from '../sprites';
-import type { Look } from '../cosmetics';
+import { cacheSet, lookKey, type Look } from '../cosmetics';
 import { drawSlot } from './garage';
 import { PLAYER_MODELS } from '../models';
 import { cachedGrad, DISPLAY, drawBackdrop, drawOverlayFx, MASTHEAD, OSD, THEMES } from './theme';
@@ -17,7 +17,7 @@ export function carImage(
   color: string,
   look: Look,
 ): HTMLCanvasElement {
-  const key = `${model}|${color}|${JSON.stringify(look)}`;
+  const key = `${model}|${color}|${lookKey(look)}`;
   let c = carCache.get(key);
   if (!c) {
     c = document.createElement('canvas');
@@ -28,7 +28,7 @@ export function carImage(
     g.shadowColor = 'rgba(255,225,170,0.9)';
     g.shadowBlur = (1.1 / 13) * CAR_PX; // same glow as 1.1 u at scale 13 u/m
     drawCar(g, model, color, look);
-    carCache.set(key, c);
+    cacheSet(carCache, key, c);
   }
   return c;
 }

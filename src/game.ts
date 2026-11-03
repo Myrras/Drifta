@@ -242,7 +242,15 @@ export function createGame(
     gColor = color ?? cs.find((c) => c === (gLook as { color?: string }).color) ?? cs[0];
     gCur = SLOTS.map((s) => currentIndex(s, gOpts(s), gLook, gColor));
   }
-  const gDraft = () => setLook(prog, gCar, { ...gLook, color: gColor });
+  // never store cheat-only items: filter against real ownership (cheat = false)
+  const gDraft = () =>
+    setLook(
+      prog,
+      gCar,
+      ownedLook({ ...gLook, color: gColor } as Look, gCar, PLAYER_MODELS[gCar].colors, prog, false) as Parameters<
+        typeof setLook
+      >[2],
+    );
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
@@ -685,7 +693,11 @@ export function createGame(
     const locked = !isCarUnlocked(prog, gCar, s.cheat);
     if (locked && input.confirm) {
       if (offerPick && spendCarPick(prog, gCar)) {
+        // persist without the open look draft
+        const draft = prog.looks;
+        prog.looks = savedLooks;
         persist();
+        prog.looks = draft;
         offerPick = false;
         audio.ui('confirm');
       } else if (prog.carPicks > 0) {

@@ -264,4 +264,17 @@ describe('v0.9 bonus tricks', () => {
     stepScoring(s, cc, 0.1);
     expect(s.combo!.multiplier).toBeCloseTo(1 + 1 + 0.1);
   });
+  it('NEAR MISS chain is capped at 0.1*10 per step and has no float noise', () => {
+    const s = createScoring();
+    const cc = F({ drifting: true, nearDist: 0.1 });
+    for (let i = 0; i < 14; i++) {
+      stepScoring(s, cc, 0.1);
+      run(s, F({ drifting: true }), CLOSE_CALL_COOLDOWN);
+      const m = s.combo!.multiplier;
+      expect(m).toBe(Math.round(m * 10) / 10);
+    }
+    const before = s.combo!.multiplier;
+    stepScoring(s, cc, 0.1);
+    expect(s.combo!.multiplier).toBe(Math.round((before + 1 + 1) * 10) / 10); // CLOSE CALL +1, near miss +1.0
+  });
 });

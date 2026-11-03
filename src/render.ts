@@ -26,7 +26,7 @@ import {
   updateSparks,
 } from './particles';
 import { drawCar, drawParkedCar } from './sprites';
-import { itemById, smokeColor, type Look } from './cosmetics';
+import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
 import { drawDecor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
 
@@ -1580,9 +1580,9 @@ export function createRenderer(canvas: HTMLCanvasElement) {
   }
 
   function spritesFor(model: PlayerModel, color: string, look?: Look) {
-    const key = look ? `${model}|${color}|${JSON.stringify(look)}` : `${model}|${color}`;
+    const key = `${model}|${color}|${lookKey(look)}`;
     let s = carSprites.get(key);
-    if (!s) carSprites.set(key, (s = playerSprites(model, color, look)));
+    if (!s) s = cacheSet(carSprites, key, playerSprites(model, color, look));
     return s;
   }
 
