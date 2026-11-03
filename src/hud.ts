@@ -311,8 +311,21 @@ export const pauseHint = (ui: HudView['ui']): string =>
   hintLine(
     [
       ['confirm', 'resume'],
+      ['photo', 'photo mode'],
       ['restart', 'restart'],
       ['back', 'menu'],
+    ],
+    ui.device,
+    ui.padStyle,
+  );
+export const photoHint = (ui: HudView['ui']): string =>
+  hintLine(
+    [
+      ['confirm', 'save'],
+      ['back', 'back'],
+      ['steer', 'move'],
+      ['rotate', 'rotate'],
+      ['zoom', 'zoom'],
     ],
     ui.device,
     ui.padStyle,
@@ -510,6 +523,15 @@ export function drawHud(
     lastPhase = v.phase;
     drawCountdown(ctx, v, cx, u);
     return;
+  }
+
+  if (v.phase === 'photo') {
+    if (!v.photoShot)
+      text(ctx, photoHint(v.ui), cx, height - 5 * u, 2.6 * u, th.dim, {
+        align: 'center',
+        css: th.font(600, 2.6 * u),
+      });
+    return; // lastPhase stays run/paused so the tach is not reset on return
   }
 
   if (v.phase === 'run' || v.phase === 'paused') {

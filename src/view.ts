@@ -27,6 +27,8 @@ export interface RenderView {
   clip: Rect | null;
   /** live traffic and its city graph (signal heads), null on maps without traffic */
   traffic: { sim: Traffic; city: CityGraph } | null;
+  /** photo camera: world centre, view-height multiplier, rotation (rad) */
+  photo?: { x: number; y: number; zoom: number; rot: number };
 }
 
 export interface Popup {
@@ -125,6 +127,8 @@ export interface HudView {
   redline: number;
   /** 'N', 'R', '1'..'4' */
   gear: string;
+  /** photo mode: this frame is being saved, draw no hint */
+  photoShot?: boolean;
 }
 
 export interface FrameView {
