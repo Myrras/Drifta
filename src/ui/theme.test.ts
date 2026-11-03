@@ -30,6 +30,7 @@ describe('themes', () => {
       const th = THEMES[id];
       for (const t of [0, 0.3, 0.6, 1, 1.25, 2.5, 4.95, 37.1, 3600.4]) {
         drawBackdrop(ctx, 800, 450, t, th);
+        drawBackdrop(ctx, 800, 450, t, th, true); // live attract variant
         drawLogo(ctx, 400, 100, 60, t, th);
         drawOverlayFx(ctx, 800, 450, t, th);
       }

@@ -26,6 +26,8 @@ const ZOOM_FULL_KMH = 130;
 const LOOK_AHEAD = 0.35; // s of velocity
 const CAM_POS_RATE = 4; // 1/s exponential follow
 const CAM_ZOOM_RATE = 1.5;
+const ATTRACT_ZOOM = 0.64; // menu attract scene: view height factor (closer in)
+const ATTRACT_Y = 0.5; // ... and the car's screen height, fraction of the view
 const SHAKE_PX = 7; // CSS px at shake = 1
 
 const BG = '#0a0b0d';
@@ -1494,7 +1496,11 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     look.y += (ly - look.y) * kl;
     const tx = car.pos.x + car.vel.x * LOOK_AHEAD + look.x;
     const ty = car.pos.y + car.vel.y * LOOK_AHEAD + look.y;
-    const tvh = VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1);
+    // game.ts gives the menu attract scene negative run ids
+    const attract = v.runId < 0;
+    const tvh =
+      (VIEW_H_REST + (VIEW_H_FAST - VIEW_H_REST) * Math.min(kmh / ZOOM_FULL_KMH, 1)) *
+      (attract ? ATTRACT_ZOOM : 1);
     if (snap) {
       cam.x = tx;
       cam.y = ty;
@@ -1511,8 +1517,14 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const scale = (cssH / cam.viewH) * dip * (1 + PUNCH * punch); // CSS px per meter
     const halfW = cssW / 2 / scale;
     const halfH = cssH / 2 / scale;
+    // attract: pin the car in the clear band right of the menu column (min(72u, 0.94w) wide)
+    const u = Math.min(cssW, cssH) / 100;
+    const ax = attract ? (cssW * 1.5 + Math.min(36 * u, 0.47 * cssW)) / 2 : cssW / 2;
+    const ay = attract ? cssH * ATTRACT_Y : cssH / 2;
+    const vx = cam.x + (cssW / 2 - ax) / scale; // world point at the screen centre
+    const vy = cam.y + (cssH / 2 - ay) / scale;
     const visible = (x: number, y: number, r: number) =>
-      Math.abs(x - cam.x) < halfW + r && Math.abs(y - cam.y) < halfH + r;
+      Math.abs(x - vx) < halfW + r && Math.abs(y - vy) < halfH + r;
 
     // skid marks, darker at higher slip
     const wheels = rearWheels(car, model);
@@ -1597,8 +1609,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const sx = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const sy = (Math.random() * 2 - 1) * SHAKE_PX * v.shake;
     const ws = dpr * scale;
-    const ox = dpr * (cssW / 2 + sx - cam.x * scale);
-    const oy = dpr * (cssH / 2 + sy - cam.y * scale);
+    const ox = dpr * (cssW / 2 + sx - vx * scale);
+    const oy = dpr * (cssH / 2 + sy - vy * scale);
     ctx.setTransform(ws, 0, 0, ws, ox, oy);
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
