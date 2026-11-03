@@ -27,7 +27,7 @@ import {
 } from './particles';
 import { drawCar, drawParkedCar } from './sprites';
 import { cacheSet, itemById, lookKey, smokeColor, type Look } from './cosmetics';
-import { drawDecor, type DecoratedMap } from './maps/decor';
+import { drawDecor, type Decor, type DecoratedMap } from './maps/decor';
 import type { RenderView } from './view';
 import { boomAge, boomPulse, boomShake } from './audio';
 
@@ -672,7 +672,20 @@ function buildLights(map: GameMap, idx: number) {
     rim: buildRim(map, idx),
     hazards: poses.filter((p) => p.s.lights === 'hazard').map(hazardLamps),
     police: poses.filter((p) => p.s.police).map(policeLamps),
-    boom: poses.flatMap((p, i) => (p.s.boom ? [{ p, color: parkedColor(p, i, idx) }] : [])),
+    boom: poses.flatMap((p, i) =>
+      p.s.boom
+        ? [
+            {
+              p,
+              color: parkedColor(p, i, idx),
+              hood: decorOf(map).filter(
+                (d) =>
+                  d.kind === 'hood' && d.floor === idx && Math.hypot(d.x - p.x, d.y - p.y) < 0.01,
+              ),
+            },
+          ]
+        : [],
+    ),
   };
 }
 
@@ -716,7 +729,7 @@ function drawBoomShock(g: Ctx, p: ParkedPose, k: number, age: number, a: number)
 /** A parked boom car: bass-pulse jitter, rotation wobble and a ring on the ground under the open boot. */
 function drawBoomCar(
   g: Ctx,
-  { p, color }: { p: ParkedPose; color: string },
+  { p, color, hood }: { p: ParkedPose; color: string; hood: Decor[] },
   t: number,
   k: number,
   a: number,
@@ -745,6 +758,7 @@ function drawBoomCar(
   if (p.s.model) drawParkedCar(g, p.s.model, color);
   else parkedCar(g, p.len, p.wid, color);
   g.restore();
+  drawDecor(g, hood, 'wall', hood[0]?.floor ?? 0, 0); // open hood over the car
 }
 
 /** Parked car in local frame, +x = nose. */
