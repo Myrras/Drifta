@@ -486,6 +486,7 @@ const total = garageRoute.reduce((sum, r) => sum + routeLength(r.points), 0);
 export const garage: GameMap = {
   name: 'JAPAN GARAGE',
   parTime: Math.round(total / 17),
+  medals: [4000, 9000, 16000], // tuning values: total score for bronze, silver, gold
   floors: [roof, level2, ground],
   helixes,
   start: { floor: 0, pos: v(10, 58), angle: 0 },

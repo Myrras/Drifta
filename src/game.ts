@@ -17,7 +17,15 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { PLAYER_MODELS, type CarStats } from './models';
 import { loadSettings, saveSettings, type SettingsStorage } from './settings';
-import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
+import {
+  comboValue,
+  createScoring,
+  forceBank,
+  MEDAL_NAMES,
+  medalFor,
+  stepScoring,
+  timeBonus,
+} from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
 export interface BestStore {
@@ -164,7 +172,15 @@ export function createGame(
     const total = comboPoints + bonus;
     const newBest = total > bests[sel];
     if (newBest) stores[sel].set((bests[sel] = total));
-    s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bests[sel], newBest };
+    s.results = {
+      comboPoints,
+      timeBonus: bonus,
+      total,
+      time: s.time,
+      best: bests[sel],
+      newBest,
+      medals: map.medals,
+    };
     s.phase = 'results';
     audio.stop();
     audio.music(false);
@@ -328,12 +344,14 @@ export function createGame(
     } else if ((row === 6 && input.confirm) || input.pause) go('title', 2);
   }
 
+  const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
+
   function menuView(): MenuView | null {
     const base = { row, items: maps.map((m) => m.name), selected: sel, garage: null };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     if (s.phase === 'title') {
       const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶` },
+        { label: 'PLAY', value: `◀ ${map.name} ▶${medalTag(medalFor(bests[sel], map.medals))}` },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
       ];

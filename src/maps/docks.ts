@@ -289,6 +289,7 @@ const lights = [
 export const docks: GameMap = {
   name: 'WANGAN DOCKS',
   parTime: Math.round(ROUTE_LENGTH / 17),
+  medals: [3000, 7000, 13000], // tuning values: total score for bronze, silver, gold
   floors: [
     {
       name: 'WANGAN DOCKS',
