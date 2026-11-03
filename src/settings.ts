@@ -65,8 +65,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     sfx: vol(raw.sfx, d.sfx),
     engine: vol(raw.engine, d.engine),
     shake: typeof raw.shake === 'boolean' ? raw.shake : d.shake,
-    // 'mine' is accepted ahead of its Track entry (added with the mine track)
-    track: [...TRACKS, 'mine'].includes(raw.track as Track) ? (raw.track as Track) : d.track,
+    track: TRACKS.includes(raw.track as Track) ? (raw.track as Track) : d.track,
     clips: CLIP_QUALITIES.includes(raw.clips as ClipQuality) ? (raw.clips as ClipQuality) : d.clips,
     menuTheme: MENU_THEMES.includes(raw.menuTheme as MenuTheme)
       ? (raw.menuTheme as MenuTheme)

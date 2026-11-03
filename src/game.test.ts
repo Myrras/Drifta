@@ -22,6 +22,9 @@ const audio: AudioLike = {
   setVolumes: noop,
   setTrack: noop,
   stream: () => null,
+  skipTrack: () => {},
+  myMusicCount: () => 0,
+  refreshMyMusic: async () => 0,
 };
 const IDLE: InputState = {
   steer: 0,
