@@ -12,7 +12,7 @@ const CAR_PX = 96; // px per m in the cache
 const carCache = new Map<string, HTMLCanvasElement>();
 
 /** Car with its warm rim glow, rendered once per model|color (blur is costly per frame). */
-function carImage(
+export function carImage(
   model: Parameters<typeof drawCar>[1],
   color: string,
   look: Look,

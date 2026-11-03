@@ -1,6 +1,7 @@
 import { COMBO_GRACE } from './config';
+import { itemById } from './cosmetics';
 import type { HudView, Popup } from './view';
-import { drawMenu } from './ui/menu';
+import { drawMenu, carImage } from './ui/menu';
 import { createTach } from './ui/tach';
 import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
 import { hintLine, type Action } from './ui/prompts';
@@ -743,7 +744,8 @@ export function nextTarget(
 }
 
 export const positionLabel = (p: 1 | 2 | 3 | null): string => (p ? ORD[p] : 'NO PLACE');
-export const paintName = (id: string): string => id.replace(/-/g, ' ').toUpperCase();
+export const paintName = (id: string): string =>
+  itemById(id)?.name ?? id.replace(/-/g, ' ').toUpperCase();
 
 export function resultsHint(ui: HudView['ui'], r: NonNullable<HudView['results']>): string {
   if (r.chooser)
@@ -1098,23 +1100,34 @@ function drawChooser(
   const cx = width / 2;
   const cy = height / 2;
   const later = c.row >= c.cars.length;
-  text(ctx, 'CAR PICK', cx, cy - 16 * u, 7 * u, th.accent, {
+  text(ctx, 'CAR PICK', cx, cy - 20 * u, 7 * u, th.accent, {
     align: 'center',
     css: th.font(800, 7 * u, true),
     glow: th.glow ? th.accent : undefined,
   });
-  text(ctx, 'unlock one car', cx, cy - 9.5 * u, 2.4 * u, th.dim, {
+  text(ctx, 'unlock one car', cx, cy - 13.5 * u, 2.4 * u, th.dim, {
     align: 'center',
     css: th.font(600, 2.4 * u),
     stroke: null,
   });
   const pw = Math.min(70 * u, width - 8 * u);
-  const ph = 13 * u;
+  const ph = 21 * u;
   const g = th.glow ? th.accent : undefined;
   box(ctx, cx - pw / 2, cy - ph / 2, pw, ph, 1.4 * u, th.panel, th.accent, 0.45 * u, g);
   const name = later ? 'LATER' : c.cars[c.row].name.toUpperCase();
+  if (!later) {
+    const car = c.cars[c.row];
+    const sz = 12 * u; // equipped look, centred in the card's upper half
+    ctx.drawImage(
+      carImage(car.model, car.color, car.look),
+      cx - sz / 2,
+      cy - 4 * u - sz / 2,
+      sz,
+      sz,
+    );
+  }
   const px = fitPx(ctx, name, (p) => th.font(800, p, true), 5.5 * u, pw - 14 * u);
-  text(ctx, name, cx, cy - (later ? 1.2 : 0) * u, px, later ? th.dim : th.text, {
+  text(ctx, name, cx, cy + (later ? -1.2 : 6.5) * u, px, later ? th.dim : th.text, {
     align: 'center',
     css: th.font(800, px, true),
     stroke: null,

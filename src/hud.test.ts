@@ -82,7 +82,11 @@ describe('positions', () => {
     expect(nextTarget(1, m, 100)).toBe('');
     expect(nextTarget(null, undefined, 0)).toBe('');
   });
-  it('paint ids read as names', () => expect(paintName('b2-violet')).toBe('B2 VIOLET'));
+  it('paint ids read as catalogue names, else id-derived', () => {
+    expect(paintName('b2-violet')).toBe('B2 VIOLET');
+    expect(paintName('fortune-orange')).toBe('FORTUNE ORANGE');
+    expect(paintName('no-such-paint')).toBe('NO SUCH PAINT');
+  });
 });
 
 describe('hint lines', () => {

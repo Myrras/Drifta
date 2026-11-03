@@ -1250,6 +1250,24 @@ function playerLamps(car: CarState, brake: number, model: PlayerModel): Lamp[] {
   return out;
 }
 
+/** Underglow as a light above the darkness, so it still glows at night. */
+function glowLight(ctx: Ctx, look: Look | undefined, alpha: number, frame: (g: Ctx) => void): void {
+  const c = itemById(look?.underglow)?.color;
+  if (!c) return;
+  const { hl, hw } = playerDims('mx5');
+  ctx.save();
+  frame(ctx);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = c;
+  ctx.globalAlpha = 0.12 * alpha;
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hl + 0.35 - i * 0.12, hw - 0.1 + 0.35 - i * 0.1, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Lit lamp lenses on top of the darkness, in the body frame (caller sets the transform). */
 function playerLenses(g: Ctx, car: CarState, brake: number, model: PlayerModel) {
   const { hl, hw } = playerDims(model);
@@ -1911,6 +1929,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     bodyFrame(ctx);
     playerLenses(ctx, car, v.brake, model);
     ctx.restore();
+    glowLight(ctx, v.player.look, 1, bodyFrame);
+    const gh = v.ghost;
+    if (gh)
+      glowLight(ctx, gh.look, 0.35, (g) => {
+        g.translate(gh.x, gh.y);
+        g.rotate(gh.angle);
+      });
     if (v.traffic) {
       // peds above the darkness like the decor crowds: dark clothes vanish under it
       for (const p of v.traffic.sim.peds) if (visible(p.pos.x, p.pos.y, 1)) drawPed(ctx, p, clock);

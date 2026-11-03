@@ -406,6 +406,23 @@ describe('finish awards and car pick', () => {
     expect(game.view().hud.phase).toBe('countdown');
   });
 
+  it('cheat on: confirm opens no chooser and the pick is kept', () => {
+    const { game, step, r, prog } = rig();
+    game.debug.cheat = true;
+    step({ confirm: true });
+    expect(r()?.chooser ?? null).toBeNull();
+    expect(prog().carPicks).toBe(1);
+    expect(game.view().hud.phase).not.toBe('results'); // plain confirm retries
+  });
+
+  it('chooser cars carry a color and look for the sprite', () => {
+    const { step, r } = rig();
+    step({ confirm: true });
+    const c = r().chooser!.cars[0];
+    expect(c.color).toBeTruthy();
+    expect(c.look).toBeTruthy();
+  });
+
   it('LATER keeps the pick for the garage', () => {
     const { game, step, r, prog } = rig();
     step({ confirm: true });

@@ -76,7 +76,10 @@ export interface Results {
   /** a car pick was earned and is not yet chosen or deferred */
   carPick: boolean;
   /** car pick overlay: locked cars, then LATER at index cars.length */
-  chooser: { cars: { model: PlayerModel; name: string }[]; row: number } | null;
+  chooser: {
+    cars: { model: PlayerModel; name: string; color: string; look: Look }[];
+    row: number;
+  } | null;
   /** best banked combos, highest first (max 3) */
   drifts: TopDrift[];
   /** selected index in drifts */

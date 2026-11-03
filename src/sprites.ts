@@ -134,7 +134,7 @@ function underglow(g: Ctx, look: Look | undefined, hl: number, B: number) {
   const c = itemById(look?.underglow)?.color;
   if (!c) return;
   g.fillStyle = c;
-  g.globalAlpha = 0.1;
+  g.globalAlpha = 0.05; // subtle: the real glow is a light after the darkness (render.ts)
   for (let i = 0; i < 5; i++) {
     g.beginPath();
     g.ellipse(0, 0, hl + 0.35 - i * 0.12, B + 0.35 - i * 0.1, 0, 0, Math.PI * 2);

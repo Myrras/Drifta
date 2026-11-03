@@ -985,11 +985,12 @@ export function createGame(
               s.carPick = false;
             }
           } else if (input.pause) toTitle();
-          else if (input.confirm && ready && s.carPick && s.prog) {
+          else if (input.confirm && ready && s.carPick && s.prog && !s.cheat) {
             const p = s.prog;
             const cars = MODEL_IDS.filter((m) => !isCarUnlocked(p, m, s.cheat));
             if (cars.length) s.chooser = { cars, row: 0 };
             else s.carPick = false; // everything owned: the pick stays banked
+            // cheat on: no chooser (everything reads unlocked), the pick is kept; confirm retries
           } else if (input.confirm && ready) newRun();
           else if (input.save) {
             if (ready) saveDrift();
@@ -1100,7 +1101,15 @@ export function createGame(
                   driftRow: s.driftRow,
                   carPick: s.carPick,
                   chooser: s.chooser && {
-                    cars: s.chooser.cars.map((m) => ({ model: m, name: PLAYER_MODELS[m].name })),
+                    cars: s.chooser.cars.map((m) => {
+                      const look = lookOf(m);
+                      return {
+                        model: m,
+                        name: PLAYER_MODELS[m].name,
+                        color: (look as { color?: string }).color ?? PLAYER_MODELS[m].colors[0],
+                        look,
+                      };
+                    }),
                     row: s.chooser.row,
                   },
                 }
