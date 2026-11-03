@@ -1,4 +1,5 @@
 import { PLAYER_MODELS } from '../models';
+import type { Look } from '../cosmetics';
 import type { PlayerModel } from '../types';
 
 export const APP_VERSION: string = __APP_VERSION__;
@@ -47,6 +48,26 @@ const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinit
 const str = (v: unknown): v is string => typeof v === 'string' && v.length <= 64;
 const nums = (o: Obj, keys: string[]) => keys.every((k) => num(o[k]));
 
+const LOOK_KEYS: Record<keyof Look, 'string' | 'boolean'> = {
+  paint: 'string',
+  skin: 'string',
+  underglow: 'string',
+  smoke: 'string',
+  spoiler: 'string',
+  hood: 'boolean',
+  tint: 'string',
+};
+
+function lookOf(o: Obj): Obj | undefined {
+  const out: Obj = {};
+  for (const [k, kind] of Object.entries(LOOK_KEYS)) {
+    if (!Object.hasOwn(o, k)) continue;
+    const v = o[k];
+    if (kind === 'string' ? str(v) : typeof v === 'boolean') out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function info(v: unknown): PlayerInfo | null {
   if (!isObj(v)) return null;
   const { name, car, color, look } = v;
@@ -55,7 +76,8 @@ function info(v: unknown): PlayerInfo | null {
   if (!str(color)) return null;
   if (look !== undefined && !isObj(look)) return null;
   const out: PlayerInfo = { name, car: car as PlayerModel, color };
-  if (look !== undefined) out.look = look;
+  const l = look === undefined ? undefined : lookOf(look);
+  if (l) out.look = l;
   return out;
 }
 

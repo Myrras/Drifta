@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { APP_VERSION, decode, encode, type Msg } from './protocol';
 
-const info = { name: 'DRIFT_99', car: 'ae86' as const, color: '#ff0044', look: { wheels: 'rays' } };
+const info = {
+  name: 'DRIFT_99',
+  car: 'ae86' as const,
+  color: '#ff0044',
+  look: { paint: 'red', spoiler: 'gt', hood: true },
+};
 
 const all: Msg[] = [
   { t: 'hello', v: '1.0.2', info },
@@ -60,6 +65,38 @@ describe('protocol', () => {
     ['missing info', '{"t":"hello","v":"1"}'],
   ])('rejects %s', (_, raw) => {
     expect(decode(raw)).toBeNull();
+  });
+
+  const lookOf = (raw: string) => {
+    const m = decode(raw);
+    return m?.t === 'hello' ? m.info.look : null;
+  };
+
+  it('keeps only known look keys', () => {
+    expect(lookOf(hello({ look: { paint: 'red', wheels: 'rays' } }))).toEqual({ paint: 'red' });
+  });
+
+  it('drops look values of the wrong type', () => {
+    const look = { paint: 1, skin: true, hood: 'yes', tint: 'x'.repeat(65), smoke: 'blue' };
+    expect(lookOf(hello({ look }))).toEqual({ smoke: 'blue' });
+  });
+
+  it('omits look when nothing valid remains', () => {
+    const m = decode(hello({ look: { wheels: 'rays', hood: 1 } }));
+    expect(m?.t === 'hello' && 'look' in m.info).toBe(false);
+  });
+
+  it('does not carry __proto__ or constructor look keys', () => {
+    const raw = hello({}).replace(
+      /"look":\{/,
+      '"look":{"__proto__":{"polluted":true},"constructor":{"x":1},',
+    );
+    const look = lookOf(raw);
+    expect(look).toEqual(info.look);
+    expect(Object.getPrototypeOf(look)).toBe(Object.prototype);
+    expect(Object.hasOwn(look!, '__proto__')).toBe(false);
+    expect(Object.hasOwn(look!, 'constructor')).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it('keeps a long but valid map name at the limit', () => {

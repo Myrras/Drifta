@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { APP_VERSION, type Link, type LinkState, type Msg, type PlayerInfo } from './protocol';
-import { createSession, START_DELAY_MS, type Session } from './session';
+import { createSession, INTERP_DELAY, START_DELAY_MS, type Session } from './session';
 
 interface End extends Link {
   state: LinkState;
@@ -220,6 +220,14 @@ describe('session', () => {
       b.send({ t: 'pose', time: i / 20, x: i, y: 0, angle: 0, floor: 0 });
     expect(h.rivalPose(1)).toBeNull();
     expect(h.rivalPose(15.1)?.x).toBeCloseTo(300);
+  });
+
+  it('caps the pose buffer to 400 frames', () => {
+    toRace();
+    for (let i = 0; i < 1000; i++)
+      b.send({ t: 'pose', time: i / 1000, x: i, y: 0, angle: 0, floor: 0 });
+    expect(h.rivalPose(0.59 + INTERP_DELAY)).toBeNull();
+    expect(h.rivalPose(0.65 + INTERP_DELAY)?.x).toBeCloseTo(650);
   });
 
   it('throttles score by wall clock', () => {

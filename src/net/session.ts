@@ -13,6 +13,7 @@ export const START_DELAY_MS = 1500;
 export const INTERP_DELAY = 0.1; // s
 const PING_MS = 1000;
 const BUFFER_S = 10;
+const BUFFER_MAX = 400;
 
 export type SessionPhase = 'handshake' | 'lobby' | 'race' | 'closed';
 
@@ -115,6 +116,7 @@ export function createSession(
     const cut = f.t - BUFFER_S;
     let i = 0;
     while (i < frames.length - 1 && frames[i].t < cut) i++;
+    i = Math.max(i, frames.length - BUFFER_MAX);
     if (i) frames.splice(0, i);
   };
 
