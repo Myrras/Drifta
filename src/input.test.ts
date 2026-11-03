@@ -169,13 +169,22 @@ describe('createInput pad edge tracking', () => {
     expect(input.poll().device).toBe('pad');
     buttons[0].pressed = false;
     expect(input.poll().device).toBe('pad');
-    w.dispatchEvent(new Event('mousemove'));
-    expect(input.poll().device).toBe('kb');
     buttons[7].value = 0.5;
     expect(input.poll().device).toBe('pad');
     buttons[7].value = 0;
     w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyQ', repeat: false }));
     expect(input.poll().device).toBe('kb');
+  });
+  it('mouse move and click do not change the device', () => {
+    const { w, buttons, state, input } = setup();
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    buttons[0].pressed = true;
+    expect(input.poll().device).toBe('pad');
+    buttons[0].pressed = false;
+    w.dispatchEvent(new Event('mousemove'));
+    expect(input.poll().device).toBe('pad');
+    w.dispatchEvent(new Event('mousedown'));
+    expect(input.poll().device).toBe('pad');
   });
   it('deadzone noise stays kb; stick past it flips to pad', () => {
     const { buttons, state, input } = setup();
