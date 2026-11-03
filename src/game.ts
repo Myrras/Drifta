@@ -1,9 +1,19 @@
-import type { DriftInfo, GameMap, Helix, InputState, Phase, ScoreEvent } from './types';
-import type { FrameView, Popup, Results } from './view';
+import type {
+  DriftInfo,
+  GameMap,
+  Helix,
+  InputState,
+  Phase,
+  PlayerModel,
+  ScoreEvent,
+} from './types';
+import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
 import type { createAudio } from './audio';
 import { COUNTDOWN_SECONDS } from './config';
 import { bounce, createCar, stepCar } from './car';
 import { collide, inRect, nearestDistance } from './collision';
+import { PLAYER_MODELS, type CarStats } from './models';
+import { loadSettings, saveSettings, type SettingsStorage } from './settings';
 import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
@@ -18,19 +28,39 @@ const SHAKE_DECAY = 3; // per s
 const RAMP_DRIFT_MIN = 0.6; // fraction of the helix that must be drifted
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
+const MODEL_IDS = Object.keys(PLAYER_MODELS) as PlayerModel[];
+const statRange = (k: keyof CarStats) => {
+  const v = MODEL_IDS.map((m) => PLAYER_MODELS[m].stats[k]);
+  return [Math.min(...v), Math.max(...v)];
+};
+const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
+const TITLE_ROWS = 3;
+const SETTINGS_ROWS = 7; // 4 volumes, shake, reset, back
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
   maps: GameMap[],
   audio: AudioLike,
   best: (mapName: string) => BestStore,
+  storage?: SettingsStorage,
 ) {
+  const cfg = loadSettings(storage);
+  const applyVolumes = () => {
+    const { master, music, sfx, engine } = cfg;
+    audio.setVolumes({ master, music, sfx, engine });
+  };
+  applyVolumes();
+  let row = 0;
+  let confirmReset = false;
+  let gCar = cfg.car;
+  let gColor = cfg.color;
+  let intensity = 0;
   let sel = 0;
   let map = maps[0];
   const stores = maps.map((m) => best(m.name));
   const bests = stores.map((b) => b.get());
   const fresh = () => ({
-    car: createCar(map.start),
+    car: createCar(map.start, PLAYER_MODELS[cfg.car].stats),
     floorIndex: map.start.floor,
     scoring: createScoring(),
     drift: IDLE,
@@ -50,6 +80,8 @@ export function createGame(
 
   const newRun = () => {
     audio.stop();
+    audio.music(true);
+    audio.setIntensity((intensity = 0.15));
     Object.assign(s, fresh(), { phase: 'countdown', runId: s.runId + 1 });
   };
   const popup = (kind: Popup['kind'], text: string, amount: number) =>
@@ -122,6 +154,7 @@ export function createGame(
     s.results = { comboPoints, timeBonus: bonus, total, time: s.time, best: bests[sel], newBest };
     s.phase = 'results';
     audio.stop();
+    audio.music(false);
   }
 
   function run(input: InputState, dt: number): void {
@@ -131,6 +164,8 @@ export function createGame(
     const floor = map.floors[s.floorIndex];
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle);
+    const want = s.scoring.combo ? Math.min(1, s.scoring.combo.multiplier / 8) : 0.15;
+    if (Math.abs(want - intensity) > 0.02) audio.setIntensity((intensity = want));
     const hit = collide(car, floor.solids, floor.circles);
     s.scrape = 0;
     if (hit) {
@@ -159,6 +194,105 @@ export function createGame(
     if (s.floorIndex === map.finish.floor && inRect(s.car.pos, map.finish.zone)) finish();
   }
 
+  const cycle = (i: number, d: number, n: number) => (i + d + n) % n;
+  const save = () => saveSettings(cfg, storage);
+  const go = (phase: Phase, at = 0) => {
+    row = at;
+    confirmReset = false;
+    s.phase = phase;
+  };
+
+  function garageInput(input: InputState, dir: number): void {
+    const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (dir) {
+      gCar = MODEL_IDS[cycle(MODEL_IDS.indexOf(gCar), dir, MODEL_IDS.length)];
+      gColor = PLAYER_MODELS[gCar].colors[0];
+    }
+    if (dv) {
+      const cs = PLAYER_MODELS[gCar].colors;
+      gColor = cs[cycle(Math.max(0, cs.indexOf(gColor)), dv, cs.length)];
+    }
+    if (input.confirm) {
+      Object.assign(cfg, { car: gCar, color: gColor });
+      save();
+      Object.assign(s, fresh());
+      go('title', 1);
+    } else if (input.pause) {
+      [gCar, gColor] = [cfg.car, cfg.color];
+      go('title', 1);
+    }
+  }
+
+  function settingsInput(input: InputState, dir: number): void {
+    const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (dv) {
+      row = cycle(row, dv, SETTINGS_ROWS);
+      confirmReset = false;
+    }
+    const vol = VOLUMES[row];
+    if (vol && dir) {
+      cfg[vol] = Math.min(1, Math.max(0, Math.round((cfg[vol] + dir * 0.1) * 10) / 10));
+      applyVolumes();
+      save();
+    } else if (row === 4 && (dir || input.confirm)) {
+      cfg.shake = !cfg.shake;
+      save();
+    } else if (row === 5 && input.confirm) {
+      if (confirmReset) {
+        stores.forEach((b, i) => b.set((bests[i] = 0)));
+        confirmReset = false;
+      } else confirmReset = true;
+    } else if ((row === 6 && input.confirm) || input.pause) go('title', 2);
+  }
+
+  function menuView(): MenuView | null {
+    const base = { row, items: maps.map((m) => m.name), selected: sel, garage: null };
+    const pct = (v: number) => `${Math.round(v * 100)}%`;
+    if (s.phase === 'title') {
+      const rows: MenuRow[] = [
+        { label: 'PLAY', value: `◀ ${map.name} ▶` },
+        { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
+        { label: 'SETTINGS' },
+      ];
+      return { ...base, screen: 'title', rows };
+    }
+    if (s.phase === 'settings') {
+      const rows: MenuRow[] = [
+        ...VOLUMES.map((k) => ({
+          label: `${k.toUpperCase()} VOLUME`,
+          value: pct(cfg[k]),
+          bar: cfg[k],
+        })),
+        { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' },
+        { label: 'RESET BEST SCORES', value: confirmReset ? 'ENTER TO CONFIRM' : undefined },
+        { label: 'BACK' },
+      ];
+      return { ...base, screen: 'settings', rows };
+    }
+    if (s.phase === 'garage') {
+      const m = PLAYER_MODELS[gCar];
+      const n = (k: keyof CarStats) => {
+        const [lo, hi] = statRange(k);
+        return hi > lo ? (m.stats[k] - lo) / (hi - lo) : 0.5;
+      };
+      return {
+        ...base,
+        screen: 'garage',
+        rows: [],
+        garage: {
+          model: gCar,
+          name: m.name,
+          color: gColor,
+          colors: m.colors,
+          index: MODEL_IDS.indexOf(gCar),
+          count: MODEL_IDS.length,
+          stats: { power: n('power'), grip: n('grip'), weight: n('mass') },
+        },
+      };
+    }
+    return null;
+  }
+
   return {
     update(input: InputState, dt: number): void {
       s.handbrake = input.handbrake;
@@ -170,24 +304,37 @@ export function createGame(
       const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
       const toTitle = () => {
         audio.stop();
+        audio.music(false);
         Object.assign(s, fresh(), { phase: 'title' });
       };
 
-      if (input.restart && s.phase !== 'title') {
+      const inMenu = s.phase === 'title' || s.phase === 'garage' || s.phase === 'settings';
+      if (input.restart && !inMenu) {
         newRun();
         return;
       }
       switch (s.phase) {
         case 'title':
-          if (dir) {
-            sel = (sel + dir + maps.length) % maps.length;
+          row = cycle(row, (input.down ? 1 : 0) - (input.up ? 1 : 0), TITLE_ROWS);
+          if (dir && row === 0) {
+            sel = cycle(sel, dir, maps.length);
             map = maps[sel];
             Object.assign(s, fresh());
           }
           if (input.confirm) {
             audio.resume();
-            newRun();
+            if (row === 0) newRun();
+            else {
+              [gCar, gColor] = [cfg.car, cfg.color];
+              go(row === 1 ? 'garage' : 'settings');
+            }
           }
+          break;
+        case 'garage':
+          garageInput(input, dir);
+          break;
+        case 'settings':
+          settingsInput(input, dir);
           break;
         case 'countdown':
           s.countdown -= dt;
@@ -233,10 +380,10 @@ export function createGame(
           brake: s.brake,
           fade: 0,
           blend,
-          shake: s.shake,
-          player: { model: 'mx5', color: '#d32030' },
+          shake: cfg.shake ? s.shake : 0,
+          player: { model: cfg.car, color: cfg.color },
           scrape: s.scrape,
-          impact: s.shake,
+          impact: cfg.shake ? s.shake : 0,
           runId: s.runId,
         },
         hud: {
@@ -251,7 +398,7 @@ export function createGame(
           speedKmh: speed * 3.6,
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
           best: bests[sel],
-          menu: s.phase === 'title' ? { items: maps.map((m) => m.name), selected: sel } : null,
+          menu: menuView(),
           results: s.phase === 'results' ? s.results : null,
         },
       };

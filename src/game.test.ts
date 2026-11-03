@@ -4,6 +4,8 @@ import { garage } from './maps/garage';
 import { testpad } from './maps/testpad';
 import { COUNTDOWN_SECONDS, DT } from './config';
 import type { GameMap, InputState } from './types';
+import { PLAYER_MODELS } from './models';
+import { SETTINGS_KEY } from './settings';
 
 const noop = () => {};
 const audio: AudioLike = {
@@ -27,6 +29,8 @@ const IDLE: InputState = {
   confirm: false,
   left: false,
   right: false,
+  up: false,
+  down: false,
 };
 
 function memBest(v = 0): BestStore {
@@ -347,7 +351,11 @@ describe('menu', () => {
 
   it('cycles with wrap and starts the selected map', () => {
     const { game, tap, step } = rig();
-    expect(game.view().hud.menu).toEqual({ items: [garage.name, testpad.name], selected: 0 });
+    expect(game.view().hud.menu).toMatchObject({
+      items: [garage.name, testpad.name],
+      selected: 0,
+      screen: 'title',
+    });
     tap(1);
     expect(game.view().hud.menu?.selected).toBe(1);
     tap(1);
@@ -391,5 +399,149 @@ describe('menu', () => {
     expect(game.view().hud.best).toBe(5);
     tap(1);
     expect(game.view().hud.best).toBe(9);
+  });
+});
+
+describe('main menu, garage, settings', () => {
+  const rig = (saved?: object) => {
+    const mem = new Map<string, string>(saved ? [[SETTINGS_KEY, JSON.stringify(saved)]] : []);
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+    };
+    const a = {
+      ...audio,
+      music: vi.fn(),
+      setVolumes: vi.fn(),
+      setIntensity: vi.fn(),
+    };
+    const stores = [memBest(50), memBest(70)];
+    const game = createGame(
+      [garage, testpad],
+      a,
+      (n) => stores[n === garage.name ? 0 : 1],
+      storage,
+    );
+    const tap = (input: Partial<InputState>) => {
+      game.update({ ...IDLE, ...input }, DT);
+      game.update(IDLE, DT);
+    };
+    const row = () => game.view().hud.menu!.row;
+    return { game, a, tap, row, storage, stores, mem };
+  };
+
+  it('up/down wrap, enter opens garage and settings', () => {
+    const { game, tap, row } = rig();
+    tap({ up: true });
+    expect(row()).toBe(2);
+    tap({ down: true });
+    expect(row()).toBe(0);
+    tap({ down: true });
+    tap({ confirm: true });
+    expect(game.view().hud.phase).toBe('garage');
+    tap({ pause: true });
+    expect(game.view().hud.phase).toBe('title');
+    tap({ down: true });
+    tap({ confirm: true });
+    expect(game.view().hud.phase).toBe('settings');
+  });
+
+  it('left/right only picks the map on the PLAY row', () => {
+    const { game, tap } = rig();
+    tap({ down: true });
+    tap({ right: true });
+    expect(game.view().hud.menu?.selected).toBe(0);
+  });
+
+  it('garage: cars and paint cycle, enter persists, esc reverts', () => {
+    const { game, tap, mem } = rig();
+    const g = () => game.view().hud.menu!.garage!;
+    tap({ down: true });
+    tap({ confirm: true });
+    tap({ right: true });
+    expect(g().model).toBe('civic');
+    expect(g().color).toBe(PLAYER_MODELS.civic.colors[0]);
+    tap({ down: true });
+    expect(g().color).toBe(PLAYER_MODELS.civic.colors[1]);
+    tap({ up: true });
+    tap({ up: true });
+    expect(g().color).toBe(PLAYER_MODELS.civic.colors.at(-1));
+    tap({ pause: true }); // revert
+    expect(game.view().render.player.model).toBe('mx5');
+    tap({ confirm: true });
+    tap({ left: true });
+    expect(g().model).toBe('wrx');
+    tap({ confirm: true });
+    const p = game.view().render.player;
+    expect(p).toEqual({ model: 'wrx', color: PLAYER_MODELS.wrx.colors[0] });
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({ car: 'wrx' });
+    expect(game.debug.car.stats).toEqual(PLAYER_MODELS.wrx.stats);
+  });
+
+  it('garage stat bars are normalised 0..1', () => {
+    const { game, tap } = rig();
+    tap({ down: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 11; i++) {
+      tap({ right: true });
+      const s = game.view().hud.menu!.garage!.stats;
+      for (const v of Object.values(s)) expect(v >= 0 && v <= 1).toBe(true);
+    }
+  });
+
+  it('settings change volumes, shake and persist', () => {
+    const { game, a, tap, mem } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    tap({ left: true });
+    expect(a.setVolumes).toHaveBeenLastCalledWith({
+      master: 0.7,
+      music: 0.6,
+      sfx: 0.8,
+      engine: 0.8,
+    });
+    tap({ down: true });
+    tap({ right: true });
+    expect(a.setVolumes).toHaveBeenLastCalledWith({
+      master: 0.7,
+      music: 0.7,
+      sfx: 0.8,
+      engine: 0.8,
+    });
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).music).toBe(0.7);
+    for (let i = 0; i < 3; i++) tap({ down: true });
+    tap({ right: true });
+    expect(game.view().hud.menu!.rows[4].value).toBe('OFF');
+    game.debug.shake = 1;
+    expect(game.view().render.shake).toBe(0);
+    expect(game.view().render.impact).toBe(0);
+  });
+
+  it('reset best scores needs a second enter', () => {
+    const { game, tap, stores } = rig();
+    tap({ up: true });
+    tap({ confirm: true });
+    for (let i = 0; i < 5; i++) tap({ down: true });
+    tap({ confirm: true });
+    expect(stores[0].get()).toBe(50);
+    tap({ confirm: true });
+    expect([stores[0].get(), stores[1].get()]).toEqual([0, 0]);
+    expect(game.view().hud.best).toBe(0);
+  });
+
+  it('uses the saved car stats and toggles music with the run', () => {
+    const { game, a, tap } = rig({ car: 'supra', color: '#ff7a00' });
+    expect(a.music).not.toHaveBeenCalledWith(true);
+    tap({ confirm: true });
+    expect(a.music).toHaveBeenLastCalledWith(true);
+    expect(game.debug.car.stats).toEqual(PLAYER_MODELS.supra.stats);
+    for (let i = 0; i < 200; i++) game.update(IDLE, DT);
+    game.debug.scoring.combo = { points: 500, multiplier: 4, tricks: ['DRIFT'], grace: 1.5 };
+    game.update(IDLE, DT);
+    expect(a.setIntensity).toHaveBeenLastCalledWith(0.5);
+    game.update({ ...IDLE, pause: true }, DT);
+    game.update({ ...IDLE, pause: true }, DT);
+    expect(game.view().hud.phase).toBe('title');
+    expect(a.music).toHaveBeenLastCalledWith(false);
   });
 });

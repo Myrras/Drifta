@@ -30,6 +30,7 @@ const bestFor = (name: string) => {
       mem = v;
       try {
         localStorage.setItem(key, String(v));
+        if (!v) localStorage.removeItem(BEST_SCORE_KEY); // reset also clears the legacy score
       } catch {
         /* in-memory fallback */
       }
@@ -46,7 +47,15 @@ document.addEventListener('visibilitychange', () => document.hidden && game.paus
 
 let last = performance.now();
 let acc = 0;
-const pending = { pause: false, restart: false, confirm: false, left: false, right: false };
+const pending = {
+  pause: false,
+  restart: false,
+  confirm: false,
+  left: false,
+  right: false,
+  up: false,
+  down: false,
+};
 function frame(now: number) {
   const frameDt = Math.min((now - last) / 1000, 0.25);
   last = now;
@@ -57,10 +66,19 @@ function frame(now: number) {
   pending.confirm ||= s.confirm;
   pending.left ||= s.left;
   pending.right ||= s.right;
+  pending.up ||= !!s.up;
+  pending.down ||= !!s.down;
   if (s.confirm) resume();
   while (acc >= DT) {
     game.update({ ...s, ...pending }, DT);
-    pending.pause = pending.restart = pending.confirm = pending.left = pending.right = false;
+    pending.pause =
+      pending.restart =
+      pending.confirm =
+      pending.left =
+      pending.right =
+      pending.up =
+      pending.down =
+        false;
     acc -= DT;
   }
   const v = game.view();

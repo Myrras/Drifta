@@ -109,4 +109,14 @@ describe('createInput left/right edges', () => {
     key('keyup');
     expect([input.poll().left, input.poll().left]).toEqual([true, false]);
   });
+  it('up/down taps fire once', () => {
+    const w = new EventTarget() as unknown as Window;
+    const input = createInput(w);
+    for (const code of ['KeyW', 'ArrowDown']) {
+      w.dispatchEvent(Object.assign(new Event('keydown'), { code, repeat: false }));
+      w.dispatchEvent(Object.assign(new Event('keyup'), { code }));
+    }
+    const a = input.poll();
+    expect([a.up, a.down, input.poll().up]).toEqual([true, true, false]);
+  });
 });
