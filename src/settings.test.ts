@@ -31,6 +31,12 @@ describe('settings', () => {
     expect(loadSettings(fake(JSON.stringify({ track: 'eurobeat' }))).track).toBe('eurobeat');
     expect(loadSettings(fake(JSON.stringify({ track: 'polka' }))).track).toBe('tokyo');
   });
+  it('validates the menu theme and accepts the mine track', () => {
+    expect(loadSettings(fake()).menuTheme).toBe('arcade');
+    expect(loadSettings(fake(JSON.stringify({ menuTheme: 'vhs' }))).menuTheme).toBe('vhs');
+    expect(loadSettings(fake(JSON.stringify({ menuTheme: 'x' }))).menuTheme).toBe('arcade');
+    expect(loadSettings(fake(JSON.stringify({ track: 'mine' }))).track).toBe('mine');
+  });
   it('validates the tune', () => {
     expect(loadSettings(fake(JSON.stringify({ tune: 'performance' }))).tune).toBe('performance');
     expect(loadSettings(fake(JSON.stringify({ tune: 'x' }))).tune).toBe('street');

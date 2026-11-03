@@ -96,7 +96,13 @@ function rows(
     ...list.filter((r) => r.bar !== undefined).map((r) => g.measureText(r.label).width),
   );
   g.font = `700 ${3 * u}px ${FONT}`;
-  const valW = Math.max(0, ...list.map((r) => (r.value ? g.measureText(r.value).width : 0)));
+  // bar rows only: other values (MUSIC, reset prompt) must not resize the bars
+  const valW = Math.max(
+    0,
+    ...list
+      .filter((r) => r.bar !== undefined)
+      .map((r) => (r.value ? g.measureText(r.value).width : 0)),
+  );
   g.restore();
   list.forEach((r, i) => {
     const y = top + i * step;
@@ -115,6 +121,41 @@ function rows(
     }
     if (r.value)
       text(g, r.value, x1, y, 3 * u, on ? '#ffd23f' : '#fff', { align: 'right', weight: 700 });
+  });
+}
+
+/** Settings rows (strip included, n total): start y and step so the last row clears the hint line. */
+export function settingsLayout(h: number, u: number, n: number): { top: number; step: number } {
+  const bottom = h - 9 * u;
+  const minTop = h * 0.14 + 7 * u; // under the SETTINGS title
+  const top = Math.max(minTop, Math.min(h * 0.25, bottom - (n - 1) * 7.8 * u));
+  return { top, step: Math.min(7.8 * u, (bottom - top) / (n - 1)) };
+}
+
+function tabStrip(
+  g: CanvasRenderingContext2D,
+  names: string[],
+  active: number,
+  on: boolean,
+  w: number,
+  y: number,
+  h: number,
+  u: number,
+): void {
+  const pw = Math.min(72 * u, w * 0.94);
+  plate(g, w / 2, y, pw, h, on);
+  const cw = (pw - 6 * u) / names.length;
+  names.forEach((n, i) => {
+    const x = w / 2 - pw / 2 + 3 * u + cw * (i + 0.5);
+    const cur = i === active;
+    text(g, n, x, y, 3.2 * u, cur ? '#ffd23f' : on ? '#fff' : '#9a9aa2', {
+      align: 'center',
+      italic: true,
+    });
+    if (cur) {
+      g.fillStyle = '#ffd23f';
+      g.fillRect(x - cw * 0.3, y + h * 0.32, cw * 0.6, 0.5 * u);
+    }
   });
 }
 
@@ -267,8 +308,20 @@ export function drawMenu(
       weight: 900,
       stroke: '#e8262b',
     });
-    rows(ctx, m.rows, m.row, width, height * 0.25, u, 7.8 * u);
-    hints(ctx, '↑/↓ move · ←/→ change · ENTER select · ESC back', width, height, u);
+    const { top, step } = settingsLayout(height, u, m.rows.length + 1);
+    if (m.tabs)
+      tabStrip(
+        ctx,
+        m.tabs.names,
+        m.tabs.active,
+        m.row === 0,
+        width,
+        top,
+        Math.min(8 * u, step - 1.2 * u),
+        u,
+      );
+    rows(ctx, m.rows, m.row - 1, width, top + step, u, step);
+    hints(ctx, '↑/↓ move · ←/→ change · Q/E tab · ENTER select · ESC back', width, height, u);
   }
   return true;
 }

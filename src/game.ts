@@ -14,7 +14,7 @@ import type {
 import type { FrameView, MenuRow, MenuView, Popup, Results } from './view';
 import type { createAudio } from './audio';
 import { COUNTDOWN_SECONDS } from './config';
-import { bounce, createCar, stepCar } from './car';
+import { bounce, createCar, stepCar, TUNING } from './car';
 import { rampToward } from './input';
 import { collide, inRect, nearestDistance } from './collision';
 import { garage, garageRoute } from './maps/garage';
@@ -93,7 +93,20 @@ const statRange = (k: keyof CarStats) => {
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
-const SETTINGS_ROWS = 9; // 4 volumes, shake, music, clip quality, reset, back
+/** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
+const TABS = [
+  { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track'] },
+  { name: 'VIDEO', ids: ['shake', 'clips', 'theme'] },
+  { name: 'GAME', ids: ['reset'] },
+] as const;
+const UI_DEVICE = { device: 'kb', padStyle: 'xbox' } as const; // a later task wires the real input
+/** HUD gear, derived from forward speed like car.ts's rpm sawtooth (TUNING.gearTops). */
+const gearOf = (vf: number): string => {
+  if (vf < -0.5) return 'R';
+  if (vf < 0.5) return 'N';
+  const g = TUNING.gearTops.findIndex((hi) => vf < hi);
+  return String(g < 0 ? TUNING.gearTops.length : g + 1);
+};
 /** Stats with the tune applied. */
 export const tunedStats = (m: PlayerModel, tune: Tune): CarStats => {
   const st = PLAYER_MODELS[m].stats;
@@ -118,6 +131,7 @@ export function createGame(
   audio.setTrack(cfg.track);
   let row = 0;
   let confirmReset = false;
+  let tab = 0;
   let gCar = cfg.car;
   let gColor = cfg.color;
   let gTune = cfg.tune;
@@ -389,6 +403,7 @@ export function createGame(
   const go = (phase: Phase, at = 0) => {
     row = at;
     confirmReset = false;
+    tab = 0;
     s.phase = phase;
   };
 
@@ -418,39 +433,63 @@ export function createGame(
     }
   }
 
-  function settingsInput(input: InputState, dir: number): void {
+  function settingsInput(
+    input: InputState & { tabPrev?: boolean; tabNext?: boolean },
+    dir: number,
+  ): void {
+    const back = TABS[tab].ids.length + 1;
     const dv = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (dv) {
-      row = cycle(row, dv, SETTINGS_ROWS);
+      row = cycle(row, dv, back + 1);
       confirmReset = false;
     }
-    const vol = VOLUMES[row];
-    if (vol && dir) {
-      cfg[vol] = Math.min(1, Math.max(0, Math.round((cfg[vol] + dir * 0.1) * 10) / 10));
+    const td = (input.tabNext ? 1 : 0) - (input.tabPrev ? 1 : 0) || (row === 0 ? dir : 0);
+    if (td) {
+      const was = row === back;
+      tab = cycle(tab, td, TABS.length);
+      const last = TABS[tab].ids.length + 1;
+      row = was ? last : Math.min(row, last - 1);
+      confirmReset = false;
+      return;
+    }
+    const id = row > 0 && row < back ? TABS[tab].ids[row - 1] : undefined;
+    const act = dir || input.confirm;
+    if (id === 'master' || id === 'music' || id === 'sfx' || id === 'engine') {
+      if (!dir) return;
+      cfg[id] = Math.min(1, Math.max(0, Math.round((cfg[id] + dir * 0.1) * 10) / 10));
       applyVolumes();
       save();
-    } else if (row === 4 && (dir || input.confirm)) {
-      cfg.shake = !cfg.shake;
-      save();
-    } else if (row === 5 && (dir || input.confirm)) {
+    } else if (id === 'track' && act) {
       audio.setTrack((cfg.track = cfg.track === 'tokyo' ? 'eurobeat' : 'tokyo'));
       save();
-    } else if (row === 6 && (dir || input.confirm)) {
+    } else if (id === 'shake' && act) {
+      cfg.shake = !cfg.shake;
+      save();
+    } else if (id === 'clips' && act) {
       const n = CLIP_QUALITIES.length;
       cfg.clips = CLIP_QUALITIES[cycle(CLIP_QUALITIES.indexOf(cfg.clips), dir || 1, n)];
       save();
-    } else if (row === 7 && input.confirm) {
+    } else if (id === 'theme' && act) {
+      cfg.menuTheme = cfg.menuTheme === 'arcade' ? 'vhs' : 'arcade';
+      save();
+    } else if (id === 'reset' && input.confirm) {
       if (confirmReset) {
         stores.forEach((b, i) => b.set((bests[i] = 0)));
         confirmReset = false;
       } else confirmReset = true;
-    } else if ((row === 8 && input.confirm) || input.pause) go('title', 2);
+    } else if ((row === back && input.confirm) || input.pause) go('title', 2);
   }
 
   const medalTag = (n: number) => (n ? ` ${MEDAL_NAMES[n]}` : '');
 
   function menuView(): MenuView | null {
-    const base = { row, items: maps.map((m) => m.name), selected: sel, garage: null };
+    const base = {
+      ui: { theme: cfg.menuTheme, ...UI_DEVICE },
+      row,
+      items: maps.map((m) => m.name),
+      selected: sel,
+      garage: null,
+    };
     const pct = (v: number) => `${Math.round(v * 100)}%`;
     if (s.phase === 'title') {
       const rows: MenuRow[] = [
@@ -461,19 +500,30 @@ export function createGame(
       return { ...base, screen: 'title', rows };
     }
     if (s.phase === 'settings') {
-      const rows: MenuRow[] = [
-        ...VOLUMES.map((k) => ({
-          label: `${k.toUpperCase()} VOLUME`,
-          value: pct(cfg[k]),
-          bar: cfg[k],
-        })),
-        { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' },
-        { label: 'MUSIC', value: cfg.track.toUpperCase() },
-        { label: 'CLIP QUALITY', value: cfg.clips.toUpperCase() },
-        { label: 'RESET BEST SCORES', value: confirmReset ? 'ENTER TO CONFIRM' : undefined },
-        { label: 'BACK' },
-      ];
-      return { ...base, screen: 'settings', rows };
+      const item = (id: string): MenuRow => {
+        switch (id) {
+          case 'shake':
+            return { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' };
+          case 'track':
+            return { label: 'MUSIC', value: cfg.track.toUpperCase() };
+          case 'clips':
+            return { label: 'CLIP QUALITY', value: cfg.clips.toUpperCase() };
+          case 'theme':
+            return { label: 'MENU THEME', value: cfg.menuTheme.toUpperCase() };
+          case 'reset':
+            return {
+              label: 'RESET BEST SCORES',
+              value: confirmReset ? 'ENTER TO CONFIRM' : undefined,
+            };
+          default: {
+            const k = id as (typeof VOLUMES)[number];
+            return { label: `${k.toUpperCase()} VOLUME`, value: pct(cfg[k]), bar: cfg[k] };
+          }
+        }
+      };
+      const rows: MenuRow[] = [...TABS[tab].ids.map(item), { label: 'BACK' }];
+      const tabs = { names: TABS.map((t) => t.name), active: tab };
+      return { ...base, screen: 'settings', rows, tabs };
     }
     if (s.phase === 'garage') {
       const m = PLAYER_MODELS[gCar];
@@ -617,6 +667,10 @@ export function createGame(
           countdown: s.phase === 'countdown' ? Math.max(0, s.countdown) : 0,
           best: bests[sel],
           menu: menuView(),
+          ui: { theme: cfg.menuTheme, ...UI_DEVICE },
+          rpm: car.rpm,
+          redline: 1,
+          gear: gearOf(car.vel.x * Math.cos(car.angle) + car.vel.y * Math.sin(car.angle)),
           results:
             s.phase === 'results' && s.results
               ? {
