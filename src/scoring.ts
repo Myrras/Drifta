@@ -47,6 +47,13 @@ export function timeBonus(time: number, par: number): number {
   return Math.max(0, Math.round((par - time) * TIME_BONUS_PER_SEC));
 }
 
+export const MEDAL_NAMES = ['', 'BRONZE', 'SILVER', 'GOLD'];
+
+/** Medals earned (0 none .. 3 gold) for a total score. */
+export function medalFor(total: number, medals?: readonly number[]): number {
+  return medals ? medals.filter((m) => total >= m).length : 0;
+}
+
 function resetBook(s: Scoring): void {
   s.wasDrifting = false;
   s.lastSign = 0;

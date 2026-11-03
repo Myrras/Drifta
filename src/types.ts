@@ -62,6 +62,8 @@ export interface Helix {
 export interface GameMap {
   name: string;
   parTime: number;
+  /** total-score thresholds [bronze, silver, gold]; absent on free-roam maps */
+  medals?: [number, number, number];
   floors: Floor[];
   helixes: Helix[];
   start: { floor: number } & Spawn;

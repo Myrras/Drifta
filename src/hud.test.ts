@@ -6,6 +6,7 @@ import {
   easeOutElastic,
   formatScore,
   formatTime,
+  medalText,
   multColor,
 } from './hud';
 
@@ -56,5 +57,15 @@ describe('hud animation helpers', () => {
     expect(multColor(3)).toBe('#ffd23f');
     expect(multColor(5)).toBe('#ff7a1a');
     expect(multColor(9)).toBe('#ff2b3a');
+  });
+});
+
+describe('medalText', () => {
+  it('shows medal and gap to next', () => {
+    const m = [100, 200, 300];
+    expect(medalText(50, m)).toBe('NO MEDAL · 50 to BRONZE');
+    expect(medalText(250, m)).toBe('SILVER · 50 to GOLD');
+    expect(medalText(300, m)).toBe('GOLD');
+    expect(medalText(50)).toBe('');
   });
 });

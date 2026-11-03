@@ -1,4 +1,5 @@
 import { COMBO_GRACE } from './config';
+import { MEDAL_NAMES, medalFor } from './scoring';
 import type { HudView, Popup } from './view';
 import { drawMenu } from './ui/menu';
 
@@ -19,6 +20,14 @@ export function formatTime(seconds: number): string {
   const m = Math.floor(cs / 6000);
   const s = Math.floor((cs % 6000) / 100);
   return `${m}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+}
+
+/** Results line: medal earned and points to the next one. */
+export function medalText(total: number, medals?: readonly number[]): string {
+  if (!medals) return '';
+  const n = medalFor(total, medals);
+  const next = n < 3 ? ` · ${formatScore(medals[n] - total)} to ${MEDAL_NAMES[n + 1]}` : '';
+  return `${n ? MEDAL_NAMES[n] : 'NO MEDAL'}${next}`;
 }
 
 export function formatScore(n: number): string {
@@ -721,6 +730,9 @@ export function drawHud(
     align: 'center',
     font: 'label',
   });
+  const mt = medalText(r.total, r.medals);
+  if (mt)
+    text(ctx, mt, cx - 2 * u, top + 37.5 * u, 2.8 * u, AMBER, { align: 'center', font: 'label' });
   if (r.newBest && Math.floor(nowS * 3) % 2 === 0)
     text(ctx, 'NEW BEST!', cx - 3 * u, top + 47 * u, 5 * u, GREEN, {
       align: 'center',

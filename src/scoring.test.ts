@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLOSE_CALL_COOLDOWN, COMBO_GRACE, DRIFT_POINT_SCALE } from './config';
-import { comboValue, createScoring, forceBank, stepScoring, timeBonus } from './scoring';
+import { comboValue, createScoring, forceBank, medalFor, stepScoring, timeBonus } from './scoring';
 import type { ScoreEvent, ScoreFrame } from './types';
 
 const DEG = Math.PI / 180;
@@ -163,5 +163,13 @@ describe('scoring', () => {
     const b = run(s, F({ drifting: true }), 1.0, 0.5);
     expect(tricks([...a, ...b]).filter((t) => t === 'LONG DRIFT')).toHaveLength(1);
     expect(tricks(b)).not.toContain('DRIFT');
+  });
+});
+
+describe('medalFor', () => {
+  it('counts thresholds reached', () => {
+    const m = [100, 200, 300];
+    expect([0, 99, 100, 250, 300, 999].map((t) => medalFor(t, m))).toEqual([0, 0, 1, 2, 3, 3]);
+    expect(medalFor(500)).toBe(0);
   });
 });

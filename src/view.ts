@@ -39,6 +39,8 @@ export interface Results {
   time: number;
   best: number;
   newBest: boolean;
+  /** thresholds [bronze, silver, gold] of the map, if any */
+  medals?: [number, number, number];
 }
 
 export interface MenuRow {
