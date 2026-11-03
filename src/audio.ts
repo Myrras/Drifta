@@ -52,12 +52,21 @@ export function pickLoopWindow(
   return [(best * blk) / sampleRate, ((best + w) * blk) / sampleRate];
 }
 
-export const BOOM_RANGE = 45; // m, silent beyond
-const BOOM_NEAR = 4; // m, full level inside
-/** Subwoofer level 0..1 at distance d (m): full inside BOOM_NEAR, squared fade to 0 at BOOM_RANGE. */
+export const BOOM_RANGE = 60; // m, silent beyond
+const BOOM_NEAR = 8; // m, full level inside
+const BOOM_SHAKE_RANGE = 35; // m, no camera shake beyond
+/** 1 inside `near`, smoothstep down to 0 at `far`. */
+function fade(d: number, near: number, far: number): number {
+  const t = Math.min(1, Math.max(0, (d - near) / (far - near)));
+  return 1 - t * t * (3 - 2 * t);
+}
+/** Subwoofer level 0..1 at distance d (m): flat inside BOOM_NEAR, smooth fade to 0 at BOOM_RANGE. */
 export function boomGain(d: number): number {
-  const t = Math.min(1, Math.max(0, (d - BOOM_NEAR) / (BOOM_RANGE - BOOM_NEAR)));
-  return (1 - t) ** 2;
+  return fade(d, BOOM_NEAR, BOOM_RANGE);
+}
+/** Camera-shake strength 0..1 at distance d (m): full inside BOOM_NEAR, none from BOOM_SHAKE_RANGE. */
+export function boomShake(d: number): number {
+  return fade(d, BOOM_NEAR, BOOM_SHAKE_RANGE);
 }
 /** Centers of the parked boom cars among a floor's solids. */
 export function boomCars(solids: Solid[]): Vec[] {
@@ -65,15 +74,14 @@ export function boomCars(solids: Solid[]): Vec[] {
 }
 const BOOM_BAR = 2; // s, kick pattern length
 const BOOM_KICKS = [0, 0.75, 1, 1.5]; // kick times within the bar
+/** Seconds since the last kick at bar time t. */
+export function boomAge(t: number): number {
+  const ph = ((t % BOOM_BAR) + BOOM_BAR) % BOOM_BAR;
+  return Math.min(...BOOM_KICKS.map((k) => (ph - k + BOOM_BAR) % BOOM_BAR));
+}
 /** Kick envelope 0..1 at time t, for visuals that follow the bass (decays ~0.15 s after each kick). */
 export function boomPulse(t: number): number {
-  const ph = ((t % BOOM_BAR) + BOOM_BAR) % BOOM_BAR;
-  let m = 0;
-  for (const k of BOOM_KICKS) {
-    const a = (ph - k + BOOM_BAR) % BOOM_BAR;
-    m = Math.max(m, Math.exp(-a / 0.15));
-  }
-  return m;
+  return Math.exp(-boomAge(t) / 0.15);
 }
 
 export function createAudio() {
@@ -98,6 +106,8 @@ export function createAudio() {
   let tap: MediaStreamAudioDestinationNode | null = null;
   // boom cars: one voice (wobbling lowpass -> level -> pan) per car, one shared kick scheduler
   let boomBus: GainNode | null = null;
+  let duck: GainNode; // music ducks on each kick
+  let boomCurve: Float32Array<ArrayBuffer> | null = null;
   const booms: { kick: GainNode; level: GainNode; pan: StereoPannerNode }[] = [];
   let boomT = -1; // next kick time
   let boomI = 0; // next kick index in the bar
@@ -157,7 +167,9 @@ export function createAudio() {
     sfxBus.connect(master);
     musicBus = c.createGain();
     musicBus.connect(master);
-    mus = createMusic(c, musicBus);
+    duck = c.createGain();
+    duck.connect(musicBus);
+    mus = createMusic(c, duck);
     mus.setTrack(track);
     mus.setIntensity(intensity);
     applyVolumes();
@@ -200,51 +212,57 @@ export function createAudio() {
   function boomVoice(i: number) {
     const c = ctx!;
     if (!boomBus) {
-      const comp = c.createDynamicsCompressor(); // gain ceiling
-      comp.threshold.value = -12;
-      comp.ratio.value = 12;
+      const lim = c.createDynamicsCompressor(); // limiter
+      lim.threshold.value = -3;
+      lim.knee.value = 0;
+      lim.ratio.value = 20;
+      lim.attack.value = 0.001;
+      lim.release.value = 0.12;
       boomBus = c.createGain();
-      boomBus.gain.value = 0.6;
-      boomBus.connect(comp).connect(sfxBus);
+      boomBus.gain.value = 1.8;
+      boomBus.connect(lim).connect(sfxBus);
+      // soft clip: adds harmonics a laptop speaker can play
+      boomCurve = Float32Array.from({ length: 1024 }, (_, n) => Math.tanh((n / 511.5 - 1) * 3));
     }
     const kick = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 140;
-    lp.Q.value = 4;
+    lp.frequency.value = 200;
+    lp.Q.value = 5;
     const lfo = c.createOscillator(); // the wub
     lfo.frequency.value = 2.5 + (i % 3) * 0.7;
     const depth = c.createGain();
-    depth.gain.value = 70;
+    depth.gain.value = 140;
     lfo.connect(depth).connect(lp.frequency);
     lfo.start();
+    const drive = c.createGain();
+    drive.gain.value = 2.5;
+    const sat = c.createWaveShaper();
+    sat.curve = boomCurve;
     const level = c.createGain();
     level.gain.value = 0;
     const pan = c.createStereoPanner();
-    kick.connect(lp).connect(level).connect(pan).connect(boomBus);
+    kick.connect(lp).connect(drive).connect(sat).connect(level).connect(pan).connect(boomBus);
     return (booms[i] = { kick, level, pan });
   }
 
-  /** One 808-style kick (sine 55 -> 40 Hz plus a quiet octave up so small speakers hear it). */
+  /** One layered 808 kick: long sub (50 -> 36 Hz) plus a punchy body (120 -> 80 Hz). */
   function boomKick(out: GainNode, t: number): void {
-    const env = ctx!.createGain();
-    env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(0.9, t + 0.01);
-    env.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
-    env.connect(out);
-    for (const [type, mul, vol] of [
-      ['sine', 1, 1],
-      ['triangle', 2, 0.3],
+    for (const [f0, f1, sweep, tail, vol] of [
+      [50, 36, 0.25, 0.9, 1],
+      [120, 80, 0.08, 0.28, 0.8],
     ] as const) {
+      const env = ctx!.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(vol, t + 0.006);
+      env.gain.exponentialRampToValueAtTime(0.001, t + tail);
+      env.connect(out);
       const o = ctx!.createOscillator();
-      const g = ctx!.createGain();
-      o.type = type;
-      o.frequency.setValueAtTime(55 * mul, t);
-      o.frequency.exponentialRampToValueAtTime(40 * mul, t + 0.18);
-      g.gain.value = vol;
-      o.connect(g).connect(env);
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f1, t + sweep);
+      o.connect(env);
       o.start(t);
-      o.stop(t + 0.5);
+      o.stop(t + tail + 0.05);
     }
   }
 
@@ -302,11 +320,13 @@ export function createAudio() {
       if (!ctx || ctx.state !== 'running') return;
       const now = ctx.currentTime;
       const live: GainNode[] = [];
+      let near = 0;
       cars.forEach((c, i) => {
         const g = boomGain(Math.hypot(c.x - player.x, c.y - player.y));
+        near = Math.max(near, g);
         if (g < 0.01 && !booms[i]) return;
         const v = booms[i] ?? boomVoice(i);
-        set(v.level.gain, g * 0.8, 0.05);
+        set(v.level.gain, g, 0.05);
         set(v.pan.pan, Math.max(-1, Math.min(1, (c.x - player.x) / 20)) * 0.7, 0.05);
         if (g >= 0.01) live.push(v.kick);
       });
@@ -314,6 +334,10 @@ export function createAudio() {
       if (boomT < now - 0.1) [boomT, boomI, boomOrigin] = [now + 0.02, 0, now + 0.02]; // first call, or back after a pause
       while (boomT < now + 0.12) {
         for (const k of live) boomKick(k, boomT);
+        if (live.length) {
+          duck.gain.setValueAtTime(1 - 0.55 * near, boomT); // sidechain-style dip, swells back
+          duck.gain.setTargetAtTime(1, boomT + 0.04, 0.15);
+        }
         const n = (boomI + 1) % BOOM_KICKS.length;
         boomT += (n ? BOOM_KICKS[n] : BOOM_BAR) - BOOM_KICKS[boomI];
         boomI = n;

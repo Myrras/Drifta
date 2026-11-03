@@ -1,19 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { boomCars, boomGain, boomPulse, BOOM_RANGE, pickLoopWindow } from './audio';
+import { boomCars, boomGain, boomPulse, boomShake, BOOM_RANGE, pickLoopWindow } from './audio';
 import type { Solid } from './types';
 
 describe('boomGain', () => {
   it('is full when close, silent from the range on, and falls monotonically', () => {
     expect(boomGain(0)).toBe(1);
-    expect(boomGain(4)).toBe(1);
+    expect(boomGain(8)).toBe(1);
     expect(boomGain(BOOM_RANGE)).toBe(0);
     expect(boomGain(200)).toBe(0);
     let prev = 1;
-    for (let d = 5; d <= BOOM_RANGE; d += 5) {
+    for (let d = 10; d <= BOOM_RANGE; d += 5) {
       expect(boomGain(d)).toBeLessThan(prev);
       prev = boomGain(d);
     }
-    expect(boomGain(24.5)).toBeCloseTo(0.25, 2);
+    expect(boomGain(34)).toBeCloseTo(0.5, 2);
+  });
+});
+
+describe('boomShake', () => {
+  it('is full within 8 m, none from 35 m, and falls in between', () => {
+    expect(boomShake(0)).toBe(1);
+    expect(boomShake(8)).toBe(1);
+    expect(boomShake(35)).toBe(0);
+    expect(boomShake(100)).toBe(0);
+    expect(boomShake(21.5)).toBeCloseTo(0.5, 2);
+    expect(boomShake(15)).toBeGreaterThan(boomShake(25));
+    expect(boomShake(25)).toBeGreaterThan(boomShake(34));
   });
 });
 
