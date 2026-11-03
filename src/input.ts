@@ -134,14 +134,28 @@ const MAPPED = new Set([
   'Escape',
   'KeyR',
   'KeyT',
+  'KeyN',
   'Enter',
   'NumpadEnter',
 ]);
 
+export type InputDevice = 'kb' | 'pad';
+export type PadStyle = 'ps' | 'xbox';
+/** InputState plus last-used device info (types.ts is untouched). */
+export type PolledInput = InputState & { device: InputDevice; padStyle: PadStyle; skip: boolean };
+
+export const padStyleOf = (id: string): PadStyle =>
+  /054c|dualshock|dualsense|playstation|wireless controller/i.test(id) ? 'ps' : 'xbox';
+
 export function createInput(
   win: Window,
   now: () => number = () => performance.now(),
-): { poll(): InputState } {
+): { poll(): PolledInput } {
+  let device: InputDevice = 'kb';
+  let padStyle: PadStyle = 'xbox';
+  const toKb = () => (device = 'kb');
+  win.addEventListener('mousemove', toKb);
+  win.addEventListener('mousedown', toKb);
   const smooth = keyboardSmoother();
   let last = now();
   const held = new Set<string>();
@@ -155,6 +169,7 @@ export function createInput(
     down: latchedEdge(),
     tune: latchedEdge(),
     save: latchedEdge(),
+    skip: latchedEdge(),
   };
   const latchFor: Record<string, { latch(): void }> = {
     Escape: kbEdge.pause,
@@ -168,10 +183,12 @@ export function createInput(
     KeyW: kbEdge.up,
     ArrowUp: kbEdge.up,
     KeyT: kbEdge.tune,
+    KeyN: kbEdge.skip,
     KeyS: kbEdge.down,
     ArrowDown: kbEdge.down,
   };
   win.addEventListener('keydown', (e) => {
+    device = 'kb';
     if (!MAPPED.has(e.code)) return;
     e.preventDefault();
     held.add(e.code);
@@ -191,6 +208,7 @@ export function createInput(
     down: edgeTracker(),
     tune: edgeTracker(),
     save: edgeTracker(),
+    skip: edgeTracker(),
   };
 
   return {
@@ -203,9 +221,22 @@ export function createInput(
       const kbRaw = keyboardInput(held);
       const kb = smooth(kbRaw, dt);
       const gp = gamepadInput(pad);
+      if (pad) {
+        padStyle = padStyleOf(pad.id ?? '');
+        const active =
+          Array.from(pad.buttons).some((x) => x.pressed || x.value > 0.15) ||
+          Array.from(pad.axes).some((a) => Math.abs(a) > 0.15);
+        if (active) device = 'pad';
+      }
       const m = mergeInput(kb, gp);
       return {
         ...m,
+        device,
+        padStyle,
+        skip: pick(
+          kbEdge.skip.poll(held.has('KeyN')),
+          padEdge.skip(pad?.buttons[5]?.pressed ?? false),
+        ),
         pause: pick(kbEdge.pause.poll(kbRaw.pause), padEdge.pause(gp.pause)),
         restart: pick(kbEdge.restart.poll(kbRaw.restart), padEdge.restart(gp.restart)),
         confirm: pick(kbEdge.confirm.poll(kbRaw.confirm), padEdge.confirm(gp.confirm)),

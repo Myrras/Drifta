@@ -137,7 +137,12 @@ describe('createInput left/right edges', () => {
 });
 
 describe('createInput pad edge tracking', () => {
-  type Pad = { connected: boolean; buttons: { pressed: boolean; value: number }[]; axes: number[] };
+  type Pad = {
+    id?: string;
+    connected: boolean;
+    buttons: { pressed: boolean; value: number }[];
+    axes: number[];
+  };
   const setup = () => {
     const w = new EventTarget() as unknown as Window;
     const buttons = Array.from({ length: 16 }, () => ({ pressed: false, value: 0 }));
@@ -155,6 +160,48 @@ describe('createInput pad edge tracking', () => {
     expect(input.poll().pause).toBe(true);
     // pad still held, no new press: no phantom edge
     expect(input.poll().pause).toBe(false);
+  });
+  it('switches kb <-> pad and is sticky', () => {
+    const { w, buttons, state, input } = setup();
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    expect(input.poll().device).toBe('kb');
+    buttons[0].pressed = true;
+    expect(input.poll().device).toBe('pad');
+    buttons[0].pressed = false;
+    expect(input.poll().device).toBe('pad');
+    w.dispatchEvent(new Event('mousemove'));
+    expect(input.poll().device).toBe('kb');
+    buttons[7].value = 0.5;
+    expect(input.poll().device).toBe('pad');
+    buttons[7].value = 0;
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyQ', repeat: false }));
+    expect(input.poll().device).toBe('kb');
+  });
+  it('deadzone noise stays kb; stick past it flips to pad', () => {
+    const { buttons, state, input } = setup();
+    state.pad = { connected: true, buttons, axes: [0.1, -0.14] };
+    expect(input.poll().device).toBe('kb');
+    state.pad.axes = [0.2, 0];
+    expect(input.poll().device).toBe('pad');
+  });
+  it('detects padStyle', () => {
+    const style = (id: string) => {
+      const { buttons, state, input } = setup();
+      state.pad = { id, connected: true, buttons, axes: [0, 0] } as Pad;
+      return input.poll().padStyle;
+    };
+    expect(style('Xbox 360 Controller (STANDARD GAMEPAD)')).toBe('xbox');
+    expect(style('Wireless Controller (STANDARD GAMEPAD Vendor: 054c)')).toBe('ps');
+    expect(style('DualSense')).toBe('ps');
+  });
+  it('skip is edge-triggered for N and RB', () => {
+    const { w, buttons, state, input } = setup();
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyN', repeat: false }));
+    w.dispatchEvent(Object.assign(new Event('keyup'), { code: 'KeyN' }));
+    expect([input.poll().skip, input.poll().skip]).toEqual([true, false]);
+    buttons[5].pressed = true;
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    expect([input.poll().skip, input.poll().skip]).toEqual([true, false]);
   });
   it('pad B (button 1) fires pause once', () => {
     const { buttons, state, input } = setup();
