@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSettings, loadSettings, saveSettings, SETTINGS_KEY } from './settings';
+import {
+  cleanName,
+  defaultSettings,
+  guestName,
+  hasStoredName,
+  loadSettings,
+  NAME_RE,
+  saveSettings,
+  SETTINGS_KEY,
+} from './settings';
+
+const GUEST = /^GUEST[1-9][0-9]{3}$/;
+const defaults = () => ({ ...defaultSettings(), name: expect.stringMatching(GUEST) });
 
 const fake = (init?: string) => {
   const m = new Map<string, string>(init === undefined ? [] : [[SETTINGS_KEY, init]]);
@@ -11,8 +23,31 @@ const fake = (init?: string) => {
 
 describe('settings', () => {
   it('defaults when empty or corrupt', () => {
-    expect(loadSettings(fake())).toEqual(defaultSettings());
-    expect(loadSettings(fake('{nope'))).toEqual(defaultSettings());
+    expect(loadSettings(fake())).toEqual(defaults());
+    expect(loadSettings(fake('{nope'))).toEqual(defaults());
+  });
+  it('cleans names', () => {
+    expect(cleanName('drift king!')).toBe('DRIFTKING');
+    expect(cleanName('a_b-9')).toBe('A_B9');
+    expect(cleanName('abcdefghijklmnop')).toBe('ABCDEFGHIJKL');
+    expect(cleanName('äö ')).toBe('');
+  });
+  it('makes guest names', () => {
+    expect(guestName(() => 0)).toBe('GUEST1000');
+    expect(guestName(() => 0.99999)).toBe('GUEST9999');
+    expect(guestName()).toMatch(GUEST);
+    expect(NAME_RE.test(guestName())).toBe(true);
+  });
+  it('keeps a valid stored name, replaces an invalid one', () => {
+    const ok = fake(JSON.stringify({ name: 'TOFU_86' }));
+    expect(loadSettings(ok).name).toBe('TOFU_86');
+    expect(hasStoredName(ok)).toBe(true);
+    for (const name of ['tofu', '', 'ABCDEFGHIJKLM', 42]) {
+      const bad = fake(JSON.stringify({ name }));
+      expect(loadSettings(bad).name).toMatch(GUEST);
+      expect(hasStoredName(bad)).toBe(false);
+    }
+    expect(hasStoredName(fake())).toBe(false);
   });
   it('clamps volumes', () => {
     const s = loadSettings(fake(JSON.stringify({ master: 5, music: -1, sfx: 'x' })));
@@ -69,7 +104,7 @@ describe('settings', () => {
         },
         setItem: () => {},
       }),
-    ).toEqual(defaultSettings());
+    ).toEqual(defaults());
     expect(() =>
       saveSettings(defaultSettings(), {
         getItem: () => null,

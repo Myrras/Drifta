@@ -715,7 +715,8 @@ describe('main menu, garage, settings', () => {
   it('up/down wrap, enter opens garage and settings', () => {
     const { game, tap, row } = rig();
     tap({ up: true });
-    expect(row()).toBe(3);
+    expect(row()).toBe(4);
+    expect(game.view().hud.menu!.rows[4].label).toBe('USERNAME');
     tap({ down: true });
     expect(row()).toBe(0);
     tap({ down: true });
@@ -727,6 +728,78 @@ describe('main menu, garage, settings', () => {
     tap({ down: true });
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('settings');
+  });
+
+  it('a generated username is saved once at startup; a stored one is kept', () => {
+    const { game, mem } = rig();
+    expect(game.playerName()).toMatch(/^GUEST[0-9]{4}$/);
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).name).toBe(game.playerName());
+    const kept = rig({ name: 'TOFU' });
+    expect(kept.game.playerName()).toBe('TOFU');
+    expect(kept.mem.get(SETTINGS_KEY)).toBe(JSON.stringify({ name: 'TOFU' }));
+  });
+
+  it('username: type, backspace, enter commits and saves', () => {
+    const { game, tap, mem } = rig({ name: 'OLD' });
+    const value = () => game.view().hud.menu!.rows[4].value;
+    tap({ up: true });
+    expect(value()).toBe('OLD');
+    tap({ confirm: true });
+    expect(game.editing()).toBe(true);
+    expect(value()).toBe('OLD_');
+    game.update(IDLE, 0.5);
+    expect(value()).toBe('OLD ');
+    for (const k of ['Backspace', 'Backspace', 'Backspace', 'd', '-', ' ', 'k', '_', '9', 'Shift'])
+      game.typeKey(k);
+    expect(game.debug.phase).toBe('title');
+    expect(value()).toMatch(/^DK_9[_ ]$/);
+    for (let i = 0; i < 12; i++) game.typeKey('x');
+    expect(value()).toMatch(/^DK_9X{8}[_ ]$/);
+    game.typeKey('Enter');
+    expect(game.editing()).toBe(false);
+    expect(game.playerName()).toBe('DK_9XXXXXXXX');
+    expect(JSON.parse(mem.get(SETTINGS_KEY)!).name).toBe('DK_9XXXXXXXX');
+    tap({ confirm: true }); // the committing Enter, still latched: swallowed
+    expect(game.editing()).toBe(false);
+    expect(game.debug.phase).toBe('title');
+    tap({ confirm: true });
+    expect(game.editing()).toBe(true);
+    for (let i = 0; i < 12; i++) game.typeKey('Backspace');
+    game.typeKey('Enter'); // empty: keeps the old name
+    expect(game.playerName()).toBe('DK_9XXXXXXXX');
+  });
+
+  it('username: escape cancels and menu input is ignored while editing', () => {
+    const { game, tap, row, mem } = rig({ name: 'OLD' });
+    tap({ up: true });
+    tap({ confirm: true });
+    game.typeKey('w');
+    tap({ up: true });
+    tap({ down: true });
+    tap({ confirm: true });
+    tap({ cheat: true });
+    tap({ pause: true });
+    expect(row()).toBe(4);
+    expect(game.editing()).toBe(true);
+    expect(game.debug.phase).toBe('title');
+    expect(game.debug.cheat).toBe(false);
+    game.typeKey('Escape');
+    expect(game.editing()).toBe(false);
+    expect(game.playerName()).toBe('OLD');
+    expect(mem.get(SETTINGS_KEY)).toBe(JSON.stringify({ name: 'OLD' }));
+    tap({ pause: true }); // the cancelling Escape's update: swallowed
+    tap({ down: true });
+    expect(row()).toBe(0);
+  });
+
+  it('username: a pad press shows a note instead of editing', () => {
+    const { game, tap } = rig({ name: 'OLD' });
+    tap({ up: true });
+    tap({ confirm: true, device: 'pad' });
+    expect(game.editing()).toBe(false);
+    expect(game.view().hud.menu!.rows[4].value).toBe('PRESS ENTER ON KEYBOARD');
+    game.update(IDLE, 3);
+    expect(game.view().hud.menu!.rows[4].value).toBe('OLD');
   });
 
   it('left/right only picks the map on the PLAY row', () => {
@@ -849,6 +922,7 @@ describe('main menu, garage, settings', () => {
   it('settings change volumes, shake and persist', () => {
     const { game, a, tap, mem } = rig();
     tap({ up: true });
+    tap({ up: true });
     tap({ confirm: true });
     tap({ down: true });
     tap({ left: true });
@@ -880,6 +954,7 @@ describe('main menu, garage, settings', () => {
     const { game, a, tap, mem } = rig();
     expect(a.setTrack).toHaveBeenLastCalledWith('phonk');
     tap({ up: true });
+    tap({ up: true });
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     tap({ right: true });
@@ -890,6 +965,7 @@ describe('main menu, garage, settings', () => {
 
   it('clip quality row cycles and persists', () => {
     const { game, tap, mem } = rig();
+    tap({ up: true });
     tap({ up: true });
     tap({ confirm: true });
     tap({ right: true }); // VIDEO tab
@@ -910,6 +986,7 @@ describe('main menu, garage, settings', () => {
     const menu = () => game.view().hud.menu!;
     const Q = { tabPrev: true };
     const E = { tabNext: true };
+    tap({ up: true });
     tap({ up: true });
     tap({ confirm: true });
     expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
@@ -939,6 +1016,7 @@ describe('main menu, garage, settings', () => {
 
   it('menu theme cycles, persists and reaches the view', () => {
     const { game, tap, mem } = rig();
+    tap({ up: true });
     tap({ up: true });
     tap({ confirm: true });
     tap({ right: true });
@@ -970,6 +1048,7 @@ describe('main menu, garage, settings', () => {
   it('MUSIC row cycles two tracks and labels an empty library', () => {
     const { game, a, tap } = rig();
     tap({ up: true });
+    tap({ up: true });
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     const value = () => game.view().hud.menu!.rows[4].value;
@@ -986,6 +1065,7 @@ describe('main menu, garage, settings', () => {
   it('skip works in a run but not in settings', () => {
     const { game, a, tap } = rig();
     tap({ up: true });
+    tap({ up: true });
     tap({ confirm: true });
     tap({ skip: true });
     expect(a.skipTrack).not.toHaveBeenCalled();
@@ -1001,6 +1081,7 @@ describe('main menu, garage, settings', () => {
   it('esc on a volume row leaves settings', () => {
     const { game, tap } = rig();
     tap({ up: true });
+    tap({ up: true });
     tap({ confirm: true });
     tap({ down: true });
     tap({ pause: true });
@@ -1014,6 +1095,7 @@ describe('main menu, garage, settings', () => {
       clear,
       size: async () => '1 / 500 MB',
     });
+    tap({ up: true });
     tap({ up: true });
     tap({ confirm: true });
     for (let i = 0; i < 7; i++) tap({ down: true });
@@ -1029,6 +1111,7 @@ describe('main menu, garage, settings', () => {
 
   it('reset best scores needs a second enter', () => {
     const { game, tap, stores } = rig();
+    tap({ up: true });
     tap({ up: true });
     tap({ confirm: true });
     tap({ right: true });
@@ -1240,6 +1323,7 @@ describe('device, rpm and attract', () => {
     expect(r2.runId).toBeLessThan(0);
     // settings keeps it running
     step({ up: true });
+    step({ up: true });
     step({ confirm: true });
     expect(game.view().hud.menu!.screen).toBe('settings');
     const before = { ...game.view().render.car.pos };
@@ -1256,7 +1340,7 @@ describe('device, rpm and attract', () => {
     expect(hit).not.toHaveBeenCalled();
     // starting a run: real state is clean and the attract car is gone
     step({ pause: true });
-    step({ down: true }); // SETTINGS -> PLAY
+    step({ down: true }, 2); // SETTINGS -> USERNAME -> PLAY
     step({ confirm: true });
     const v = game.view();
     expect(v.hud.phase).toBe('countdown');
@@ -1272,6 +1356,7 @@ describe('device, rpm and attract', () => {
 
   it('LB/RB tab presses with clutch held in settings do not reach the run', () => {
     const { game, step, toRun } = setup();
+    step({ up: true });
     step({ up: true });
     step({ confirm: true });
     step({ tabNext: true, clutch: true });
@@ -1453,6 +1538,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
 
   it('a locked car is shown with a lock and refused', () => {
     const { game, a, tap, g, toGarage, mem } = rig(started('civic'));
+    const saved = mem.get(SETTINGS_KEY);
     toGarage();
     expect(g().lock).toBeNull();
     tap({ right: true });
@@ -1462,7 +1548,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
     tap({ confirm: true });
     expect(a.ui).toHaveBeenCalledWith('back');
     expect(game.view().hud.phase).toBe('garage');
-    expect(mem.get(SETTINGS_KEY)).toBeUndefined();
+    expect(mem.get(SETTINGS_KEY)).toBe(saved);
   });
 
   it('confirm on a locked car offers a car pick, confirm again spends it', () => {
@@ -1597,7 +1683,16 @@ describe('daily and legend runs', () => {
       getItem: (k: string) => mem.get(k) ?? null,
       setItem: (k: string, v: string) => void mem.set(k, v),
     };
-    const game = createGame(maps, audio, () => memBest(), storage, undefined, undefined, prog, () => date);
+    const game = createGame(
+      maps,
+      audio,
+      () => memBest(),
+      storage,
+      undefined,
+      undefined,
+      prog,
+      () => date,
+    );
     const tap = (input: Partial<InputState>) => {
       game.update({ ...IDLE, ...input }, DT);
       game.update(IDLE, DT);

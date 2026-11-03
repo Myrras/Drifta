@@ -27,6 +27,19 @@ export interface Settings {
   car: PlayerModel;
   color: string;
   tune: Tune;
+  /** player name, for multiplayer name tags */
+  name: string;
+}
+
+export const NAME_RE = /^[A-Z0-9_]{1,12}$/;
+export function cleanName(s: string): string {
+  return s
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, '')
+    .slice(0, 12);
+}
+export function guestName(rand = Math.random): string {
+  return `GUEST${1000 + Math.floor(rand() * 9000)}`;
 }
 
 export const SETTINGS_KEY = 'drifta.settings';
@@ -45,20 +58,31 @@ export const defaultSettings = (): Settings => ({
   car: 'mx5',
   color: '#d32030',
   tune: 'street',
+  name: guestName(),
 });
 
 const vol = (v: unknown, d: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d;
 
-export function loadSettings(storage?: SettingsStorage): Settings {
-  const d = defaultSettings();
-  let raw: Record<string, unknown> = {};
+const readRaw = (storage?: SettingsStorage): Record<string, unknown> | null => {
   try {
     const parsed = JSON.parse((storage ?? localStorage).getItem(SETTINGS_KEY) ?? '{}');
-    if (parsed && typeof parsed === 'object') raw = parsed;
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
-    return d;
+    return null;
   }
+};
+
+const validName = (v: unknown): v is string => typeof v === 'string' && NAME_RE.test(v);
+
+/** true when storage holds a valid name (else loadSettings made up a guest name) */
+export const hasStoredName = (storage?: SettingsStorage): boolean =>
+  validName(readRaw(storage)?.name);
+
+export function loadSettings(storage?: SettingsStorage): Settings {
+  const d = defaultSettings();
+  const raw = readRaw(storage);
+  if (!raw) return d;
   const car = raw.car as PlayerModel;
   const ok = typeof car === 'string' && Object.hasOwn(PLAYER_MODELS, car);
   const color = ok && PLAYER_MODELS[car].colors.includes(raw.color as string);
@@ -77,6 +101,7 @@ export function loadSettings(storage?: SettingsStorage): Settings {
     car: ok ? car : d.car,
     color: ok ? (color ? (raw.color as string) : PLAYER_MODELS[car].colors[0]) : d.color,
     tune: raw.tune === 'performance' || raw.tune === 'street' ? raw.tune : d.tune,
+    name: validName(raw.name) ? raw.name : d.name,
   };
 }
 
