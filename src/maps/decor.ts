@@ -54,7 +54,7 @@ export type Decor = { floor: number } &
      * City block over its solids: rooftops split into lots, a sidewalk band `walk` m wide inside
      * the edge (the curb), `open` rects paved instead of built (plazas, alleys). `round` rounds
      * one corner (0 nw, 1 ne, 2 se, 3 sw) with radius r; concave = a bite of radius r centered on
-     * that corner instead.
+     * that corner instead. `pts`: any clockwise outline instead, inside the x, y, w, h box.
      */
     | {
         kind: 'block';
@@ -66,6 +66,7 @@ export type Decor = { floor: number } &
         seed: number;
         round?: { corner: number; r: number; concave?: boolean };
         open?: Rect[];
+        pts?: Vec[];
       }
     /** lit shop front from (x, y), len m along angle; light spills to the left of angle */
     | {
@@ -94,6 +95,12 @@ export type Decor = { floor: number } &
     /** row of n vending machines centered at (x, y), lit fronts facing angle */
     | { kind: 'vending'; x: number; y: number; angle: number; n: number; seed: number }
     | { kind: 'manhole'; x: number; y: number }
+    /** traffic cone */
+    | { kind: 'cone'; x: number; y: number }
+    /** sign board: 'closed' = no entry (bar across angle), 'expwy' = green, arrow along angle */
+    | { kind: 'roadsign'; x: number; y: number; angle: number; sign: 'closed' | 'expwy' }
+    /** paper lantern, lit */
+    | { kind: 'lantern'; x: number; y: number; color: string }
   );
 export type DecoratedMap = GameMap & { decor?: Decor[] };
 /**
@@ -508,7 +515,7 @@ export function blockOutline(b: Pick<Of<'block'>, 'x' | 'y' | 'w' | 'h' | 'round
 
 function drawBlock(g: Ctx, d: Of<'block'>) {
   const rand = rng(d.seed * 733 + 11);
-  const pts = blockOutline(d);
+  const pts = d.pts ?? blockOutline(d);
   const path = () => {
     g.beginPath();
     pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
@@ -725,6 +732,79 @@ function drawManhole(g: Ctx, d: Of<'manhole'>) {
   g.stroke();
 }
 
+// --- road works and canal kinds ---
+
+function drawCone(g: Ctx, d: Of<'cone'>, layer: DecorLayer) {
+  if (layer === 'light') return pool(g, d.x, d.y, 0.9, '255,255,255', 0.35);
+  if (layer === 'glow') return pool(g, d.x, d.y, 1.1, '255,120,30', 0.3);
+  g.fillStyle = '#1a1a1e'; // base
+  g.fillRect(d.x - 0.3, d.y - 0.3, 0.6, 0.6);
+  for (const [r, c] of [
+    [0.26, '#ff6a1a'],
+    [0.17, '#f4f4ee'],
+    [0.1, '#ff6a1a'],
+  ] as const) {
+    g.fillStyle = c;
+    g.beginPath();
+    g.arc(d.x, d.y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+}
+
+function drawRoadsign(g: Ctx, d: Of<'roadsign'>, layer: DecorLayer) {
+  const closed = d.sign === 'closed';
+  if (layer === 'light') return pool(g, d.x, d.y, 2.2, '255,255,255', 0.5);
+  if (layer === 'glow') return pool(g, d.x, d.y, 2.8, closed ? '255,60,50' : '60,220,130', 0.3);
+  if (closed) {
+    local(g, d.x, d.y, d.angle, () => {
+      g.fillStyle = '#f4f4ee';
+      g.beginPath();
+      g.arc(0, 0, 0.85, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#d42a22';
+      g.beginPath();
+      g.arc(0, 0, 0.75, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#f4f4ee';
+      g.fillRect(-0.12, -0.5, 0.24, 1); // the bar runs across the street
+    });
+    return;
+  }
+  // green board, upright on screen, its arrow pointing the way
+  g.fillStyle = '#0d0e12';
+  g.fillRect(d.x - 1.75, d.y - 1.05, 3.5, 2.1);
+  g.fillStyle = '#1f8a52';
+  g.fillRect(d.x - 1.6, d.y - 0.9, 3.2, 1.8);
+  g.fillStyle = g.strokeStyle = '#f4f4ee';
+  local(g, d.x, d.y - 0.25, d.angle, () => {
+    g.fillRect(-0.55, -0.09, 0.7, 0.18);
+    g.beginPath();
+    g.moveTo(0.55, 0);
+    g.lineTo(0.2, -0.32);
+    g.lineTo(0.2, 0.32);
+    g.closePath();
+    g.fill();
+  });
+  local(g, d.x, d.y + 0.5, 0, () => text(g, 'EXPWY', 0.55, true));
+}
+
+function drawLantern(g: Ctx, d: Of<'lantern'>, layer: DecorLayer) {
+  const c = rgb(d.color);
+  if (layer === 'light') return pool(g, d.x, d.y, 3.2, '255,255,255', 0.75);
+  if (layer === 'glow') return pool(g, d.x, d.y, 4.2, c, 0.45);
+  g.fillStyle = d.color;
+  g.beginPath();
+  g.ellipse(d.x, d.y, 0.32, 0.42, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = 'rgba(255,240,200,0.55)'; // lit core
+  g.beginPath();
+  g.ellipse(d.x, d.y, 0.16, 0.24, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#141416'; // caps
+  g.fillRect(d.x - 0.18, d.y - 0.47, 0.36, 0.1);
+  g.fillRect(d.x - 0.18, d.y + 0.37, 0.36, 0.1);
+}
+
 /** World rect visible on an axis-aligned canvas transform; null if unknown (no culling). */
 function viewOf(g: Ctx): Rect | null {
   const m = typeof g.getTransform === 'function' ? g.getTransform() : null;
@@ -857,6 +937,15 @@ export function drawDecor(
         else if (layer === 'glow') shaft(g, d, '255,236,200', 0.2);
         else if (layer === 'over')
           shaft(g, d, '255,240,215', 0.03 + 0.02 * Math.sin(t * 0.7 + d.x));
+        break;
+      case 'cone':
+        if (layer !== 'floor' && layer !== 'over') drawCone(g, d, layer);
+        break;
+      case 'roadsign':
+        if (layer !== 'floor' && layer !== 'over') drawRoadsign(g, d, layer);
+        break;
+      case 'lantern':
+        if (layer !== 'floor' && layer !== 'over') drawLantern(g, d, layer);
         break;
     }
   }
