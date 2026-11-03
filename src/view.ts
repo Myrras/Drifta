@@ -1,4 +1,4 @@
-import type { CarState, Combo, DriftInfo, GameMap, Phase } from './types';
+import type { CarState, Combo, DriftInfo, GameMap, Phase, PlayerModel } from './types';
 
 export interface RenderView {
   map: GameMap;
@@ -14,6 +14,12 @@ export interface RenderView {
   blend: { toFloor: number; t: number } | null;
   /** 0..1 camera shake intensity, decays after a wall hit */
   shake: number;
+  /** player's car model + paint */
+  player: { model: PlayerModel; color: string };
+  /** 0..1 wall-scrape intensity this frame (for sparks) */
+  scrape: number;
+  /** 0..1 hard-impact pulse, decays (for hit flash / hit-stop feel) */
+  impact: number;
   /** increments on every (re)start; renderer clears skid marks + smoke when it changes */
   runId: number;
 }

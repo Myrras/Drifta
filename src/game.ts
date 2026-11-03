@@ -38,6 +38,7 @@ export function createGame(
     countdown: COUNTDOWN_SECONDS,
     popups: [] as Popup[],
     shake: 0,
+    scrape: 0,
     /** active helix, unwrapped progress, drifted progress */
     helix: null as Helix | null,
     p: 0,
@@ -131,6 +132,7 @@ export function createGame(
     s.drift = stepCar(car, input, dt);
     audio.update(car, s.drift, input.throttle);
     const hit = collide(car, floor.solids, floor.circles);
+    s.scrape = 0;
     if (hit) {
       const impact = -(car.vel.x * hit.normal.x + car.vel.y * hit.normal.y);
       bounce(car, hit);
@@ -138,7 +140,7 @@ export function createGame(
         hard = true;
         audio.hit();
         s.shake = Math.min(1, impact / 10);
-      }
+      } else s.scrape = Math.max(0, Math.min(1, impact / HARD_HIT_SPEED));
     }
     const nearDist = s.drift.drifting
       ? nearestDistance(car, floor.solids, floor.circles)
@@ -232,6 +234,9 @@ export function createGame(
           fade: 0,
           blend,
           shake: s.shake,
+          player: { model: 'mx5', color: '#d32030' },
+          scrape: s.scrape,
+          impact: s.shake,
           runId: s.runId,
         },
         hud: {

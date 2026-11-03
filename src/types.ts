@@ -9,12 +9,15 @@ export interface Rect {
 }
 export type CarModel =
   'civic' | 'supra' | 'rx7' | 'r32' | 's13' | '180sx' | 'ae86' | 'nsx' | 'evo4' | 'wrx';
+export type PlayerModel = CarModel | 'mx5';
 export interface Solid extends Rect {
   kind: SolidKind;
+  /** rotation of the rect about its center (rad); omitted = axis-aligned */
+  angle?: number;
   /** parked cars only */
   model?: CarModel;
   color?: string;
-  /** heading the nose points (rad, multiple of PI/2) */
+  /** heading the nose points (rad, any angle) */
   facing?: number;
   /** parked car lights: headlights on, or hazards blinking */
   lights?: 'on' | 'hazard';
