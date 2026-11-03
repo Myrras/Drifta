@@ -1,19 +1,368 @@
-/** Physically flavoured inline-4 engine sound: ignition pulses -> exhaust waveguides -> muffler. Pure DSP, no DOM. */
+/**
+ * Parameterised engine sound: ignition pulses -> exhaust waveguides -> muffler, plus a turbo layer.
+ * One EngineProfile per car (see docs/sound-research.md). Pure DSP, no DOM.
+ */
+import type { PlayerModel } from './types';
 
-const RPM_MIN = 900;
-const RPM_MAX = 7600;
-const C_SOUND = 343; // m/s
-const HEADER_M = 0.45; // header length, sets the first pipe resonance
-const PIPE_M = 1.9; // mid pipe length
-const HEADER_REFL = -0.45; // open-ish end inverts the reflection
-const PIPE_REFL = -0.55;
-const CYL_TIMING = [0.025, -0.02, 0.01, -0.015]; // per-cylinder firing offset (fraction of firing period), sums to 0
-const CYL_AMP = [1.03, 0.97, 1.01, 0.99];
+const C_SOUND = 550; // m/s, hot exhaust gas: same as real pipe length x 0.62 at 343 m/s
 const POP_RPM = 3500;
+const TURBO_MIX = 4; // turbo layer level against the exhaust (profile gains are "of engine level")
 
-/** Game rpm (0..1) to crank rpm. */
-export function engineRpm(norm: number): number {
-  return RPM_MIN + Math.min(Math.max(norm, 0), 1) * (RPM_MAX - RPM_MIN);
+export interface TurboProfile {
+  /** rpm where boost starts / is full */
+  spool: [number, number];
+  /** s, spool-up / spool-down time constants */
+  tau: [number, number];
+  /** whine Hz at spool 0 / 1, whine gain */
+  whine: [number, number, number];
+  hiss: number;
+  /** blow-off valve gain, length ms */
+  bov: [number, number];
+  /** compressor surge on lift: pulses, Hz, chance per lift */
+  flutter: [number, number, number];
+  /** sequential twin: second turbo cuts in at this rpm (tone x1.25), boost dip at changeover */
+  seq?: [number, number];
+  /** parallel twin: two whines detuned +-3% */
+  par?: boolean;
+  /** external wastegate: chatter Hz, gain */
+  wg?: [number, number];
+}
+
+export interface EngineProfile {
+  /** per firing over 720 deg, in firing order: timing offset (fraction of a firing period, sums to 0); length / 2 = firings per rev */
+  fireDt: number[];
+  fireAmp: number[];
+  /** Wankel: sharp single-integrator pulse, partial burns and reflux doublets at low rpm */
+  rotary?: boolean;
+  idle: number;
+  limit: number;
+  /** hard fuel cut, hard ignition cut (bangs) or staged soft cut; bounce Hz for the hard cuts */
+  limiter: 'fuel' | 'ign' | 'soft';
+  limHz: number;
+  /** cam switch: on rpm, off rpm, step size */
+  vtec?: [number, number, number];
+  /** real m; firings alternate between the two runners / banks */
+  headers: [number, number];
+  /** refl, loss Hz */
+  header: [number, number];
+  /** real m, refl, loss Hz */
+  pipe: [number, number, number];
+  /** muffler lowpass Hz at idle / wot */
+  lp: [number, number];
+  body: number;
+  /** rasp band Hz, gain */
+  rasp: [number, number];
+  /** pulse turbulence, 1 = default */
+  turb: number;
+  /** pulse tau ms at wot / idle */
+  tau: [number, number];
+  /** intake band Hz lo / hi, gain */
+  intake: [number, number, number];
+  mech: number;
+  /** overrun pops: rate per s, window s, gain */
+  pops: [number, number, number];
+  turbo?: TurboProfile;
+  /** output gain: equal loudness across cars */
+  gain: number;
+}
+
+/** Tuned street-drift targets from docs/sound-research.md. */
+export const ENGINE_PROFILES: Record<PlayerModel, EngineProfile> = {
+  mx5: {
+    fireDt: [0.02, -0.02, 0.01, -0.01],
+    fireAmp: [1, 0.99, 1.01, 1],
+    idle: 850,
+    limit: 7400,
+    limiter: 'fuel',
+    limHz: 20,
+    headers: [0.5, 0.5],
+    header: [-0.45, 3800],
+    pipe: [1.5, -0.5, 2000],
+    lp: [1000, 3200],
+    body: 140,
+    rasp: [1900, 1],
+    turb: 1,
+    tau: [0.35, 0.7],
+    intake: [500, 1200, 0.2],
+    mech: 0.005,
+    pops: [4, 0.3, 0.12],
+    gain: 1.23,
+  },
+  civic: {
+    fireDt: [0.02, -0.015, 0.01, -0.015],
+    fireAmp: [1.03, 0.97, 1.01, 0.99],
+    idle: 800,
+    limit: 8400,
+    limiter: 'fuel',
+    limHz: 22,
+    vtec: [5500, 5200, 1],
+    headers: [0.65, 0.65],
+    header: [-0.5, 4000],
+    pipe: [1.6, -0.5, 2200],
+    lp: [1100, 3800],
+    body: 150,
+    rasp: [2200, 1.2],
+    turb: 1.3,
+    tau: [0.28, 0.65],
+    intake: [500, 1500, 0.3],
+    mech: 0.03,
+    pops: [6, 0.4, 0.15],
+    gain: 0.92,
+  },
+  supra: {
+    fireDt: [0.01, -0.01, 0.008, -0.008, 0.01, -0.01],
+    fireAmp: [1, 0.98, 1.02, 0.99, 1.01, 0.97],
+    idle: 750,
+    limit: 7200,
+    limiter: 'fuel',
+    limHz: 14,
+    headers: [0.4, 0.4],
+    header: [-0.35, 2800],
+    pipe: [2.4, -0.5, 1500],
+    lp: [700, 2400],
+    body: 90,
+    rasp: [1500, 0.7],
+    turb: 0.6,
+    tau: [0.4, 0.9],
+    intake: [300, 1000, 0.18],
+    mech: 0.005,
+    pops: [10, 0.6, 0.25],
+    turbo: {
+      spool: [2000, 4200],
+      tau: [0.35, 0.9],
+      whine: [1400, 4800, 0.05],
+      hiss: 0.06,
+      bov: [0.8, 350],
+      flutter: [3, 9, 0.25],
+      seq: [4000, 0],
+    },
+    gain: 0.94,
+  },
+  rx7: {
+    fireDt: [0.03, -0.03, 0.03, -0.03],
+    fireAmp: [1.1, 0.9, 1.1, 0.9],
+    rotary: true,
+    idle: 1100,
+    limit: 7800,
+    limiter: 'ign',
+    limHz: 12,
+    headers: [0.3, 0.3],
+    header: [-0.3, 5000],
+    pipe: [1.9, -0.3, 3000],
+    lp: [1800, 5000],
+    body: 100,
+    rasp: [2600, 1.3],
+    turb: 1.3,
+    tau: [0.18, 0.4],
+    intake: [600, 1800, 0.12],
+    mech: 0,
+    pops: [18, 1, 0.4],
+    turbo: {
+      spool: [2500, 4500],
+      tau: [0.3, 0.7],
+      whine: [1800, 5500, 0.05],
+      hiss: 0.05,
+      bov: [0.6, 250],
+      flutter: [4, 12, 0.35],
+      seq: [4500, 0.15],
+    },
+    gain: 3.4,
+  },
+  r32: {
+    fireDt: [0.015, -0.01, 0.01, -0.015, 0.01, -0.01],
+    fireAmp: [1, 1, 0.97, 1.03, 0.98, 1.02],
+    idle: 850,
+    limit: 8200,
+    limiter: 'fuel',
+    limHz: 15,
+    headers: [0.4, 0.4],
+    header: [-0.4, 3200],
+    pipe: [2.2, -0.5, 1800],
+    lp: [800, 3000],
+    body: 110,
+    rasp: [1800, 1.2],
+    turb: 1.3,
+    tau: [0.35, 0.75],
+    intake: [700, 2200, 0.28],
+    mech: 0.03,
+    pops: [12, 0.7, 0.3],
+    turbo: {
+      spool: [3000, 4800],
+      tau: [0.4, 0.8],
+      whine: [1500, 5200, 0.05],
+      hiss: 0.07,
+      bov: [0.9, 400],
+      flutter: [4, 10, 0.35],
+      par: true,
+      wg: [18, 0.03],
+    },
+    gain: 0.94,
+  },
+  s13: {
+    fireDt: [0.025, -0.02, 0.01, -0.015],
+    fireAmp: [1.03, 0.97, 1.01, 0.99],
+    idle: 850,
+    limit: 7600,
+    limiter: 'soft',
+    limHz: 0,
+    headers: [0.35, 0.35],
+    header: [-0.45, 3500],
+    pipe: [1.8, -0.55, 1800],
+    lp: [900, 3200],
+    body: 130,
+    rasp: [1700, 1],
+    turb: 1,
+    tau: [0.4, 0.7],
+    intake: [500, 1800, 0.22],
+    mech: 0.015,
+    pops: [14, 0.7, 0.3],
+    turbo: {
+      spool: [2800, 4300],
+      tau: [0.3, 0.7],
+      whine: [1800, 5800, 0.06],
+      hiss: 0.07,
+      bov: [0.9, 330],
+      flutter: [5, 11, 0.35],
+    },
+    gain: 1.11,
+  },
+  '180sx': {
+    fireDt: [-0.02, 0.025, -0.015, 0.01],
+    fireAmp: [0.99, 1.01, 0.97, 1.03],
+    idle: 850,
+    limit: 7600,
+    limiter: 'ign',
+    limHz: 14,
+    headers: [0.35, 0.35],
+    header: [-0.4, 3800],
+    pipe: [2.2, -0.3, 2800],
+    lp: [1200, 4200],
+    body: 140,
+    rasp: [2000, 1.3],
+    turb: 1.2,
+    tau: [0.35, 0.65],
+    intake: [500, 1800, 0.22],
+    mech: 0.015,
+    pops: [18, 0.9, 0.38],
+    turbo: {
+      spool: [3000, 4500],
+      tau: [0.35, 0.8],
+      whine: [1500, 5200, 0.07],
+      hiss: 0.08,
+      bov: [1, 450],
+      flutter: [5, 10, 0.35],
+      wg: [22, 0.04],
+    },
+    gain: 1.02,
+  },
+  ae86: {
+    fireDt: [0.015, -0.02, 0.015, -0.01],
+    fireAmp: [1, 1, 0.98, 1.02],
+    idle: 950,
+    limit: 8200,
+    limiter: 'fuel',
+    limHz: 20,
+    headers: [0.6, 0.6],
+    header: [-0.5, 4500],
+    pipe: [1.5, -0.5, 2400],
+    lp: [1300, 4200],
+    body: 160,
+    rasp: [2400, 1.2],
+    turb: 1.2,
+    tau: [0.22, 0.5],
+    intake: [600, 1500, 0.3],
+    mech: 0.03,
+    pops: [8, 0.5, 0.2],
+    gain: 1.13,
+  },
+  nsx: {
+    fireDt: [0.01, -0.01, 0.01, -0.01, 0.01, -0.01],
+    fireAmp: [1.03, 0.97, 1.03, 0.97, 1.03, 0.97],
+    idle: 800,
+    limit: 8000,
+    limiter: 'fuel',
+    limHz: 18,
+    vtec: [5800, 5500, 0.8],
+    headers: [0.39, 0.51],
+    header: [-0.4, 3500],
+    pipe: [1.7, -0.45, 2000],
+    lp: [900, 3200],
+    body: 120,
+    rasp: [1900, 0.8],
+    turb: 0.6,
+    tau: [0.32, 0.75],
+    intake: [400, 1200, 0.3],
+    mech: 0.005,
+    pops: [3, 0.3, 0.1],
+    gain: 0.92,
+  },
+  evo4: {
+    fireDt: [0.02, -0.02, 0.015, -0.015],
+    fireAmp: [1.04, 0.96, 1.02, 0.98],
+    idle: 850,
+    limit: 7700,
+    limiter: 'ign',
+    limHz: 13,
+    headers: [0.35, 0.35],
+    header: [-0.45, 3500],
+    pipe: [2, -0.55, 1700],
+    lp: [800, 2800],
+    body: 130,
+    rasp: [1500, 1],
+    turb: 1,
+    tau: [0.45, 0.8],
+    intake: [400, 1400, 0.2],
+    mech: 0.015,
+    pops: [16, 0.8, 0.35],
+    turbo: {
+      spool: [3200, 4300],
+      tau: [0.35, 0.85],
+      whine: [1600, 5600, 0.07],
+      hiss: 0.09,
+      bov: [0.5, 300],
+      flutter: [6, 14, 1],
+    },
+    gain: 0.77,
+  },
+  wrx: {
+    fireDt: [0, 0, 0, 0],
+    fireAmp: [1, 0.65, 1, 0.65],
+    idle: 850,
+    limit: 7600,
+    limiter: 'fuel',
+    limHz: 14,
+    headers: [0.55, 0.3],
+    header: [-0.45, 3000],
+    pipe: [1.9, -0.55, 1600],
+    lp: [800, 2800],
+    body: 120,
+    rasp: [1500, 0.8],
+    turb: 1,
+    tau: [0.45, 0.85],
+    intake: [400, 1400, 0.2],
+    mech: 0.015,
+    pops: [14, 0.7, 0.32],
+    turbo: {
+      spool: [3200, 4400],
+      tau: [0.35, 0.8],
+      whine: [1500, 5200, 0.06],
+      hiss: 0.07,
+      bov: [0.8, 320],
+      flutter: [4, 9, 0.35],
+    },
+    gain: 0.86,
+  },
+};
+
+const clamp01 = (x: number) => Math.min(Math.max(x, 0), 1);
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};
+
+/** Game rpm (0..1) to crank rpm: idle..limiter of the car. */
+export function engineRpm(norm: number, p: EngineProfile): number {
+  return p.idle + clamp01(norm) * (p.limit - p.idle);
 }
 
 /** RBJ biquad, direct form I. */
@@ -37,18 +386,22 @@ class Biquad {
     this.set(f, q);
   }
 
+  /** Called at control rate inside process(): no allocation. */
   set(f: number, q: number): void {
     const w = (2 * Math.PI * Math.min(f, this.sr * 0.45)) / this.sr;
     const cw = Math.cos(w);
     const al = Math.sin(w) / (2 * q);
     const a0 = 1 + al;
-    let b0: number, b1: number, b2: number;
-    if (this.type === 'lp') [b0, b1, b2] = [(1 - cw) / 2, 1 - cw, (1 - cw) / 2];
-    else if (this.type === 'hp') [b0, b1, b2] = [(1 + cw) / 2, -1 - cw, (1 + cw) / 2];
-    else [b0, b1, b2] = [al, 0, -al];
-    this.b0 = b0 / a0;
-    this.b1 = b1 / a0;
-    this.b2 = b2 / a0;
+    if (this.type === 'bp') {
+      this.b0 = al / a0;
+      this.b1 = 0;
+      this.b2 = -al / a0;
+    } else {
+      const s = this.type === 'lp' ? 1 : -1;
+      this.b0 = (1 - s * cw) / 2 / a0;
+      this.b1 = (s * (1 - s * cw)) / a0;
+      this.b2 = this.b0;
+    }
     this.a1 = (-2 * cw) / a0;
     this.a2 = (1 - al) / a0;
   }
@@ -91,19 +444,28 @@ class Waveguide {
 }
 
 export class EngineDSP {
-  private rpmTarget = RPM_MIN;
+  private rpmTarget: number;
   private thrTarget = 0;
-  private rpm = RPM_MIN;
+  private rpm: number;
   private thr = 0;
   private readonly kRpm: number;
   private readonly kThr: number;
+  private readonly k25ms: number;
+  private readonly k10ms: number;
+  private readonly k150ms: number;
+  private readonly kUp: number;
+  private readonly kDown: number;
+  private readonly perRev: number;
 
   private seed = 0x1234567;
   private firePhase = 0;
   private fireAt = 1;
   private cyl = 0;
-  private s1 = 0; // cascaded leaky integrators -> t*exp(-t/tau) pulse
-  private s2 = 0;
+  private readonly s1 = [0, 0]; // per runner/bank: cascaded leaky integrators -> t*exp(-t/tau) pulse
+  private readonly s2 = [0, 0];
+  private readonly imp = [0, 0];
+  private readonly pend: Float32Array; // impulses scheduled a few ms ahead (rotary echoes)
+  private pi = 0;
   private envFollow = 0;
 
   private armed = false;
@@ -111,7 +473,39 @@ export class EngineDSP {
   private popEnv = 0;
   private readonly popDecay: number;
 
-  private readonly header: Waveguide;
+  private vtOn = false;
+  /** VTEC state 0..1 */
+  vt = 0;
+  private limPh = 1;
+
+  /** turbo speed 0..1 (boost) */
+  spool = 0;
+  private stage2 = false;
+  private st2 = 0;
+  private bovArm = false;
+  private liftT = 1;
+  private bovT = 1;
+  private bovEnv = 0;
+  private bovDecay = 0;
+  private bovLen = 0;
+  private chuffPh = 0;
+  private flN = 0;
+  private flPh = 0;
+  private flHz = 0;
+  private flEnv = 0;
+  private flAmp = 0;
+  private readonly kFlAmp: number;
+  private wPh = 0;
+  private w2Ph = 0;
+  private fmPh = 0;
+  private wgPh = 0;
+  private wgEnv = 0;
+  /** counters for tests: combustion events, BOV and flutter triggers */
+  fires = 0;
+  bovs = 0;
+  flutters = 0;
+
+  private readonly header: [Waveguide, Waveguide];
   private readonly pipe: Waveguide;
   private readonly mufLp: Biquad;
   private readonly mufBody: Biquad;
@@ -119,29 +513,52 @@ export class EngineDSP {
   private readonly intake: Biquad;
   private readonly mech: Biquad;
   private readonly popHp: Biquad;
+  private readonly hissBp: Biquad;
+  private readonly bovBp: Biquad;
+  private readonly flBp: Biquad;
+  private readonly wgBp: Biquad;
   private dcX = 0;
   private dcY = 0;
   private readonly dcA: number;
   private ctl = 0;
 
-  constructor(private readonly sr: number) {
+  constructor(
+    private readonly sr: number,
+    private readonly p: EngineProfile = ENGINE_PROFILES.mx5,
+  ) {
+    this.rpm = this.rpmTarget = p.idle;
+    this.perRev = p.fireAmp.length / 2;
     this.kRpm = 1 - Math.exp(-1 / (0.04 * sr));
     this.kThr = 1 - Math.exp(-1 / (0.025 * sr));
+    this.k25ms = Math.exp(-1 / (0.025 * sr));
+    this.k10ms = Math.exp(-1 / (0.01 * sr));
+    this.kFlAmp = Math.exp(-1 / (0.35 * sr));
+    this.k150ms = 1 - Math.exp(-1 / (0.15 * sr));
+    this.kUp = 1 - Math.exp(-1 / ((p.turbo?.tau[0] ?? 1) * sr));
+    this.kDown = 1 - Math.exp(-1 / ((p.turbo?.tau[1] ?? 1) * sr));
     this.popDecay = Math.exp(-1 / (0.006 * sr));
     this.dcA = Math.exp((-2 * Math.PI * 25) / sr);
-    this.header = new Waveguide(sr, HEADER_M, HEADER_REFL, 3500);
-    this.pipe = new Waveguide(sr, PIPE_M, PIPE_REFL, 1800);
-    this.mufLp = new Biquad(sr, 'lp', 1500, 0.7);
-    this.mufBody = new Biquad(sr, 'bp', 140, 1.4);
-    this.mufRasp = new Biquad(sr, 'bp', 1700, 2.5);
-    this.intake = new Biquad(sr, 'bp', 600, 1.2);
+    this.pend = new Float32Array(Math.ceil(0.01 * sr));
+    this.header = [
+      new Waveguide(sr, p.headers[0], p.header[0], p.header[1]),
+      new Waveguide(sr, p.headers[1], p.header[0], p.header[1]),
+    ];
+    this.pipe = new Waveguide(sr, p.pipe[0], p.pipe[1], p.pipe[2]);
+    this.mufLp = new Biquad(sr, 'lp', p.lp[0], 0.7);
+    this.mufBody = new Biquad(sr, 'bp', p.body, 1.4);
+    this.mufRasp = new Biquad(sr, 'bp', p.rasp[0], 2.5);
+    this.intake = new Biquad(sr, 'bp', p.intake[0], 1.2);
     this.mech = new Biquad(sr, 'hp', 4500, 0.7);
     this.popHp = new Biquad(sr, 'hp', 700, 0.7);
+    this.hissBp = new Biquad(sr, 'bp', 1000, 1.5);
+    this.bovBp = new Biquad(sr, 'bp', 4500, 0.7);
+    this.flBp = new Biquad(sr, 'bp', 3000, 1.2);
+    this.wgBp = new Biquad(sr, 'bp', 2200, 1.5);
   }
 
-  setParams(p: { rpm: number; throttle: number }): void {
-    this.rpmTarget = Math.min(Math.max(p.rpm, RPM_MIN * 0.5), RPM_MAX * 1.1);
-    this.thrTarget = Math.min(Math.max(p.throttle, 0), 1);
+  setParams(q: { rpm: number; throttle: number }): void {
+    this.rpmTarget = Math.min(Math.max(q.rpm, this.p.idle * 0.5), this.p.limit * 1.02);
+    this.thrTarget = clamp01(q.throttle);
   }
 
   /** xorshift32 in [-1, 1); seeded so renders are deterministic. */
@@ -154,79 +571,257 @@ export class EngineDSP {
     return this.seed / 2147483648 - 1;
   }
 
+  private rand01(): number {
+    return 0.5 + 0.5 * this.rand();
+  }
+
+  private schedule(amp: number, seconds: number): void {
+    const len = this.pend.length;
+    this.pend[(this.pi + Math.min(len - 1, Math.round(seconds * this.sr))) % len] += amp;
+  }
+
+  private popLevel(): number {
+    return (this.p.pops[2] / 0.25) * (1.2 + 1.3 * this.rand01());
+  }
+
   process(out: Float32Array): void {
     const sr = this.sr;
+    const p = this.p;
+    const t = p.turbo;
+    const vk = p.vtec ? p.vtec[2] : 0;
     for (let n = 0; n < out.length; n++) {
       this.rpm += this.kRpm * (this.rpmTarget - this.rpm);
       this.thr += this.kThr * (this.thrTarget - this.thr);
-      const rpm = this.rpm;
       const thr = this.thr;
-      const rpmN = (rpm - RPM_MIN) / (RPM_MAX - RPM_MIN);
-      const bright = Math.min(1, 0.65 * thr + 0.35 * Math.max(rpmN, 0));
+
+      // VTEC with hysteresis, 40 ms crossfade
+      if (p.vtec) {
+        this.vtOn = this.rpm > p.vtec[0] || (this.vtOn && this.rpm > p.vtec[1]);
+        this.vt += this.kRpm * ((this.vtOn ? 1 : 0) - this.vt);
+      }
+      const vt = vk * this.vt;
+
+      // hard limiter: cut/fuel gate at limHz while rpm is pinned (clutch kick or top of a gear)
+      let cut = false;
+      let bounce = 0;
+      if (p.limiter !== 'soft' && this.rpm >= p.limit * 0.99 && thr > 0.3) {
+        this.limPh += p.limHz / sr;
+        if (this.limPh >= 1) {
+          this.limPh -= 1;
+          if (p.limiter === 'ign' && this.rand() > 0) this.popEnv = this.popLevel();
+        }
+        cut = this.limPh < 0.55;
+        bounce = 150 * (cut ? this.limPh / 0.55 : (1 - this.limPh) / 0.45);
+      } else this.limPh = 1;
+      const rpm = this.rpm - bounce;
+      const rpmN = clamp01((rpm - p.idle) / (p.limit - p.idle));
+      const bright = Math.min(1, 0.65 * thr + 0.35 * rpmN) + 0.25 * vt;
+
+      // turbo: spool follows exhaust energy (throttle x rpm), slow to fall
+      let S = this.spool;
+      if (t) {
+        const tgt = thr * smoothstep(t.spool[0], t.spool[1], rpm) ** 1.3;
+        S += (tgt - S) * (tgt > S ? this.kUp : this.kDown);
+        if (t.seq) {
+          const on = this.stage2 ? rpm > t.seq[0] - 300 && thr > 0.3 : rpm > t.seq[0] && thr > 0.5;
+          if (on && !this.stage2) S *= 1 - t.seq[1]; // changeover boost dip
+          this.stage2 = on;
+          this.st2 += this.k150ms * ((on ? 1 : 0) - this.st2);
+        }
+        // BOV on a quick lift at boost
+        if (thr > 0.5) {
+          this.liftT = 0;
+          this.bovArm = true;
+        } else this.liftT += 1 / sr;
+        if (thr < 0.2 && this.bovArm) {
+          this.bovArm = false;
+          if (this.liftT < 0.12 && S > 0.35) {
+            this.bovs++;
+            this.bovT = 0;
+            this.bovEnv = 0.6 * t.bov[0] * S ** 0.7;
+            this.bovLen = t.bov[1] / 1000;
+            this.bovDecay = Math.exp(-1 / (((this.bovLen - 0.043) / 3) * (0.5 + 0.5 * S) * sr));
+            this.chuffPh = 0;
+            if (this.rand01() < t.flutter[2]) {
+              this.flutters++;
+              this.flN = t.flutter[0];
+              this.flHz = t.flutter[1];
+              this.flPh = 1;
+              this.flAmp = S;
+            }
+          }
+        }
+        this.spool = S;
+      }
 
       // control rate: filter coefficients every 16 samples from the smoothed values
       if (this.ctl-- <= 0) {
         this.ctl = 16;
-        this.mufLp.set(900 + 2600 * bright, 0.8);
-        this.intake.set(500 + 1800 * thr * Math.max(rpmN, 0.1), 1.2);
-      }
-
-      // overrun pops: arm on throttle, fire a burst window on lift-off at high rpm
-      if (thr > 0.15) this.armed = true;
-      else if (thr < 0.1 && this.armed) {
-        this.armed = false;
-        if (rpm > POP_RPM) this.popTime = 0.3 + 0.5 * (0.5 + 0.5 * this.rand());
-      }
-      if (this.popTime > 0) this.popTime -= 1 / sr;
-
-      // 4-stroke inline-4: two firings per crank revolution
-      this.firePhase += ((rpm / 60) * 2) / sr;
-      let impulse = 0;
-      if (this.firePhase >= this.fireAt) {
-        this.firePhase -= this.fireAt;
-        this.cyl = (this.cyl + 1) & 3;
-        this.fireAt = 1 + CYL_TIMING[this.cyl] + 0.01 * this.rand();
-        const amp = (0.25 + 0.75 * thr) * (0.85 + 0.15 * rpmN) * CYL_AMP[this.cyl];
-        impulse = amp * (1 + 0.03 * this.rand());
-        if (this.popTime > 0 && rpm > 3000 && this.rand() > 0.75) {
-          this.popEnv = 1.2 + 1.3 * (0.5 + 0.5 * this.rand());
-          impulse += 0.8 * this.popEnv;
+        this.mufLp.set(p.lp[0] + (p.lp[1] - p.lp[0]) * Math.min(bright, 1), 0.8);
+        this.intake.set(p.intake[0] + (p.intake[1] - p.intake[0]) * thr * Math.max(rpmN, 0.1), 1.2);
+        if (t) {
+          this.hissBp.set(0.6 * (t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8), 1.5);
+          this.bovBp.set(4500 - 2500 * clamp01(this.bovT / this.bovLen), 0.7);
         }
       }
 
-      // blowdown pulse, shorter (brighter) under load
-      const tau = (0.7 - 0.45 * thr) * 0.001 * sr;
+      // overrun pops: arm on throttle, open a burst window on lift-off at high rpm
+      if (thr > 0.15) this.armed = true;
+      else if (thr < 0.1 && this.armed) {
+        this.armed = false;
+        if (rpm > POP_RPM) this.popTime = p.pops[1] * (0.7 + 0.6 * this.rand01());
+      }
+      if (this.popTime > 0) this.popTime -= 1 / sr;
+
+      // firing scheduler: n firings per 720 deg, alternating runner / bank
+      const fireHz = (rpm / 60) * this.perRev;
+      this.firePhase += fireHz / sr;
+      this.imp[0] = this.pend[this.pi];
+      this.imp[1] = 0;
+      this.pend[this.pi] = 0;
+      this.pi = (this.pi + 1) % this.pend.length;
+      if (this.firePhase >= this.fireAt) {
+        this.firePhase -= this.fireAt;
+        this.cyl = (this.cyl + 1) % p.fireAmp.length;
+        const bank = this.cyl & 1;
+        this.fireAt = 1 + p.fireDt[this.cyl] + (p.rotary ? 0.03 : 0.01) * this.rand();
+        const soft =
+          p.limiter === 'soft' && thr > 0.3 ? clamp01((rpm - (p.limit - 200)) / 200) * 0.75 : 0;
+        if (!cut && this.rand01() >= soft) {
+          this.fires++;
+          let amp =
+            (0.25 + 0.75 * thr) * (0.85 + 0.15 * rpmN) * p.fireAmp[this.cyl] * (1 + 0.15 * vt);
+          if (p.rotary) {
+            amp *= 1 + (0.03 + 0.09 * (1 - rpmN)) * this.rand();
+            // brap: partial burns and an overlap reflux doublet at low rpm
+            if (this.rand01() < 0.25 * clamp01(1 - (rpm - 900) / 2600) ** 1.5)
+              amp *= 0.15 + 0.35 * this.rand01();
+            this.schedule(-0.15 * amp, 0.0012);
+            const rf = clamp01((4500 - rpm) / 1000);
+            if (rf > 0) this.schedule(0.25 * rf * amp, 0.004 + 0.003 * this.rand01());
+          } else amp *= 1 + 0.03 * this.rand();
+          this.imp[bank] += amp;
+        }
+        if (this.popTime > 0 && rpm > 3000 && this.rand01() < p.pops[0] / fireHz) {
+          this.popEnv = this.popLevel();
+          this.imp[bank] += 0.8 * this.popEnv;
+        }
+      }
+
+      // blowdown pulse, shorter (brighter) under load; rotary: instant attack, single decay
+      const tau = (p.tau[1] + (p.tau[0] - p.tau[1]) * thr) * (1 - 0.3 * vt) * 0.001 * sr;
       const d = Math.exp(-1 / tau);
-      this.s1 = this.s1 * d + impulse;
-      this.s2 = this.s2 * d + this.s1;
-      const pulse = (this.s2 * Math.E) / tau;
-      this.envFollow += 0.01 * (pulse - this.envFollow);
+      const turb = p.turb * (0.35 + 0.65 * thr);
+      const r = this.rand();
+      let hdr = 0;
+      let pulseSum = 0;
+      for (let b = 0; b < 2; b++) {
+        this.s1[b] = this.s1[b] * d + this.imp[b];
+        this.s2[b] = this.s2[b] * d + this.s1[b];
+        const pulse = p.rotary ? this.s1[b] : (this.s2[b] * Math.E) / tau;
+        pulseSum += pulse;
+        // combustion turbulence rides on the pulse: the rasp
+        hdr += this.header[b].run(pulse * (1 + turb * r));
+      }
+      this.envFollow += 0.01 * (pulseSum - this.envFollow);
 
-      // combustion turbulence rides on the pulse: the rasp
-      const raspy = pulse * (1 + (0.35 + 0.65 * thr) * this.rand());
-
-      // exhaust: header -> mid pipe -> muffler
-      const p = this.pipe.run(this.header.run(raspy));
+      // exhaust: headers -> mid pipe -> muffler
+      const pp = this.pipe.run(hdr);
       const muf =
-        this.mufLp.run(p) +
-        0.6 * this.mufBody.run(p) +
-        (0.22 + 0.65 * bright) * this.mufRasp.run(p);
+        this.mufLp.run(pp) +
+        0.6 * this.mufBody.run(pp) +
+        (0.22 + 0.65 * bright) * p.rasp[1] * (1 + 0.5 * vt) * this.mufRasp.run(pp);
 
       // intake roar pulsed by the cylinder events, and valvetrain hiss
       const intake =
-        this.intake.run(this.rand()) * 0.25 * thr * (0.3 + rpmN) * (0.6 + 0.8 * this.envFollow);
-      const mech = this.mech.run(this.rand()) * 0.015 * (0.2 + rpmN);
+        this.intake.run(this.rand()) *
+        p.intake[2] *
+        (1 + 0.6 * vt) *
+        thr *
+        (0.3 + rpmN) *
+        (0.6 + 0.8 * this.envFollow);
+      const mech = this.mech.run(this.rand()) * p.mech * (0.2 + rpmN);
 
       // pop crackle: a noise burst at the tailpipe
-      const r = this.rand();
-      const pop = this.popHp.run(r * r * r) * this.popEnv; // cubed noise is spiky: crackle, not hiss
+      const rc = this.rand();
+      const pop = this.popHp.run(rc * rc * rc) * this.popEnv; // cubed noise is spiky: crackle, not hiss
       this.popEnv *= this.popDecay;
 
+      let turbo = 0;
+      if (t) turbo = TURBO_MIX * this.turbo(t, S, thr);
+
       // tailpipe DC blocker, then soft clip
-      const x = 0.6 * muf + intake + mech + 0.5 * pop;
+      const x = p.gain * (0.6 * muf + intake + mech + 0.5 * pop) + turbo;
       this.dcY = x - this.dcX + this.dcA * this.dcY;
       this.dcX = x;
       out[n] = Math.tanh(1.2 * this.dcY);
     }
   }
+
+  /** One sample of whine, hiss, BOV, flutter and wastegate. */
+  private turbo(t: TurboProfile, S: number, thr: number): number {
+    const sr = this.sr;
+    // flutter: compressor surge pulses, rate falling ~25% over the burst
+    if (this.flN > 0) {
+      this.flPh += (this.flHz * (0.75 + (0.25 * this.flN) / t.flutter[0])) / sr;
+      if (this.flPh >= 1) {
+        this.flPh -= 1;
+        this.flN--;
+        this.flEnv = this.flAmp;
+      }
+    }
+    this.flEnv *= this.k25ms;
+    this.flAmp *= this.kFlAmp;
+
+    // whine: sine + 2nd + 3rd harmonic, 7 Hz wobble, pitch sags in surge
+    this.fmPh = (this.fmPh + 7 / sr) % 1;
+    const f =
+      (t.whine[0] + (t.whine[1] - t.whine[0]) * S ** 0.8) *
+      (1 + 0.01 * Math.sin(2 * Math.PI * this.fmPh)) *
+      (1 - 0.12 * this.flEnv);
+    const f1 = t.par ? f * 0.97 : f;
+    const f2 = t.par ? f * 1.03 : f * 1.25;
+    this.wPh = (this.wPh + f1 / sr) % 1;
+    this.w2Ph = (this.w2Ph + f2 / sr) % 1;
+    const a2 = t.par ? 1 : t.seq ? 0.6 * this.st2 : 0;
+    const whine =
+      t.whine[2] * S ** 1.5 * (tone(this.wPh) + (a2 > 0.001 ? a2 * tone(this.w2Ph) : 0));
+    const hiss = this.hissBp.run(this.rand()) * t.hiss * S * thr;
+
+    // blow-off valve: 3 ms attack, 40 ms hold, decay; 120 Hz chuff at the start
+    let bov = 0;
+    if (this.bovEnv > 1e-4) {
+      this.bovT += 1 / sr;
+      const att = Math.min(1, this.bovT / 0.003);
+      if (this.bovT > 0.043) this.bovEnv *= this.bovDecay;
+      this.chuffPh += 120 / sr;
+      bov =
+        this.bovEnv *
+        (att * this.bovBp.run(this.rand()) +
+          0.5 * Math.sin(2 * Math.PI * this.chuffPh) * Math.exp(-this.bovT / 0.025));
+    }
+    const flutter = this.flBp.run(this.rand()) * this.flEnv * 0.6;
+
+    // external wastegate chatter near full boost
+    let wg = 0;
+    if (t.wg) {
+      if (S > 0.9 && thr > 0.8) {
+        this.wgPh += (t.wg[0] * (1 + 0.2 * this.rand())) / sr;
+        if (this.wgPh >= 1) {
+          this.wgPh -= 1;
+          this.wgEnv = 1;
+        }
+      }
+      this.wgEnv *= this.k10ms;
+      wg = this.wgBp.run(this.rand()) * this.wgEnv * t.wg[1] * 10 * Math.max(0, S - 0.9);
+    }
+    return whine + hiss + bov + flutter + wg;
+  }
+}
+
+/** Whine waveform: fundamental + 0.35 x 2nd + 0.15 x 3rd harmonic. */
+function tone(ph: number): number {
+  const s = Math.sin(2 * Math.PI * ph);
+  const c = Math.cos(2 * Math.PI * ph);
+  return s + 0.7 * s * c + 0.15 * (3 * s - 4 * s * s * s);
 }
