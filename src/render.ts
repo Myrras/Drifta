@@ -14,6 +14,7 @@ import { garage, garageRoute } from './maps/garage';
 import { docks, docksRoute } from './maps/docks';
 import { testpad } from './maps/testpad';
 import { tokyo, tokyoRoute } from './maps/tokyo';
+import { drivethru, drivethruRoute } from './maps/drivethru';
 import type { CityGraph, Ped, Traffic, TrafficCar } from './traffic';
 import { CAR_MODELS, PLAYER_MODELS } from './models';
 import {
@@ -83,6 +84,7 @@ const ROUTES = new Map<GameMap, { floor: number; points: Vec[] }[]>([
   [garage, garageRoute],
   [docks, docksRoute],
   [tokyo, tokyoRoute],
+  [drivethru, drivethruRoute],
 ]);
 const LIGHT_R = 7; // ceiling pool radius
 const HEAD_LEN = 25; // player headlight cones
@@ -1489,7 +1491,7 @@ export function prewarm(map: GameMap) {
 
 /** Prewarms all maps in the background, one floor per idle slice. */
 function prewarmAll() {
-  const jobs = [garage, docks, tokyo, testpad].flatMap((m) =>
+  const jobs = [garage, docks, tokyo, drivethru, testpad].flatMap((m) =>
     m.floors.map((_, i) => () => (staticLayer(m, i), lightLayer(m, i))),
   );
   const idle: (cb: () => void) => void =
