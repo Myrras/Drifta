@@ -81,6 +81,12 @@ const game = createGame(
 
 const resume = () => audio.resume();
 window.addEventListener('keydown', resume);
+// the committing Enter is still latched as confirm; game swallows the next update
+window.addEventListener('keydown', (e) => {
+  if (!game.editing()) return;
+  e.preventDefault();
+  if (!e.repeat || e.key === 'Backspace' || e.key.length === 1) game.typeKey(e.key);
+});
 window.addEventListener('pointerdown', resume);
 window.addEventListener('blur', () => game.pause());
 document.addEventListener('visibilitychange', () => document.hidden && game.pause());

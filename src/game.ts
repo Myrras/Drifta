@@ -54,20 +54,15 @@ import {
 } from './progress';
 import {
   CLIP_QUALITIES,
+  cleanName,
+  hasStoredName,
   loadSettings,
   saveSettings,
   type ClipQuality,
   type SettingsStorage,
   type Tune,
 } from './settings';
-import {
-  comboValue,
-  createScoring,
-  forceBank,
-  stepScoring,
-  timeBonus,
-  zoneAt,
-} from './scoring';
+import { comboValue, createScoring, forceBank, stepScoring, timeBonus, zoneAt } from './scoring';
 
 export type AudioLike = ReturnType<typeof createAudio>;
 /** MY MUSIC library hooks (browser side, see main.ts). */
@@ -136,7 +131,8 @@ const statRange = (k: keyof CarStats) => {
   return [Math.min(...v), Math.max(...v)];
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
-const TITLE_ROWS = 4;
+const TITLE_ROWS = 5;
+const USERNAME_ROW = TITLE_ROWS - 1;
 const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
@@ -187,6 +183,7 @@ export function createGame(
   today: () => string = localDate,
 ) {
   const cfg = loadSettings(storage);
+  if (!hasStoredName(storage)) saveSettings(cfg, storage);
   const pStore = storage ?? {
     getItem: (k: string) => localStorage.getItem(k),
     setItem: (k: string, v: string) => localStorage.setItem(k, v),
@@ -219,6 +216,9 @@ export function createGame(
   let note = ''; // transient result in the IMPORT row
   let noteT = 0;
   let usage = '';
+  let draft: string | null = null; // username being edited
+  let caretT = 0;
+  let editEnded = false; // swallows the update that still carries the committing Enter
   const afterChange = () => {
     void audio.refreshMyMusic();
     if (cfg.track === 'mine') audio.setTrack('mine'); // leave a PHONK fallback once the library changes
@@ -246,7 +246,8 @@ export function createGame(
     gCur = SLOTS.map((s) => currentIndex(s, gOpts(s), gLook, gColor));
   }
   // store the look as chosen; ownership is applied on use (lookOf), so cheat picks reappear once owned
-  const gDraft = () => setLook(prog, gCar, { ...gLook, color: gColor } as Parameters<typeof setLook>[2]);
+  const gDraft = () =>
+    setLook(prog, gCar, { ...gLook, color: gColor } as Parameters<typeof setLook>[2]);
   let intensity = 0;
   let sel = 0;
   let map = maps[0];
@@ -827,6 +828,13 @@ export function createGame(
         },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
         { label: 'SETTINGS' },
+        {
+          label: 'USERNAME',
+          value:
+            draft !== null
+              ? draft + (caretT % 1 < 0.5 ? '_' : ' ')
+              : (row === USERNAME_ROW && noteT > 0 && note) || cfg.name,
+        },
       ];
       return {
         ...base,
@@ -921,6 +929,9 @@ export function createGame(
 
   return {
     update(input: InputState & { skip?: boolean }, dt: number): void {
+      const swallow = editEnded;
+      editEnded = false;
+      caretT += dt;
       noteT = Math.max(0, noteT - dt);
       toastT = Math.max(0, toastT - dt);
       if (input.device) ui.device = input.device;
@@ -963,6 +974,7 @@ export function createGame(
           }
           break;
         case 'title':
+          if (draft !== null || swallow) break;
           if (input.cheat) {
             // pad Konami code; its final A must not also pick the row
             s.cheat = true;
@@ -983,7 +995,10 @@ export function createGame(
             audio.ui('confirm');
             if (row === 0) newRun();
             else if (row === 1) startDaily();
-            else {
+            else if (row === USERNAME_ROW) {
+              if (ui.device === 'pad') [note, noteT] = ['PRESS ENTER ON KEYBOARD', 3];
+              else [draft, caretT, noteT] = [cfg.name, 0, 0];
+            } else {
               gTune = cfg.tune;
               gLoad(cfg.car, cfg.color);
               gCarState.rpm = 0;
@@ -1191,6 +1206,27 @@ export function createGame(
 
     /** current map name, for the photo file name */
     mapName: () => map.name,
+
+    playerName: () => cfg.name,
+
+    /** username edit mode: main.ts routes raw keys to typeKey while true */
+    editing: () => draft !== null,
+
+    /** KeyboardEvent.key while editing */
+    typeKey(key: string): void {
+      if (draft === null) return;
+      if (key === 'Enter') {
+        if (draft) cfg.name = draft;
+        save();
+        [draft, editEnded] = [null, true];
+        audio.ui('confirm');
+      } else if (key === 'Escape') {
+        [draft, editEnded] = [null, true];
+        audio.ui('back');
+      } else if (key === 'Backspace') draft = draft.slice(0, -1);
+      else if (key.length === 1 && cleanName(key).length === 1 && draft.length < 12)
+        draft += cleanName(key);
+    },
 
     pause(): void {
       if (s.phase === 'countdown') return toTitle();
