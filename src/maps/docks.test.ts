@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { docks, docksRoute } from './docks';
+import { drawDecor, type DecorLayer } from './decor';
 import { CAR_MODELS } from '../models';
 import type { Rect, Solid, Vec } from '../types';
 
@@ -148,5 +149,25 @@ describe('docks', () => {
     expect(docks.parTime).toBe(Math.round(length / 17));
     expect(docks.parTime).toBeGreaterThanOrEqual(55);
     expect(docks.parTime).toBeLessThanOrEqual(90);
+  });
+
+  it('draws every decor layer and restores the caller alpha', () => {
+    for (const layer of ['sea', 'floor', 'wall', 'light', 'glow', 'over'] as DecorLayer[]) {
+      const calls: string[] = [];
+      const state: Record<string | symbol, unknown> = { globalAlpha: 0.5 };
+      const ctx = new Proxy(state, {
+        get: (t, k) =>
+          k in t
+            ? t[k]
+            : () => {
+                calls.push(String(k));
+                return String(k).startsWith('create') ? { addColorStop: () => {} } : undefined;
+              },
+        set: (t, k, v) => ((t[k] = v), true),
+      }) as unknown as CanvasRenderingContext2D;
+      expect(() => drawDecor(ctx, docks.decor!, layer, 0, 0)).not.toThrow();
+      expect(calls.length).toBeGreaterThan(0);
+      expect(state.globalAlpha).toBe(0.5);
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { CAR_MODELS } from '../models';
-import type { CarModel, GameMap, Solid, Vec } from '../types';
+import type { CarModel, Solid, Vec } from '../types';
+import { DOCK_BOXES, type Decor, type DecoratedMap } from './decor';
 
 const W = 320;
 const H = 220;
@@ -28,12 +29,15 @@ type Sample = { p: Vec; s: number };
 /** Route samples (arcs every ≤ 10°) and the apex of every arc. */
 const samples: Sample[] = [{ p: START, s: 0 }];
 const apexes: { s: number; r: number; side: number; deg: number }[] = [];
+/** [start, end] distance of every straight leg. */
+const straights: [number, number][] = [];
 {
   let p = START;
   let h = 0;
   let s = 0;
   for (const leg of LEGS) {
     if (typeof leg === 'number') {
+      straights.push([s, s + leg]);
       p = v(p.x + leg * Math.cos(h), p.y + leg * Math.sin(h));
       s += leg;
       samples.push({ p, s });
@@ -138,21 +142,30 @@ function along(
   s1: number,
   d: number,
   step: number,
-  make: (c: Vec, h: number) => Solid[],
+  make: (c: Vec, h: number, s: number) => Solid[],
 ) {
   const out: Solid[] = [];
   let last: Vec | null = null;
   for (let s = s0; s <= s1; s += 0.5) {
     const c = off(s, d);
     if (last && Math.hypot(c.x - last.x, c.y - last.y) < step) continue;
-    out.push(...make(c, at(s).h));
+    out.push(...make(c, at(s).h, s));
     last = c;
   }
   return out;
 }
+/** Row and route distance of every car placed by `cars` (rows get painted bays). */
+const rowOf = new Map<Solid, { row: number; s: number }>();
+let rows = 0;
 /** Parked cars angled `a` deg off the route heading, noses toward the line (a > 90: facing traffic). */
-const cars = (s0: number, s1: number, d: number, a: number, step = 3.2) =>
-  along(s0, s1, d, step, (c, h) => [car(c, h - Math.sign(d) * a * DEG)]);
+const cars = (s0: number, s1: number, d: number, a: number, step = 3.2) => {
+  const row = rows++;
+  return along(s0, s1, d, step, (c, h, s) => {
+    const k = car(c, h - Math.sign(d) * a * DEG);
+    rowOf.set(k, { row, s });
+    return [k];
+  });
+};
 const boxes = (s0: number, s1: number, d: number, long = true) =>
   along(s0, s1, d, long ? 12.6 : 6.5, (c, h) => [box(c, h, long)]);
 const bollards = (s0: number, s1: number, d: number, step: number) =>
@@ -294,7 +307,152 @@ const lights = [
   v(42, 54),
 ];
 
-export const docks: GameMap = {
+// --- decor: a container port at night ---
+function rng(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rand = rng(1985);
+const pick = <T>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+const decor: Decor[] = [];
+type Item<D = Decor> = D extends unknown ? Omit<D, 'floor'> : never;
+const add = (d: Item) => decor.push({ floor: 0, ...d } as Decor);
+const paint = (pts: Vec[], w: number, color: string) =>
+  add({ kind: 'paint', x: pts[0].x, y: pts[0].y, to: pts.slice(1), w, color });
+const PAINT_W = 'rgba(215,215,205,0.4)';
+/** Bay line paint; opaque so lines shared by neighbouring bays don't double up. */
+export const BAY_PAINT = '#8c8b84';
+
+// the harbour: a ship moored off the east quay (in view along the east run), lines to bollards
+// on the quay wall
+const SHIP = { x: 322, y: 15, w: 28, h: 190 };
+const wallBollards = Array.from({ length: 9 }, (_, i) => v(W - 0.5, 30 + i * 20));
+const ropes = wallBollards.map((c, i): [Vec, Vec] => [c, v(SHIP.x, c.y + (i < 4 ? -7 : 7))]);
+add({ kind: 'sea', x: 0, y: 0, w: W, h: H, ship: SHIP, ropes });
+
+// the haul road: a smoother wet band along the line, edge lines and lane arrows on straights
+paint(
+  [v(START.x - 30, START.y), ...samples.map((q) => q.p)], // from the quay end behind the start
+  17,
+  'rgba(120,130,150,0.09)',
+);
+for (const [s0, s1] of straights) {
+  if (s1 - s0 < 20) continue;
+  for (const side of [-1, 1])
+    paint([off(s0 + 2, side * 7.6), off(s1 - 2, side * 7.6)], 0.15, PAINT_W);
+  const mid = (s0 + s1) / 2;
+  for (const side of [-1, 1]) add({ kind: 'arrow', ...off(mid, side * 3), angle: at(mid).h });
+}
+
+// quay stencils, keep-clear hatching round the crane legs
+for (const [text, x, y] of [
+  ['BERTH 6', 100, 5],
+  ['BERTH 7', 200, 5],
+  ['BERTH 2', 120, 215],
+  ['BERTH 9', 315.6, 135],
+] as const)
+  add({
+    kind: 'text',
+    x,
+    y,
+    angle: x > W - 10 ? PI / 2 : 0,
+    text,
+    size: 3,
+    color: 'rgba(214,165,31,0.5)',
+  });
+const sts = { ...at(212).p, angle: at(212).h };
+for (const s of kept.filter((s) => s.kind === 'pillar' && s.w === 2))
+  add({ kind: 'hatch', x: s.x - 0.8, y: s.y - 0.8, w: 3.6, h: 3.6 });
+
+// wet ground: puddles and sodium streaks under the lamps
+lights.forEach((l, i) => {
+  add({ kind: 'reflection', ...l });
+  if (i % 3 === 0)
+    add({
+      kind: 'puddle',
+      x: l.x + (rand() - 0.5) * 6,
+      y: l.y + (rand() - 0.5) * 6,
+      r: 1.2 + rand() * 1.5,
+      seed: i,
+    });
+});
+
+// containers, trucks and the fuel dock
+const OWNERS = ['WGNU', 'MSKU', 'TGHU', 'CMAU', 'OOLU', 'HLXU', 'EGHU', 'NYKU', 'KKFU', 'TCLU'];
+const BRANDS = ['WANGAN', 'KAIUN', 'ORIENT', 'SEALINK', 'TOKAI', 'NIPPON'];
+const near = (a: number, b: number) => Math.abs(a - b) < 0.2;
+for (const s of solids) {
+  if (s.kind !== 'wall') continue;
+  const [lo, hi] = [Math.min(s.w, s.h), Math.max(s.w, s.h)];
+  const base = { ...center(s), w: s.w, h: s.h, angle: s.angle ?? 0 };
+  const code = `${pick(OWNERS)} ${String(Math.floor(rand() * 1e6)).padStart(6, '0')}`;
+  if (near(lo, 2.44) && (near(hi, 12.2) || near(hi, 6.1)))
+    add({
+      kind: 'container',
+      ...base,
+      color: pick(DOCK_BOXES),
+      code,
+      tone: rand() - 0.5,
+      ...(hi > 10 && rand() < 0.3 && { brand: pick(BRANDS) }),
+    });
+  else if (near(hi, 13.6))
+    add({ kind: 'container', ...base, color: pick(DOCK_BOXES), code, part: 'trailer' });
+  else if (near(hi, 2.5))
+    add({
+      kind: 'container',
+      ...base,
+      color: pick(['#e8e6e0', '#b8382c', '#2c5aa0']),
+      part: 'cab',
+    });
+}
+add({
+  kind: 'sign',
+  x: 33,
+  y: 46,
+  w: 9,
+  h: 2.4,
+  angle: 0,
+  color: '#ffb03a',
+  text: 'FUEL',
+  seed: 0,
+});
+
+// cranes: the ship-to-shore crane over the quay road, yard gantries straddling four stacks
+add({ kind: 'crane', ...sts, len: 14, span: 24, boom: 22, seed: 0 });
+add({ kind: 'pool', ...sts, r: 12 });
+for (const [x, y, angle, span, seed] of [
+  [128, 149.3, 0, 12.6, 1],
+  [256, 147, 0, 12.6, 2],
+  [306.1, 70, PI / 2, 10.2, 3],
+  [306.1, 185, PI / 2, 10.2, 4],
+])
+  add({ kind: 'crane', x, y, angle, len: 6, span, boom: 0, seed });
+
+// bollards (the 0.8 m pillars) with a rope coil on the far side from the line every few
+kept
+  .filter((s) => s.kind === 'pillar' && s.w < 1)
+  .map(center)
+  .forEach((c, i) => {
+    add({ kind: 'bollard', ...c });
+    if (i % 4) return;
+    const n = line.reduce((a, q) =>
+      Math.hypot(q.x - c.x, q.y - c.y) < Math.hypot(a.x - c.x, a.y - c.y) ? q : a,
+    );
+    const d = Math.hypot(c.x - n.x, c.y - n.y);
+    add({
+      kind: 'coil',
+      x: c.x + ((c.x - n.x) / d) * 1.3,
+      y: c.y + ((c.y - n.y) / d) * 1.3,
+      seed: i,
+    });
+  });
+for (const c of wallBollards) add({ kind: 'bollard', ...c });
+
+export const docks: DecoratedMap = {
   name: 'WANGAN DOCKS',
   parTime: Math.round(ROUTE_LENGTH / 17),
   // tuning values: total score for bronze, silver, gold; ~+10% for clipping zones
@@ -320,4 +478,5 @@ export const docks: GameMap = {
   helixes: [],
   start: { floor: 0, pos: START, angle: 0 },
   finish: { floor: 0, zone: { x: END.x - 6, y: END.y - 4, w: 12, h: 8 } },
+  decor,
 };

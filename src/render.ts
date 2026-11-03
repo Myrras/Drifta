@@ -583,6 +583,7 @@ function buildRim(map: GameMap, idx: number) {
   g.strokeStyle = docks ? 'rgba(255,210,150,0.32)' : 'rgba(190,220,255,0.28)';
   g.lineWidth = 0.1;
   for (const s of f.solids) {
+    if (s.kind === 'car') continue; // cars have their own sprite
     g.save();
     g.translate(s.x + s.w / 2, s.y + s.h / 2);
     g.rotate(s.angle ?? 0);
@@ -1802,6 +1803,7 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     const worldXf = (g: Ctx, k = 1) =>
       g.setTransform(rc * k, rs * k, -rs * k, rc * k, ox * k, oy * k);
     worldXf(ctx);
+    drawDecor(ctx, decorOf(v.map), 'sea', v.floorIndex, clock); // harbour past the floor edge
 
     // crossfade: current floor opaque, target floor over it at t (= A(1-t) + Bt, no darkening)
     const floors: [number, number][] = [[v.floorIndex, 1]];
