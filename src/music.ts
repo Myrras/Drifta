@@ -1,4 +1,4 @@
-/** Procedural eurobeat-style drift track. Pattern logic is pure (testable); createMusic wires it to Web Audio. */
+/** Procedural drift tracks (tokyo, eurobeat). Pattern logic is pure (testable); createMusic wires it to Web Audio. */
 
 export const BPM = 155;
 export const STEPS_PER_BAR = 16;
@@ -68,6 +68,71 @@ export function leadAt(bar: number, step: number, intensity: number): number | n
   return tones[idx % 3] + 24 + (idx === 3 ? 12 : 0);
 }
 
+/* ---- Tokyo: dark half-time hip-hop, D in-scale (miyako-bushi). Original patterns, style only. ---- */
+
+export const TRACKS = ['tokyo', 'eurobeat'] as const;
+export type Track = (typeof TRACKS)[number];
+export const TOKYO_BPM = 130;
+export const TOKYO_SCALE = [0, 1, 5, 7, 8]; // D Eb G A Bb
+const TOKYO_ROOT = 50; // D3
+/** Bar roots as scale degrees: D D Bb A | D D G A (negative = below the root). */
+const TOKYO_PROG = [0, 0, -1, -2, 0, 0, -3, -2];
+/** Koto riff as scale degrees per 16th (null = rest); A answers on bars 0-1, B on bars 2-3. */
+const RIFF_A = [5, null, 7, null, 8, 9, null, 8, null, 7, null, 6, 5, null, null, null];
+const RIFF_B = [10, null, 9, 8, null, 9, null, 7, 8, null, 6, null, 5, null, 4, null];
+
+const mod = (a: number, n: number) => ((a % n) + n) % n;
+/** Scale degree to MIDI note; degree 5 is the root an octave up. */
+export const tokyoDegree = (d: number) =>
+  TOKYO_ROOT + 12 * Math.floor(d / 5) + TOKYO_SCALE[mod(d, 5)];
+const tokyoRoot = (bar: number) => TOKYO_PROG[mod(bar, 8)];
+/** Last bar of every 8 is a stop bar: one taiko, silence, two "hey" stabs back in. */
+export const tokyoStop = (bar: number) => mod(bar, 8) === 7;
+
+export interface TokyoDrums {
+  kick: boolean;
+  clap: boolean;
+  taiko: boolean;
+  hat: boolean;
+  hey: boolean;
+}
+
+/** Half-time: clap on beat 3, sparse kick, taiko accents; rolls and extra hits with intensity. */
+export function tokyoDrumsAt(bar: number, step: number, intensity: number): TokyoDrums {
+  const s = mod(step, STEPS_PER_BAR);
+  const b = mod(bar, 8);
+  if (tokyoStop(bar))
+    return { kick: false, clap: false, taiko: s === 0, hat: false, hey: s === 12 || s === 14 };
+  const hot = intensity > 0.6;
+  return {
+    kick: s === 0 || s === 10 || (b % 2 === 1 && s === 7),
+    clap: s === 8,
+    taiko: (b % 4 === 0 && s === 0) || (b % 2 === 1 && (s === 12 || s === 14)) || (hot && s === 4),
+    hat: s % 2 === 0 || (hot && b % 4 === 2 && s >= 12),
+    hey: intensity > 0.3 && b % 4 === 3 && s === 6,
+  };
+}
+
+/** Sliding 808: root on the kick hits, octave flip at the end of odd bars to slide back down. */
+export function tokyoBassAt(bar: number, step: number): number | null {
+  const s = mod(step, STEPS_PER_BAR);
+  const n = tokyoDegree(tokyoRoot(bar)) - 12;
+  if (tokyoStop(bar)) return s === 0 ? n : null;
+  if (s === 0 || s === 10) return n;
+  return s === 14 && mod(bar, 2) === 1 ? n + 12 : null;
+}
+
+/** Plucked koto/shamisen riff; needs intensity > 0.3. */
+export function tokyoRiffAt(bar: number, step: number, intensity: number): number | null {
+  if (intensity <= 0.3 || tokyoStop(bar)) return null;
+  const d = (mod(bar, 4) < 2 ? RIFF_A : RIFF_B)[mod(step, STEPS_PER_BAR)];
+  return d === null ? null : tokyoDegree(d);
+}
+
+/** Dark pad: root, 2nd and 4th scale degree above it, once per bar. */
+export const tokyoPadAt = (bar: number): number[] =>
+  [0, 2, 4].map((i) => tokyoDegree(tokyoRoot(bar) + i));
+
 const mtof = (m: number) => 440 * 2 ** ((m - 69) / 12);
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const cutoff = (i: number) => 3500 + 12000 * clamp01((i - 0.7) / 0.3);
@@ -92,6 +157,9 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
   for (let i = 0; i < nd.length; i++) nd[i] = hash(i, 99) * 2 - 1;
 
   let intensity = 0;
+  let track: Track = 'tokyo';
+  let stepSec = 60 / TOKYO_BPM / 4;
+  let lastBass = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let nextTime = 0;
   let stepIdx = 0;
@@ -181,12 +249,112 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
     if (ld !== null) osc('square', mtof(ld), t, STEP_SEC * 1.2, leadBus, 0.07);
   }
 
+  function taiko(t: number): void {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(140, t);
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.25);
+    env(g, t, 0.9, 0.6);
+    o.connect(g).connect(bus);
+    o.start(t);
+    o.stop(t + 0.65);
+    noiseHit(t, 0.08, 0.4, 'lowpass', 400);
+  }
+
+  /** Synth "hey": bright square fifth plus a falling bandpassed noise burst. No voice. */
+  function hey(t: number): void {
+    for (const n of [62, 69]) osc('square', mtof(n), t, 0.14, lp, 0.06);
+    const s = ctx.createBufferSource();
+    const f = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    s.buffer = noise;
+    f.type = 'bandpass';
+    f.Q.value = 4;
+    f.frequency.setValueAtTime(1400, t);
+    f.frequency.exponentialRampToValueAtTime(700, t + 0.15);
+    env(g, t, 0.6, 0.16);
+    s.connect(f).connect(g).connect(lp);
+    s.start(t);
+    s.stop(t + 0.2);
+  }
+
+  /** Pluck: saw with a falling filter and a slight downward pitch bend at the attack. */
+  function pluck(n: number, t: number, dest: AudioNode, vol: number): void {
+    const o = ctx.createOscillator();
+    const f = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.value = mtof(n);
+    o.detune.setValueAtTime(40, t);
+    o.detune.linearRampToValueAtTime(0, t + 0.05);
+    f.type = 'lowpass';
+    f.Q.value = 6;
+    f.frequency.setValueAtTime(4000, t);
+    f.frequency.exponentialRampToValueAtTime(700, t + 0.25);
+    env(g, t, vol, 0.45);
+    o.connect(f).connect(g).connect(dest);
+    o.start(t);
+    o.stop(t + 0.5);
+  }
+
+  function tokyoStep(t: number, idx: number): void {
+    const bar = Math.floor(idx / STEPS_PER_BAR);
+    const step = idx % STEPS_PER_BAR;
+    const d = tokyoDrumsAt(bar, step, intensity);
+    if (d.kick) kick(t);
+    if (d.taiko) taiko(t);
+    if (d.clap) for (const dt of [0, 0.012, 0.024]) noiseHit(t + dt, 0.15, 0.45, 'bandpass', 1500);
+    if (d.hat) noiseHit(t, 0.03, step % 4 === 2 ? 0.22 : 0.12, 'highpass', 8000);
+    if (d.hey) hey(t);
+    const b = tokyoBassAt(bar, step);
+    if (b !== null) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const dur = stepSec * 6;
+      o.type = 'sine';
+      o.frequency.setValueAtTime(mtof(lastBass || b), t);
+      o.frequency.exponentialRampToValueAtTime(mtof(b), t + 0.08); // 808 glide from the last note
+      env(g, t, 0.8, dur);
+      o.connect(g).connect(bus);
+      o.start(t);
+      o.stop(t + dur + 0.02);
+      lastBass = b;
+    }
+    if (step === 0 && !tokyoStop(bar)) {
+      const g = ctx.createGain();
+      const f = ctx.createBiquadFilter();
+      const dur = stepSec * STEPS_PER_BAR;
+      f.type = 'lowpass';
+      f.frequency.value = 900;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.04, t + 0.3);
+      g.gain.linearRampToValueAtTime(0, t + dur);
+      f.connect(g).connect(lp);
+      for (const n of tokyoPadAt(bar))
+        for (const dt of [-8, 8]) {
+          const o = ctx.createOscillator();
+          o.type = 'sawtooth';
+          o.frequency.value = mtof(n);
+          o.detune.value = dt;
+          o.connect(f);
+          o.start(t);
+          o.stop(t + dur + 0.02);
+        }
+    }
+    const r = tokyoRiffAt(bar, step, intensity);
+    if (r !== null) {
+      pluck(r, t, stabBus, 0.12);
+      pluck(r + 12, t, leadBus, 0.05); // octave double, audible only above 0.6
+    }
+  }
+
   function tick(): void {
     if (nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05; // stalled timer: skip missed steps
     while (nextTime < ctx.currentTime + 0.1) {
-      scheduleStep(nextTime, stepIdx);
+      (track === 'tokyo' ? tokyoStep : scheduleStep)(nextTime, stepIdx);
       stepIdx++;
-      nextTime += STEP_SEC;
+      nextTime += stepSec;
     }
   }
 
@@ -202,6 +370,14 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
       if (timer) clearInterval(timer);
       timer = null;
     },
+    /** Switches on the next step, restarting at bar 0. */
+    setTrack(t: Track): void {
+      if (t === track) return;
+      track = t;
+      stepSec = 60 / (t === 'tokyo' ? TOKYO_BPM : BPM) / 4;
+      stepIdx = 0;
+      lastBass = 0;
+    },
     setIntensity(x: number): void {
       intensity = clamp01(x);
       const t = ctx.currentTime;
@@ -212,9 +388,9 @@ export function createMusic(ctx: AudioContext, out: AudioNode) {
     /** Snare roll + noise riser over the next 8 steps. */
     fill(): void {
       const t0 = Math.max(nextTime, ctx.currentTime);
-      const len = 8 * STEP_SEC;
+      const len = 8 * stepSec;
       for (let i = 0; i < 8; i++)
-        noiseHit(t0 + i * STEP_SEC, 0.08, 0.25 + i * 0.05, 'bandpass', 1800);
+        noiseHit(t0 + i * stepSec, 0.08, 0.25 + i * 0.05, 'bandpass', 1800);
       const s = ctx.createBufferSource();
       const f = ctx.createBiquadFilter();
       const g = ctx.createGain();

@@ -47,7 +47,7 @@ const statRange = (k: keyof CarStats) => {
 };
 const VOLUMES = ['master', 'music', 'sfx', 'engine'] as const;
 const TITLE_ROWS = 3;
-const SETTINGS_ROWS = 7; // 4 volumes, shake, reset, back
+const SETTINGS_ROWS = 8; // 4 volumes, shake, music, reset, back
 const IDLE: DriftInfo = { drifting: false, slip: 0, speedKmh: 0 };
 
 export function createGame(
@@ -62,6 +62,7 @@ export function createGame(
     audio.setVolumes({ master, music, sfx, engine });
   };
   applyVolumes();
+  audio.setTrack(cfg.track);
   let row = 0;
   let confirmReset = false;
   let gCar = cfg.car;
@@ -320,12 +321,15 @@ export function createGame(
     } else if (row === 4 && (dir || input.confirm)) {
       cfg.shake = !cfg.shake;
       save();
-    } else if (row === 5 && input.confirm) {
+    } else if (row === 5 && (dir || input.confirm)) {
+      audio.setTrack((cfg.track = cfg.track === 'tokyo' ? 'eurobeat' : 'tokyo'));
+      save();
+    } else if (row === 6 && input.confirm) {
       if (confirmReset) {
         stores.forEach((b, i) => b.set((bests[i] = 0)));
         confirmReset = false;
       } else confirmReset = true;
-    } else if ((row === 6 && input.confirm) || input.pause) go('title', 2);
+    } else if ((row === 7 && input.confirm) || input.pause) go('title', 2);
   }
 
   function menuView(): MenuView | null {
@@ -347,6 +351,7 @@ export function createGame(
           bar: cfg[k],
         })),
         { label: 'CAMERA SHAKE', value: cfg.shake ? 'ON' : 'OFF' },
+        { label: 'MUSIC', value: cfg.track.toUpperCase() },
         { label: 'RESET BEST SCORES', value: confirmReset ? 'ENTER TO CONFIRM' : undefined },
         { label: 'BACK' },
       ];
