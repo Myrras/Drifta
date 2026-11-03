@@ -311,6 +311,28 @@ describe('traffic', () => {
     expect(run(42)).not.toBe(run(43));
   });
 
+  it('cars: false keeps peds and signals but never has moving cars', () => {
+    const run = () => {
+      const t = createTraffic(fourWay(30, 40), 11, { cars: false });
+      const peds0 = JSON.stringify(t.peds);
+      const player = { pos: { x: -60, y: 2 }, vel: { x: 12, y: 0 } };
+      let walked = 0;
+      for (let n = 0; n < 120 * 30; n++) {
+        player.pos.x += player.vel.x * DT;
+        t.step(DT, player);
+        t.hit(0, t.time);
+        expect(t.cars).toHaveLength(0);
+        if (n % 120 === 0) walked += t.peds.filter((p) => p.walking).length;
+      }
+      expect(t.peds).toHaveLength(40);
+      expect(JSON.stringify(t.peds)).not.toBe(peds0);
+      expect(walked).toBeGreaterThan(0);
+      expect(['green', 'amber', 'red']).toContain(t.signalState(fourWay(30, 40).signals[0].id).car);
+      return JSON.stringify(t.peds);
+    };
+    expect(run()).toBe(run());
+  });
+
   it('steps 40 cars and 60 peds fast', () => {
     const t = createTraffic(fourWay(40, 60), 9);
     const t0 = performance.now();

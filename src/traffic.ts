@@ -120,7 +120,8 @@ function pointAt(p: Path, s: number, out: Vec): number {
   return Math.atan2(b.y - a.y, b.x - a.x);
 }
 
-export function createTraffic(g: CityGraph, seed: number): Traffic {
+/** cars: false runs pedestrians and signals only, with no moving cars */
+export function createTraffic(g: CityGraph, seed: number, opts: { cars?: boolean } = {}): Traffic {
   const rng = makeRng(seed);
   const laneIdx = new Map(g.lanes.map((l, i) => [l.id, i]));
   const sigIdx = new Map(g.signals.map((s, i) => [s.id, i]));
@@ -175,10 +176,10 @@ export function createTraffic(g: CityGraph, seed: number): Traffic {
   };
 
   // cars
-  const nCars = Math.min(
-    g.cars,
-    Math.floor(lanePaths.reduce((t, p) => t + p.len, 0) / MIN_SPACING),
-  );
+  const nCars =
+    opts.cars === false
+      ? 0
+      : Math.min(g.cars, Math.floor(lanePaths.reduce((t, p) => t + p.len, 0) / MIN_SPACING));
   const cars: TrafficCar[] = [];
   const cLane = new Int32Array(nCars);
   const cNext = new Int32Array(nCars);
