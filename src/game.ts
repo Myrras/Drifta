@@ -200,7 +200,6 @@ const normStat = (car: PlayerModel, tune: Tune, k: keyof CarStats) => {
   return hi > lo ? Math.min(1, (tunedStats(car, tune)[k] - lo) / (hi - lo)) : 0.5;
 };
 /** stat bars, 0..1 across all models */
-const statsOf = (car: PlayerModel, tune: Tune) => {
 const statsOf = (car: PlayerModel, tune: Tune) => ({
   power: normStat(car, tune, 'power'),
   grip: normStat(car, tune, 'grip'),
