@@ -15,6 +15,16 @@ describe('prompts', () => {
     expect(glyph('rev', 'kb', 'ps')).toBe('R');
     expect(glyph('rev', 'pad', 'xbox')).toBe('RT');
   });
+  it('title shortcut glyphs', () => {
+    expect(
+      (['tabPrev', 'tabNext', 'multiplayer', 'pause'] as const).map((a) => glyph(a, 'kb', 'ps')),
+    ).toEqual(['Q', 'E', 'M', 'ESC']);
+    expect(glyph('tabPrev', 'pad', 'ps')).toBe('L1');
+    expect(glyph('tabNext', 'pad', 'xbox')).toBe('RB');
+    expect(glyph('multiplayer', 'pad', 'ps')).toBe('△');
+    expect(glyph('multiplayer', 'pad', 'xbox')).toBe('Y');
+    expect(glyph('pause', 'pad', 'xbox')).toBe('START');
+  });
   it('hintLine shows only the active device', () => {
     const line = hintLine(
       [

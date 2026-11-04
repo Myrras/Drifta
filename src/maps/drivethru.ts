@@ -5,8 +5,9 @@ import type { Decor, DecoratedMap } from './decor';
 // MIDNIGHT DRIVE-THRU: a night car meet in the lot of MOONBURGER, an all-night burger joint.
 // Rows of meet cars with their hoods up, a coffee truck under string lights, sodium lamps and
 // the pink-and-blue moon sign. The route laps the lot (long run-up, NW sweeper, an esse, a
-// hairpin round the pylon sign, a double-left round the middle row, a right-left S), then loops
-// the drive-thru lane round the restaurant and leaves down the exit chute to the finish.
+// hairpin round the pylon sign, a double-left round the middle row, a right), then a left half
+// circle round the drive-thru island links into a right half circle round the restaurant, and
+// leaves down the exit chute to the finish. Planted medians close the lot into one channel.
 const W = 220;
 const H = 160;
 const PI = Math.PI;
@@ -15,41 +16,57 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const headOf = (a: Vec, b: Vec) => Math.atan2(b.y - a.y, b.x - a.x);
 
 // --- restaurant and drive-thru lane ---
-// The lane runs 11 m wide up the west face, across the north face and down the east face. A
-// planted kerb strip rings the building, rounded at its corners, and the outer island is
-// rounded to match, so the lane sweeps round both corners on a 15.5 m line.
+// The lane runs 11 m wide up the west face, sweeps round the restaurant's north end in one half
+// circle and runs down the east face to the exit chute. It is entered by a half circle of the
+// same radius round the drive-thru island, so the two link into one flowing S.
 const B: Rect = { x: 170, y: 96, w: 25, h: 30 };
 const YARD: Rect = { x: 170, y: 126, w: 25, h: 33 };
 const LANE = 11;
-/** Planted strip between the building and the lane. */
-const G = 3.5;
-/** Inner kerb radius at the building's corners (G >= 0.3 R_IN keeps the corners inside it). */
-const R_IN = 10;
-const R_OUT = R_IN + LANE;
-/** Outer kerb thickness: fills the square corner behind the outer arc. */
-const T_KERB = R_OUT * (Math.SQRT2 - 1) + 0.3;
-const NW = v(B.x - G + R_IN, B.y - G + R_IN); // corner arc centers
-const NE = v(B.x + B.w + G - R_IN, NW.y);
-const LANE_W = B.x - G - LANE / 2; // lane centerlines: west x, north y, east x
-const LANE_N = B.y - G - LANE / 2;
-const LANE_E = B.x + B.w + G + LANE / 2;
-const ISLAND_W: Rect = { x: 152.5, y: NW.y - 3, w: LANE_W - LANE / 2 - 152.5, h: 112 - NW.y + 3 };
-const ISLAND_N: Rect = { x: NW.x, y: NW.y - R_OUT - T_KERB, w: NE.x - NW.x, h: T_KERB };
+/** Lane centerline radius round the restaurant's north end, about O. */
+const R_LANE = 24;
+const O = v(B.x + B.w / 2, 108);
+const R_IN = R_LANE - LANE / 2;
+const R_OUT = R_LANE + LANE / 2;
+const LANE_W = O.x - R_LANE; // lane centerlines: west and east legs
+const LANE_E = O.x + R_LANE;
+/** Center of the entry half circle round the drive-thru island. */
+const U = v(LANE_W - R_LANE, 128);
+/** Planted kerb strips and medians. */
+const KERB_T = 3;
+/** Planted nose between the restaurant's north end and the lane: covers its corners. */
+const NOSE_T = R_IN - (O.y - B.y) + 0.5;
 const ISLAND_E: Rect = {
   x: LANE_E + LANE / 2,
-  y: NE.y - 5,
+  y: O.y - 3,
   w: W - 1 - (LANE_E + LANE / 2),
-  h: H - 1 - (NE.y - 5),
+  h: H - 1 - (O.y - 3),
 };
-/** Planted strips along the building's west, north and east faces. */
+/** Planted strips along the building's west and east faces, down to the south wall. */
 const STRIPS: Rect[] = [
-  { x: B.x - G, y: NW.y, w: G, h: B.y + B.h - NW.y },
-  { x: NW.x, y: B.y - G, w: NE.x - NW.x, h: G },
-  { x: B.x + B.w, y: NE.y, w: G, h: H - 1 - NE.y },
+  { x: LANE_W + LANE / 2, y: O.y, w: B.x - (LANE_W + LANE / 2), h: H - 1 - O.y },
+  { x: B.x + B.w, y: O.y, w: LANE_E - LANE / 2 - (B.x + B.w), h: H - 1 - O.y },
 ];
 /** Pylon sign island inside the NE hairpin. */
 const PYLON: Rect = { x: 181, y: 43, w: 14, h: 14 };
 const TRUCK = { x: 192, y: 17, w: 6.5, h: 2.5, angle: PI / 2 };
+/**
+ * Planted medians that close the lot into one channel: no way to the lane but the route. Each
+ * runs along a double row's back line, so the meet cars park nose out to the aisles.
+ */
+const MEDIANS: Rect[] = [
+  { x: 31.5, y: 30, w: 52.5, h: 21.5 }, // NW island inside the sweeper and the esse
+  { x: 31.5, y: 51.5, w: KERB_T, h: H - 1 - 51.5 }, // run-up | the lot
+  { x: 84, y: 48.5, w: PYLON.x - 84, h: KERB_T }, // top straight | back straight, to the pylon
+  { x: 100, y: 1, w: KERB_T, h: 17.7 }, // north aisle closed at the esse...
+  { x: 100, y: 15.7, w: 80, h: KERB_T }, // ...along the truck row
+  { x: 66, y: 81.5, w: 98, h: KERB_T }, // back straight | the S, to the lane's outer kerb
+  { x: 34.5, y: 118.5, w: 70.5, h: KERB_T }, // the meet pen: north side...
+  { x: 102, y: 118.5, w: KERB_T, h: H - 1 - 118.5 }, // ...and east side
+  { x: 42, y: 138.5, w: 58, h: KERB_T }, // pen rows
+  { x: 122, y: 110.5, w: 26, h: KERB_T },
+  { x: U.x - R_IN, y: 83, w: KERB_T, h: U.y - 83 }, // drive-thru island: west...
+  { x: U.x + R_IN - KERB_T, y: O.y, w: KERB_T, h: U.y - O.y }, // ...and the lane's outer kerb
+];
 
 const wall = (x: number, y: number, w: number, h: number): Solid => ({ kind: 'wall', x, y, w, h });
 const wallOf = (r: Rect) => wall(r.x, r.y, r.w, r.h);
@@ -127,16 +144,16 @@ const C = course([
   [204, 66, 16],
   [60, 66, 18], // double left round the middle row
   [60, 100, 14],
-  [110, 100, 14], // S: right...
-  [110, 142, 16], // ...left
-  [LANE_W, 142, 14], // left into the drive-thru
-  [LANE_W, LANE_N, R_IN + LANE / 2], // round the restaurant
-  [LANE_E, LANE_N, R_IN + LANE / 2],
+  [U.x - R_LANE, 100, 22], // right toward the drive-thru...
+  [U.x - R_LANE, U.y + R_LANE, R_LANE], // ...left half circle round the island into the lane...
+  [LANE_W, U.y + R_LANE, R_LANE],
+  [LANE_W, O.y - R_LANE, R_LANE], // ...right half circle round the restaurant
+  [LANE_E, O.y - R_LANE, R_LANE],
   [LANE_E, 154], // down the exit chute
 ]);
 export const drivethruCorners = C.corners.map(({ r, turn }) => ({ r, turn }));
 export const drivethruRoute: { floor: number; points: Vec[] }[] = [{ floor: 0, points: C.line }];
-const FINISH: Rect = { x: B.x + B.w + G + 0.5, y: 146, w: LANE - 1, h: 12.5 };
+const FINISH: Rect = { x: LANE_E - LANE / 2 + 0.5, y: 146, w: LANE - 1, h: 12.5 };
 
 const segDist = (p: Vec, a: Vec, b: Vec) => {
   const dx = b.x - a.x;
@@ -146,11 +163,11 @@ const segDist = (p: Vec, a: Vec, b: Vec) => {
 };
 const routeDist = (p: Vec) => Math.min(...C.line.slice(1).map((b, i) => segDist(p, C.line[i], b)));
 
-/** The lane, drifted end to end in one combo: west leg, the top across both bends, east leg. */
+/** The lane, drifted end to end in one combo: west leg, the top of the half circle, east leg. */
 const bonusZones: BonusZone[] = [
-  { x: LANE_W - LANE / 2, y: LANE_N - LANE / 2, w: LANE, h: 112 - (LANE_N - LANE / 2) },
-  { x: LANE_W - LANE / 2, y: LANE_N - LANE / 2, w: LANE_E - LANE_W + LANE, h: LANE },
-  { x: LANE_E - LANE / 2, y: LANE_N - LANE / 2, w: LANE, h: 116 - (LANE_N - LANE / 2) },
+  { x: LANE_W - LANE / 2, y: O.y - 10, w: LANE, h: U.y - (O.y - 10) },
+  { x: LANE_W - LANE / 2, y: O.y - R_OUT, w: LANE_E - LANE_W + LANE, h: LANE },
+  { x: LANE_E - LANE / 2, y: O.y - 10, w: LANE, h: U.y + 2 - (O.y - 10) },
 ].map((r) => ({ ...r, id: 'drivethru', trick: 'DRIVE-THRU' }));
 
 // --- solids ---
@@ -161,14 +178,12 @@ const fixed: Solid[] = [
   wall(W - 1, 1, 1, H - 2),
   wallOf(B),
   wallOf(YARD),
-  wallOf(ISLAND_N),
-  wallOf(ISLAND_W),
   wallOf(ISLAND_E),
   ...STRIPS.map(wallOf),
-  ...arcWall(NW, R_IN, G, PI, 1.5 * PI),
-  ...arcWall(NE, R_IN, G, -PI / 2, 0),
-  ...arcWall(NW, R_OUT + T_KERB, T_KERB, PI, 1.5 * PI),
-  ...arcWall(NE, R_OUT + T_KERB, T_KERB, -PI / 2, 0),
+  ...MEDIANS.map(wallOf),
+  ...arcWall(O, R_IN, NOSE_T, PI, 2 * PI),
+  ...arcWall(O, R_OUT + 0.2 + KERB_T, KERB_T, PI, 2 * PI), // 0.2 m out: the line's chords bulge out
+  ...arcWall(U, R_IN, KERB_T, 0, PI),
   wallOf(PYLON),
   wall(TRUCK.x - TRUCK.h / 2, TRUCK.y - TRUCK.w / 2, TRUCK.h, TRUCK.w), // long side along y
 ];
@@ -200,19 +215,20 @@ function row(horiz: boolean, a0: number, a1: number, back: number, side: -1 | 1)
   }
   return out;
 }
+/** Two rows back to back either side of a median centered on `back`. */
 const double = (horiz: boolean, a0: number, a1: number, back: number) => [
-  ...row(horiz, a0, a1, back, -1),
-  ...row(horiz, a0, a1, back, 1),
+  ...row(horiz, a0, a1, back - KERB_T / 2 - 0.6, -1),
+  ...row(horiz, a0, a1, back + KERB_T / 2 + 0.6, 1),
 ];
-/** Back lines of the double rows: lamps light both ends. */
+/** Median center lines of the double rows: lamps light both ends. */
 const DOUBLES: [boolean, number, number, number][] = [
-  [true, 112, 180, 17.2],
+  [true, 102, 180, 17.2],
   [true, 40, 172, 50],
   [false, 60, 150, 33],
   [true, 86, 150, 83],
   [true, 42, 100, 120],
-  [true, 42, 104, 140],
-  [true, 122, 150, 112],
+  [true, 42, 100, 140],
+  [true, 122, 148, 112],
 ];
 const overlaps = (a: Rect, b: Rect, pad = 0) =>
   a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad;
@@ -343,12 +359,12 @@ crowd(v(176, 50), 8, 8); // under the pylon sign
 crowd(v(138, 126), 11, 12); // by the drive-thru entry
 crowd(v(70, 130), 14, 14); // the meet's middle
 for (const [x, y, a] of [
-  [76, 80, 0],
+  [76, 76, 0],
   [80, 90, 0.1],
   [46, 82, PI / 2],
   [60, 150, 0],
   [86, 150, -0.1],
-  [130, 152, 0.05],
+  [134, 136, 0.05],
   [200, 28, PI / 2],
   [150, 40, 0],
 ])
@@ -415,38 +431,36 @@ const drand = rng(77);
 
 // ground: dry tarmac; the lane tinted like a bus lane so the bonus reads
 add({ kind: 'tarmac', x: 0, y: 0, w: W, h: H, seed: 3 });
-const laneLine = [
-  v(LANE_W, 128),
-  ...arcPts(NW, R_IN + LANE / 2, PI, 1.5 * PI),
-  ...arcPts(NE, R_IN + LANE / 2, -PI / 2, 0),
-  v(LANE_E, H - 1),
-];
+const laneLine = [v(LANE_W, U.y), ...arcPts(O, R_LANE, PI, 2 * PI, 24), v(LANE_E, H - 1)];
 paint(laneLine, LANE - 0.4, 'rgba(120,30,60,0.32)');
 paint(laneLine, 0.15, 'rgba(255,200,90,0.45)', [2, 3]);
 add({
   kind: 'text',
   x: LANE_W,
-  y: 120,
+  y: 125,
   angle: -PI / 2,
   text: 'DRIVE THRU',
   size: 2.2,
   color: LINE,
 });
-add({ kind: 'text', x: LANE_W, y: 106, angle: -PI / 2, text: 'ORDER', size: 1.6, color: LINE });
-add({ kind: 'text', x: LANE_E, y: 104, angle: PI / 2, text: 'PICK UP', size: 1.6, color: LINE });
-add({ kind: 'text', x: LANE_E, y: 118, angle: PI / 2, text: 'PAY', size: 1.6, color: LINE });
-add({ kind: 'text', x: LANE_E, y: 136, angle: PI / 2, text: 'EXIT', size: 2.2, color: LINE });
-add({ kind: 'arrow', x: LANE_W, y: 112, angle: -PI / 2 });
-add({ kind: 'arrow', x: (NW.x + NE.x) / 2, y: LANE_N, angle: 0 });
-add({ kind: 'arrow', x: LANE_E, y: 128, angle: PI / 2 });
-// lot arrows: halfway down every long straight
+add({ kind: 'text', x: LANE_W, y: 110, angle: -PI / 2, text: 'ORDER', size: 1.6, color: LINE });
+add({ kind: 'text', x: LANE_E, y: 106, angle: PI / 2, text: 'PICK UP', size: 1.6, color: LINE });
+add({ kind: 'text', x: LANE_E, y: 120, angle: PI / 2, text: 'PAY', size: 1.6, color: LINE });
+add({ kind: 'text', x: LANE_E, y: 138, angle: PI / 2, text: 'EXIT', size: 2.2, color: LINE });
+add({ kind: 'arrow', x: LANE_W, y: 116, angle: -PI / 2 });
+add({ kind: 'arrow', x: O.x, y: O.y - R_LANE, angle: 0 });
+add({ kind: 'arrow', x: LANE_E, y: 129, angle: PI / 2 });
+// lot arrows: halfway down every long straight, and at the apex of every big corner
 for (let i = 1; i < C.line.length; i++) {
   const a = C.line[i - 1];
   const b = C.line[i];
   const p = v(a.x + (b.x - a.x) * 0.45, a.y + (b.y - a.y) * 0.45);
-  if (Math.hypot(b.x - a.x, b.y - a.y) > 30 && p.x < ISLAND_W.x - 4)
+  if (Math.hypot(b.x - a.x, b.y - a.y) > 30 && p.x < LANE_W - LANE)
     add({ kind: 'arrow', ...p, angle: headOf(a, b) });
 }
+for (const { mid, turn } of C.corners)
+  if (Math.abs(turn) >= PI / 3 && Math.hypot(mid.x - O.x, mid.y - O.y) > R_OUT)
+    add({ kind: 'arrow', x: mid.x, y: mid.y, angle: mid.a });
 // bay paint (the tarmac covers the renderer's): sides, back line, wheel stop; oil under some
 for (const b of bays) {
   const u = v(Math.cos(b.out), Math.sin(b.out)); // toward the open end
@@ -515,51 +529,49 @@ for (let x = 14; x < W; x += 26)
       add({ kind: 'pool', ...p, r: 13 });
   }
 for (const p of poles) add({ kind: 'pool', ...p, r: 9, color: '#ffb066' });
-add({ kind: 'pool', x: LANE_W, y: 111, r: 9, color: '#9fdcff' });
-add({ kind: 'pool', x: (NW.x + NE.x) / 2, y: LANE_N, r: 10, color: '#ffd9e8' });
-add({ kind: 'pool', x: LANE_E, y: 108, r: 10, color: '#9fdcff' });
+add({ kind: 'pool', x: LANE_W, y: 116, r: 9, color: '#9fdcff' });
+add({ kind: 'pool', x: O.x, y: O.y - R_LANE, r: 10, color: '#ffd9e8' });
+add({ kind: 'pool', x: LANE_E, y: 112, r: 10, color: '#9fdcff' });
 
-// kerbs and islands: planted, with a pale kerb edge along the lane
+// kerbs and islands: planted, ringed by a pale kerb edge
 const capped = (r: Rect) =>
   r.w >= r.h
     ? paint([v(r.x, r.y + r.h / 2), v(r.x + r.w, r.y + r.h / 2)], r.h, PLANTER, undefined, true)
     : paint([v(r.x + r.w / 2, r.y), v(r.x + r.w / 2, r.y + r.h)], r.w, PLANTER, undefined, true);
-[ISLAND_N, ISLAND_W, ISLAND_E, PYLON, ...STRIPS].forEach(capped);
-for (const [o, a0] of [
-  [NW, PI],
-  [NE, -PI / 2],
-] as const) {
-  const ring = (r: number, t: number) =>
-    paint(arcPts(o, r - t / 2, a0, a0 + PI / 2), t + 0.2, PLANTER, undefined, true);
-  ring(R_IN, G);
-  ring(R_OUT + T_KERB, T_KERB);
+const ring = (o: Vec, r: number, t: number, a0: number, a1: number) =>
+  paint(arcPts(o, r - t / 2, a0, a1, 24), t + 0.2, PLANTER, undefined, true);
+ring(O, R_IN, NOSE_T, PI, 2 * PI);
+ring(O, R_OUT + 0.2 + KERB_T, KERB_T, PI, 2 * PI);
+ring(U, R_IN, KERB_T, 0, PI);
+for (const r of [ISLAND_E, PYLON, ...STRIPS, ...MEDIANS]) {
+  capped(r);
+  const { x, y, w, h } = r;
+  paint([v(x, y), v(x + w, y), v(x + w, y + h), v(x, y + h), v(x, y)], 0.35, KERB, undefined, true);
 }
-// lane kerbs: outer along the islands, inner along the building strip
-for (const [x0, x1, y0, r] of [
-  [ISLAND_W.x + ISLAND_W.w - 0.15, ISLAND_E.x + 0.15, ISLAND_W.y + ISLAND_W.h, R_OUT + 0.15],
-  [B.x - G + 0.15, B.x + B.w + G - 0.15, B.y + B.h, R_IN - 0.15],
-])
-  paint(
-    [v(x0, y0), ...arcPts(NW, r, PI, 1.5 * PI), ...arcPts(NE, r, -PI / 2, 0), v(x1, H - 1)],
-    0.35,
-    KERB,
-    undefined,
-    true,
-  );
+// lane kerbs: outer round the drive-thru island and the outer kerb, inner along the restaurant
 paint(
   [
-    v(ISLAND_W.x, ISLAND_W.y + ISLAND_W.h - 0.15),
-    v(ISLAND_W.x + ISLAND_W.w, ISLAND_W.y + ISLAND_W.h - 0.15),
+    v(U.x - R_IN + 0.15, 83),
+    ...arcPts(U, R_IN - 0.15, PI, 0, 24),
+    ...arcPts(O, R_OUT + 0.35, PI, 2 * PI, 24),
+    v(ISLAND_E.x + 0.15, H - 1),
   ],
   0.35,
   KERB,
   undefined,
   true,
 );
-{
-  const { x, y, w, h } = PYLON;
-  paint([v(x, y), v(x + w, y), v(x + w, y + h), v(x, y + h), v(x, y)], 0.35, KERB, undefined, true);
-}
+paint(
+  [
+    v(STRIPS[0].x + 0.15, H - 1),
+    ...arcPts(O, R_IN - 0.15, PI, 2 * PI, 24),
+    v(LANE_E - LANE / 2 - 0.15, H - 1),
+  ],
+  0.35,
+  KERB,
+  undefined,
+  true,
+);
 // perimeter: a hedge over the boundary wall
 paint(
   [v(0.5, 0.5), v(W - 0.5, 0.5), v(W - 0.5, H - 0.5), v(0.5, H - 0.5), v(0.5, 0.5)],
@@ -620,8 +632,8 @@ add({
 // order point: menu board and speaker post on the island facing the lane
 add({
   kind: 'sign',
-  x: ISLAND_W.x + ISLAND_W.w - 0.9,
-  y: 104,
+  x: LANE_W - LANE / 2 - 0.9,
+  y: 110,
   w: 4.5,
   h: 0.9,
   angle: PI / 2,
@@ -631,8 +643,8 @@ add({
 });
 add({
   kind: 'sign',
-  x: ISLAND_W.x + ISLAND_W.w - 0.6,
-  y: 108.5,
+  x: LANE_W - LANE / 2 - 0.6,
+  y: 114.5,
   w: 0.7,
   h: 0.5,
   angle: PI / 2,

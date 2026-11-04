@@ -24,7 +24,7 @@ import {
 } from './progress';
 import { PLAYER_MODELS } from './models';
 import { SETTINGS_KEY } from './settings';
-import { settingsLayout } from './ui/menu';
+import { settingsLayout, titleLayout } from './ui/menu';
 import { docks, docksRoute } from './maps/docks';
 import { tokyo } from './maps/tokyo';
 import { ENGINE_PROFILES } from './engine';
@@ -74,7 +74,7 @@ function setup(best = memBest()) {
     for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
   };
   const toRun = () => {
-    step({ confirm: true });
+    step({ confirm: true }, 2); // PLAY, then START on the option step
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
   };
   return { game, step, toRun, best };
@@ -88,7 +88,7 @@ describe('game', () => {
   it('goes title -> countdown -> run', () => {
     const { game, step } = setup();
     expect(game.view().hud.phase).toBe('title');
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     expect(game.view().hud.phase).toBe('countdown');
     expect(game.view().hud.countdown).toBeCloseTo(COUNTDOWN_SECONDS);
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
@@ -101,7 +101,7 @@ describe('game', () => {
     const press = (i: Partial<InputState>, n = 1) => {
       for (let k = 0; k < n; k++) game.update({ ...IDLE, ...i }, DT);
     };
-    press({ confirm: true });
+    press({ confirm: true }, 2);
     ui.mockClear(); // title confirm blip
     press({}, Math.round(COUNTDOWN_SECONDS / DT) + 5);
     expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'go']);
@@ -109,7 +109,7 @@ describe('game', () => {
 
   it('keeps the car frozen during countdown', () => {
     const { game, step } = setup();
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     step({ throttle: 1 }, 60);
     expect(game.view().hud.phase).toBe('countdown');
     expect(game.debug.car.pos).toEqual(garage.start.pos);
@@ -238,6 +238,7 @@ describe('game', () => {
     const game = createGame([garage], { ...audio, stop }, () => memBest());
     const press = (i: Partial<InputState>) => game.update({ ...IDLE, ...i }, DT);
     press({ confirm: true });
+    press({ confirm: true });
     stop.mockClear();
     press({ restart: true });
     expect(stop).toHaveBeenCalledTimes(1);
@@ -294,7 +295,7 @@ describe('top drift clips', () => {
     const step = (input: Partial<InputState> = {}, frames = 1) => {
       for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
     };
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     /** bank a combo worth `points`; returns its clip id */
     const bank = (points: number) => {
@@ -389,7 +390,7 @@ describe('finish awards and car pick', () => {
     const step = (input: Partial<InputState> = {}, frames = 1) => {
       for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
     };
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     game.debug.scoring.banked = 1e6; // well past 1st, finished far under par
     game.debug.floorIndex = garage.finish.floor;
@@ -413,6 +414,8 @@ describe('finish awards and car pick', () => {
     step({ confirm: true });
     const cars = r().chooser!.cars.map((c) => c.model);
     expect(cars).toEqual(Object.keys(PLAYER_MODELS)); // nothing unlocked yet
+    for (const c of r().chooser!.cars)
+      for (const v of Object.values(c.stats)) expect(v >= 0 && v <= 1).toBe(true);
     step({ right: true });
     expect(r().chooser!.row).toBe(1);
     step({ confirm: true });
@@ -644,7 +647,7 @@ describe('menu', () => {
 
   it('clears clutch state on pause resume', () => {
     const { game, step } = rig();
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     step({ throttle: 1, clutch: true }, 60);
     expect(game.debug.car.clutchHeld).toBe(true);
@@ -656,7 +659,7 @@ describe('menu', () => {
 
   it('paused: enter resumes, esc goes to the title', () => {
     const { game, step } = rig();
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     step({ pause: true });
     step({ confirm: true });
@@ -718,20 +721,18 @@ describe('main menu, garage, settings', () => {
 
   it('up/down wrap, enter opens garage and settings', () => {
     const { game, tap, row } = rig();
-    tap({ up: true });
-    expect(row()).toBe(6);
     expect(game.view().hud.menu!.rows.map((r) => r.label)).toEqual([
       'PLAY',
-      'PILLARS',
-      'DAILY',
       'MULTIPLAYER',
+      'DAILY',
       'GARAGE',
       'SETTINGS',
-      'USERNAME',
     ]);
+    tap({ up: true });
+    expect(row()).toBe(4);
     tap({ down: true });
     expect(row()).toBe(0);
-    for (let i = 0; i < 4; i++) tap({ down: true });
+    for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('garage');
     tap({ pause: true });
@@ -739,6 +740,28 @@ describe('main menu, garage, settings', () => {
     tap({ down: true });
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('settings');
+  });
+
+  it('title shortcuts: Q / LB daily, E / RB garage, ESC / START settings; pad B does nothing', () => {
+    const { game, tap, row } = rig();
+    const phase = () => game.view().hud.phase;
+    tap({ tabNext: true });
+    expect(phase()).toBe('garage');
+    tap({ pause: true });
+    expect([phase(), row()]).toEqual(['title', 3]);
+    tap({ pause: true }); // ESC
+    expect(phase()).toBe('settings');
+    tap({ pause: true });
+    expect([phase(), row()]).toEqual(['title', 4]);
+    tap({ pause: true, device: 'pad' }); // B
+    expect(phase()).toBe('title');
+    tap({ pause: true, confirm: true }); // START is pause + confirm
+    expect(phase()).toBe('settings');
+    tap({ pause: true });
+    tap({ tabPrev: true });
+    expect(phase()).toBe('countdown'); // the daily run
+    tap({ pause: true });
+    expect([phase(), row()]).toEqual(['title', 2]);
   });
 
   it('a generated username is saved once at startup; a stored one is kept', () => {
@@ -750,10 +773,22 @@ describe('main menu, garage, settings', () => {
     expect(kept.mem.get(SETTINGS_KEY)).toBe(JSON.stringify({ name: 'TOFU' }));
   });
 
+  /** settings › GAME › USERNAME */
+  const toUsername = (tap: (i: Partial<InputState>) => void) => {
+    tap({ pause: true });
+    tap({ tabPrev: true });
+    tap({ down: true });
+  };
+
   it('username: type, backspace, enter commits and saves', () => {
     const { game, tap, mem } = rig({ name: 'OLD' });
-    const value = () => game.view().hud.menu!.rows[6].value;
-    tap({ up: true });
+    const value = () => game.view().hud.menu!.rows[0].value;
+    toUsername(tap);
+    expect(game.view().hud.menu!.rows.map((r) => r.label)).toEqual([
+      'USERNAME',
+      'RESET BEST SCORES',
+      'BACK',
+    ]);
     expect(value()).toBe('OLD');
     tap({ confirm: true });
     expect(game.editing()).toBe(true);
@@ -762,7 +797,7 @@ describe('main menu, garage, settings', () => {
     expect(value()).toBe('OLD ');
     for (const k of ['Backspace', 'Backspace', 'Backspace', 'd', '-', ' ', 'k', '_', '9', 'Shift'])
       game.typeKey(k);
-    expect(game.debug.phase).toBe('title');
+    expect(game.debug.phase).toBe('settings');
     expect(value()).toMatch(/^DK_9[_ ]$/);
     for (let i = 0; i < 12; i++) game.typeKey('x');
     expect(value()).toMatch(/^DK_9X{8}[_ ]$/);
@@ -772,7 +807,7 @@ describe('main menu, garage, settings', () => {
     expect(JSON.parse(mem.get(SETTINGS_KEY)!).name).toBe('DK_9XXXXXXXX');
     tap({ confirm: true }); // the committing Enter, still latched: swallowed
     expect(game.editing()).toBe(false);
-    expect(game.debug.phase).toBe('title');
+    expect(game.debug.phase).toBe('settings');
     tap({ confirm: true });
     expect(game.editing()).toBe(true);
     for (let i = 0; i < 12; i++) game.typeKey('Backspace');
@@ -782,35 +817,36 @@ describe('main menu, garage, settings', () => {
 
   it('username: escape cancels and menu input is ignored while editing', () => {
     const { game, tap, row, mem } = rig({ name: 'OLD' });
-    tap({ up: true });
+    toUsername(tap);
     tap({ confirm: true });
     game.typeKey('w');
     tap({ up: true });
     tap({ down: true });
     tap({ confirm: true });
-    tap({ cheat: true });
+    tap({ tabNext: true });
     tap({ pause: true });
-    expect(row()).toBe(6);
+    expect(row()).toBe(1);
     expect(game.editing()).toBe(true);
-    expect(game.debug.phase).toBe('title');
-    expect(game.debug.cheat).toBe(false);
+    expect(game.debug.phase).toBe('settings');
+    expect(game.view().hud.menu!.tabs!.active).toBe(2);
     game.typeKey('Escape');
     expect(game.editing()).toBe(false);
     expect(game.playerName()).toBe('OLD');
     expect(mem.get(SETTINGS_KEY)).toBe(JSON.stringify({ name: 'OLD' }));
     tap({ pause: true }); // the cancelling Escape's update: swallowed
+    expect(game.debug.phase).toBe('settings');
     tap({ down: true });
-    expect(row()).toBe(0);
+    expect(row()).toBe(2);
   });
 
   it('username: a pad press shows a note instead of editing', () => {
     const { game, tap } = rig({ name: 'OLD' });
-    tap({ up: true });
+    toUsername(tap);
     tap({ confirm: true, device: 'pad' });
     expect(game.editing()).toBe(false);
-    expect(game.view().hud.menu!.rows[6].value).toBe('PRESS ENTER ON KEYBOARD');
+    expect(game.view().hud.menu!.rows[0].value).toBe('PRESS ENTER ON KEYBOARD');
     game.update(IDLE, 3);
-    expect(game.view().hud.menu!.rows[6].value).toBe('OLD');
+    expect(game.view().hud.menu!.rows[0].value).toBe('OLD');
   });
 
   it('left/right only picks the map on the PLAY row', () => {
@@ -824,7 +860,7 @@ describe('main menu, garage, settings', () => {
   it('garage: cars and paint cycle, enter persists, esc reverts', () => {
     const { game, tap, mem } = rig();
     const g = () => game.view().hud.menu!.garage!;
-    for (let i = 0; i < 4; i++) tap({ down: true });
+    for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
     tap({ confirm: true });
     tap({ right: true });
     expect(g().model).toBe('civic');
@@ -833,12 +869,12 @@ describe('main menu, garage, settings', () => {
     tap({ right: true });
     expect(g().color).toBe(PLAYER_MODELS.civic.colors[1]);
     tap({ pause: true }); // revert
-    expect(game.view().hud.menu!.rows[4].value).toBe(PLAYER_MODELS.mx5.name);
+    expect(game.view().hud.menu!.rows[3].value).toBe(PLAYER_MODELS.mx5.name);
     tap({ confirm: true });
     tap({ left: true });
     expect(g().model).toBe('wrx');
     tap({ confirm: true });
-    expect(game.view().hud.menu!.rows[4].value).toBe(PLAYER_MODELS.wrx.name);
+    expect(game.view().hud.menu!.rows[3].value).toBe(PLAYER_MODELS.wrx.name);
     expect(JSON.parse(mem.get(SETTINGS_KEY)!)).toMatchObject({
       car: 'wrx',
       color: PLAYER_MODELS.wrx.colors[0],
@@ -852,7 +888,7 @@ describe('main menu, garage, settings', () => {
     const { game, tap, mem } = rig(undefined, undefined, progress);
     const g = () => game.view().hud.menu!.garage!;
     const open = () => {
-      for (let i = 0; i < 4; i++) tap({ down: true });
+      for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
       tap({ confirm: true });
     };
     open();
@@ -881,7 +917,7 @@ describe('main menu, garage, settings', () => {
 
   it('garage: T toggles the tune, enter saves it and applies the stat boost', () => {
     const { game, tap, mem } = rig();
-    for (let i = 0; i < 4; i++) tap({ down: true });
+    for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
     tap({ confirm: true });
     tap({ tune: true });
     expect(game.view().hud.menu!.garage!.tune).toBe('performance');
@@ -903,7 +939,7 @@ describe('main menu, garage, settings', () => {
       game.update({ ...IDLE, ...i }, DT);
       game.update(IDLE, DT);
     };
-    for (let i = 0; i < 4; i++) step({ down: true });
+    for (let i = 0; i < 3; i++) step({ down: true }); // GARAGE
     step({ confirm: true });
     update.mockClear();
     game.update({ ...IDLE, rev: true }, 0.5);
@@ -917,7 +953,7 @@ describe('main menu, garage, settings', () => {
 
   it('garage stat bars are normalised 0..1', () => {
     const { game, tap } = rig();
-    for (let i = 0; i < 4; i++) tap({ down: true });
+    for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
     tap({ confirm: true });
     for (let i = 0; i < 11; i++) {
       tap({ right: true });
@@ -928,8 +964,7 @@ describe('main menu, garage, settings', () => {
 
   it('settings change volumes, shake and persist', () => {
     const { game, a, tap, mem } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ down: true });
     tap({ left: true });
@@ -960,8 +995,7 @@ describe('main menu, garage, settings', () => {
   it('music row toggles the track and persists', () => {
     const { game, a, tap, mem } = rig();
     expect(a.setTrack).toHaveBeenLastCalledWith('phonk');
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     tap({ right: true });
@@ -972,8 +1006,7 @@ describe('main menu, garage, settings', () => {
 
   it('clip quality row cycles and persists', () => {
     const { game, tap, mem } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ right: true }); // VIDEO tab
     for (let i = 0; i < 2; i++) tap({ down: true });
@@ -993,8 +1026,7 @@ describe('main menu, garage, settings', () => {
     const menu = () => game.view().hud.menu!;
     const Q = { tabPrev: true };
     const E = { tabNext: true };
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     expect(menu().tabs).toEqual({ names: ['AUDIO', 'VIDEO', 'GAME'], active: 0 });
     expect(menu().rows).toHaveLength(8);
@@ -1014,8 +1046,8 @@ describe('main menu, garage, settings', () => {
     expect(menu().tabs!.active).toBe(2);
     expect(row()).toBe(1);
     tap({ up: true });
-    tap({ up: true }); // wraps to BACK
-    expect(row()).toBe(2);
+    tap({ up: true }); // wraps to BACK (GAME: USERNAME, RESET)
+    expect(row()).toBe(3);
     tap(Q);
     expect(menu().tabs!.active).toBe(1);
     expect(menu().rows[row() - 1].label).toBe('BACK');
@@ -1023,8 +1055,7 @@ describe('main menu, garage, settings', () => {
 
   it('menu theme cycles, persists and reaches the view', () => {
     const { game, tap, mem } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ right: true });
     tap({ down: true });
@@ -1052,10 +1083,29 @@ describe('main menu, garage, settings', () => {
     }
   });
 
+  it('title layout: side cards on wide windows, edge tabs on narrow, portrait or square ones', () => {
+    const lay = (w: number, h: number) => titleLayout(w, Math.min(w, h) / 100);
+    expect(lay(1920, 1080).cards).toBe(true); // 16:9
+    expect(lay(1024, 768).cards).toBe(true); // 4:3 just fits
+    expect(lay(1000, 800).cards).toBe(false); // 5:4
+    expect(lay(400, 800).cards).toBe(false); // portrait
+    expect(lay(300, 300).cards).toBe(false);
+    for (const [w, h] of [
+      [1920, 1080],
+      [1024, 768],
+    ]) {
+      const u = Math.min(w, h) / 100;
+      const { pw } = lay(w, h);
+      // column + two 30u cards with 6u gaps stay on screen
+      expect(w / 2 - pw / 2 - 6 * u - 30 * u).toBeGreaterThanOrEqual(0);
+    }
+    const { pw } = lay(400, 800);
+    expect(400 / 2 - pw / 2).toBeGreaterThanOrEqual(6 * 4); // clear of the 6u edge tabs
+  });
+
   it('MUSIC row cycles two tracks and labels an empty library', () => {
     const { game, a, tap } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     for (let i = 0; i < 5; i++) tap({ down: true });
     const value = () => game.view().hud.menu!.rows[4].value;
@@ -1071,14 +1121,14 @@ describe('main menu, garage, settings', () => {
 
   it('skip works in a run but not in settings', () => {
     const { game, a, tap } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ skip: true });
     expect(a.skipTrack).not.toHaveBeenCalled();
     tap({ pause: true });
-    for (let i = 0; i < 5; i++) tap({ up: true });
-    tap({ confirm: true }); // PLAY -> countdown
+    for (let i = 0; i < 4; i++) tap({ up: true });
+    tap({ confirm: true }); // PLAY -> option step
+    tap({ confirm: true }); // START -> countdown
     tap({ skip: true });
     expect(a.skipTrack).toHaveBeenCalledTimes(1);
     expect(game.view().hud.phase).not.toBe('settings');
@@ -1086,8 +1136,7 @@ describe('main menu, garage, settings', () => {
 
   it('esc on a volume row leaves settings', () => {
     const { game, tap } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ down: true });
     tap({ pause: true });
@@ -1101,8 +1150,7 @@ describe('main menu, garage, settings', () => {
       clear,
       size: async () => '1 / 500 MB',
     });
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     for (let i = 0; i < 7; i++) tap({ down: true });
     tap({ confirm: true });
@@ -1117,12 +1165,12 @@ describe('main menu, garage, settings', () => {
 
   it('reset best scores needs a second enter', () => {
     const { game, tap, stores } = rig();
-    tap({ up: true });
-    tap({ up: true });
+    tap({ up: true }); // SETTINGS
     tap({ confirm: true });
     tap({ right: true });
     tap({ right: true }); // GAME tab
     tap({ down: true });
+    tap({ down: true }); // RESET, under USERNAME
     tap({ confirm: true });
     expect(stores[0].get()).toBe(50);
     tap({ confirm: true });
@@ -1160,6 +1208,7 @@ describe('main menu, garage, settings', () => {
     const { game, a, tap } = rig({ car: 'supra', color: '#ff7a00' });
     expect(a.music).toHaveBeenLastCalledWith(true); // menu music from the start
     tap({ confirm: true });
+    tap({ confirm: true }); // START on the PILLARS step
     expect(a.music).toHaveBeenLastCalledWith(true);
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS.supra.stats);
     for (let i = 0; i < 200; i++) game.update(IDLE, DT);
@@ -1271,12 +1320,12 @@ describe('main menu, garage, settings', () => {
 
     it('pause or blur during countdown returns to title and bumps runId', () => {
       const { game, step } = setup();
-      step({ confirm: true });
+      step({ confirm: true }, 2);
       const id = game.debug.runId;
       step({ pause: true });
       expect(game.debug.phase).toBe('title');
       expect(game.debug.runId).toBeGreaterThan(id);
-      step({ confirm: true });
+      step({ confirm: true }, 2);
       const id2 = game.debug.runId;
       game.pause();
       expect(game.debug.phase).toBe('title');
@@ -1330,8 +1379,7 @@ describe('device, rpm and attract', () => {
     expect(Math.hypot(r2.car.pos.x - from.x, r2.car.pos.y - from.y)).toBeGreaterThan(5);
     expect(r2.runId).toBeLessThan(0);
     // settings keeps it running
-    step({ up: true });
-    step({ up: true });
+    step({ up: true }); // SETTINGS
     step({ confirm: true });
     expect(game.view().hud.menu!.screen).toBe('settings');
     const before = { ...game.view().render.car.pos };
@@ -1348,8 +1396,8 @@ describe('device, rpm and attract', () => {
     expect(hit).not.toHaveBeenCalled();
     // starting a run: real state is clean and the attract car is gone
     step({ pause: true });
-    step({ down: true }, 2); // SETTINGS -> USERNAME -> PLAY
-    step({ confirm: true });
+    step({ down: true }); // SETTINGS -> PLAY
+    step({ confirm: true }, 2); // PLAY, START
     const v = game.view();
     expect(v.hud.phase).toBe('countdown');
     expect(v.render.map).toBe(garage);
@@ -1364,8 +1412,7 @@ describe('device, rpm and attract', () => {
 
   it('LB/RB tab presses with clutch held in settings do not reach the run', () => {
     const { game, step, toRun } = setup();
-    step({ up: true });
-    step({ up: true });
+    step({ up: true }); // SETTINGS
     step({ confirm: true });
     step({ tabNext: true, clutch: true });
     step({ tabPrev: true, clutch: true });
@@ -1384,7 +1431,7 @@ describe('tokyo traffic', () => {
       for (let i = 0; i < n; i++) game.update({ ...IDLE, ...input }, DT);
     };
     step({ right: true });
-    step({ confirm: true });
+    step({ confirm: true }, 2);
     return { game, step, hit };
   };
 
@@ -1497,7 +1544,8 @@ describe('map options', () => {
       game.update(IDLE, DT);
     };
     const toRun = () => {
-      tap({ confirm: true });
+      tap({ confirm: true }); // PLAY: the option step
+      tap({ confirm: true }); // START
       game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
     };
     const menu = () => game.view().hud.menu!;
@@ -1507,36 +1555,46 @@ describe('map options', () => {
   const pillars = (m: GameMap) =>
     m.floors.flatMap((f) => f.solids).filter((s) => s.kind === 'pillar');
 
-  it('the title shows TRAFFIC / PILLARS under PLAY only where the map has it; toggles and saves', () => {
+  it('PLAY opens a TRAFFIC / PILLARS step where the map has one; toggles, saves, START runs', () => {
     const { game, tap, menu, saved } = rig([tokyo, garage, docks, testpad]);
-    expect(menu().rows[1]).toEqual({ label: 'TRAFFIC', value: 'ON' });
-    tap({ right: true });
-    expect(menu().rows[1]).toEqual({ label: 'PILLARS', value: 'ON' });
-    tap({ right: true });
-    expect(menu().rows[1]).toEqual({ label: 'PILLARS', value: 'ON' });
-    tap({ right: true });
     expect(menu().rows.map((r) => r.label)).toEqual([
       'PLAY',
-      'DAILY',
       'MULTIPLAYER',
+      'DAILY',
       'GARAGE',
       'SETTINGS',
-      'USERNAME',
     ]);
-    tap({ left: true });
-    tap({ down: true });
+    tap({ confirm: true });
+    expect(menu()).toMatchObject({
+      screen: 'mapoption',
+      row: 1, // on START
+      selected: 0,
+      rows: [{ label: 'TRAFFIC', value: '◀ ON ▶' }, { label: 'START' }],
+    });
+    tap({ pause: true }); // back
+    expect(menu()).toMatchObject({ screen: 'title', row: 0 });
     tap({ right: true });
-    expect(menu().rows[1].value).toBe('OFF');
-    expect(menu().selected).toBe(2);
+    tap({ right: true });
+    tap({ confirm: true });
+    expect(menu().rows[0]).toEqual({ label: 'PILLARS', value: '◀ ON ▶' });
+    tap({ up: true });
+    tap({ right: true });
+    expect(menu().rows[0].value).toBe('◀ OFF ▶');
     expect(saved()).toEqual({ [docks.name]: false });
     tap({ confirm: true });
-    expect(game.debug.phase).toBe('title');
-    expect(menu().rows[1].value).toBe('ON');
+    expect(menu().rows[0].value).toBe('◀ ON ▶');
     expect(saved()).toEqual({ [docks.name]: true });
-    tap({ up: true });
-    tap({ right: true }); // back on PLAY: the row goes with the map
-    expect(menu().row).toBe(0);
-    expect(menu().rows[1].label).toBe('DAILY');
+    tap({ down: true });
+    tap({ confirm: true }); // START
+    expect(game.debug.phase).toBe('countdown');
+    expect(game.view().render.map).toBe(docks);
+  });
+
+  it('PLAY on a map without an option starts the race directly', () => {
+    const { game, tap } = rig([testpad, garage]);
+    tap({ confirm: true });
+    expect(game.debug.phase).toBe('countdown');
+    expect(game.view().render.map).toBe(testpad);
   });
 
   it('TRAFFIC OFF: the run keeps pedestrians but has no cars', () => {
@@ -1608,7 +1666,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
     };
     const g = () => game.view().hud.menu!.garage!;
     const toGarage = () => {
-      for (let i = 0; i < 4; i++) tap({ down: true });
+      for (let i = 0; i < 3; i++) tap({ down: true }); // GARAGE
       tap({ confirm: true });
     };
     const reload = () =>
@@ -1639,7 +1697,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
     expect(g().model).toBe('rx8');
     tap({ confirm: true });
     expect(game.view().hud.phase).toBe('title');
-    expect(game.view().hud.menu!.rows[4].value).toBe(PLAYER_MODELS.rx8.name);
+    expect(game.view().hud.menu!.rows[3].value).toBe(PLAYER_MODELS.rx8.name);
     expect(JSON.parse(mem.get(PROGRESS_KEY)!)).toMatchObject({
       starterChosen: true,
       unlocked: ['rx8'],
@@ -1684,7 +1742,7 @@ describe('progression: starter, locks, car picks, cheat', () => {
 
   it('a saved locked car falls back to the starter', () => {
     const { game } = rig(started('180sx'), { car: 'supra', color: '#ff7a00' });
-    expect(game.view().hud.menu!.rows[4].value).toBe(PLAYER_MODELS['180sx'].name);
+    expect(game.view().hud.menu!.rows[3].value).toBe(PLAYER_MODELS['180sx'].name);
     expect(game.debug.car.stats).toEqual(PLAYER_MODELS['180sx'].stats);
   });
 
@@ -1716,7 +1774,9 @@ describe('progression: starter, locks, car picks, cheat', () => {
       t({ right: true });
     };
     const raceLook = (game: ReturnType<typeof createGame>) => {
+      while (game.view().hud.menu!.row !== 0) game.update({ ...IDLE, down: true }, DT);
       game.update({ ...IDLE, confirm: true }, DT); // PLAY
+      game.update({ ...IDLE, confirm: true }, DT); // START on the PILLARS step
       game.update(IDLE, DT);
       return game.view().render.player.look;
     };
@@ -1828,15 +1888,19 @@ describe('daily and legend runs', () => {
     return { game, tap, start, finish, prog };
   };
 
-  it('title shows the DAILY row with map, target and streak; positions replace medals', () => {
+  it('title shows the DAILY card with map, target and streak; positions replace medals', () => {
     const { game, prog } = rig(plain);
     const d = dailyFor(plain, maps);
     const m = game.view().hud.menu!;
-    expect(m.rows[2]).toEqual({
+    const target = d.target.toLocaleString('en-US');
+    expect(m.rows[2]).toEqual({ label: 'DAILY', value: `${d.map.name} · ${target}` });
+    expect(m.daily).toEqual({
       label: 'DAILY',
-      value: `${d.map.name} · ${d.target.toLocaleString('en-US')}`,
+      map: d.map.name,
+      target,
+      streak: 0,
+      cleared: false,
     });
-    expect(m.note).toBe('STREAK 0');
     expect(m.rows[0].value).toBe('◀ B2 MEET ▶');
     prog.results['B2 MEET'] = { position: 2, score: 1, time: 1 };
     expect(game.view().hud.menu!.rows[0].value).toBe('◀ B2 MEET ▶ 2ND');
@@ -1853,7 +1917,7 @@ describe('daily and legend runs', () => {
     expect(prog.cosmetics).toEqual([r.daily!.reward]);
     expect(prog.daily).toMatchObject({ lastClear: plain, streak: 1 });
     tap({ pause: true }); // results -> title
-    expect(game.view().hud.menu!.note).toBe('STREAK 1 · CLEARED');
+    expect(game.view().hud.menu!.daily).toMatchObject({ streak: 1, cleared: true });
     start();
     expect(finish(d.target).daily!.reward).toBeUndefined();
     expect(prog.cosmetics.length).toBe(1);
@@ -1900,7 +1964,7 @@ describe('daily and legend runs', () => {
     expect(ok.daily).toMatchObject({ cleared: true, reward: 'fortune-orange' });
     expect(prog.skins).toEqual(['fortune-orange']);
     tap({ pause: true });
-    expect(game.view().hud.menu!.rows[4].value).toBe(PLAYER_MODELS.civic.name);
+    expect(game.view().hud.menu!.rows[3].value).toBe(PLAYER_MODELS.civic.name);
   });
 });
 
@@ -1986,22 +2050,32 @@ describe('multiplayer entry and lobby', () => {
 
   it('MULTIPLAYER row toggles HOST / JOIN; pad or no host shows a note', () => {
     const p = player('HOSTY', null, 'host');
-    for (let i = 0; i < 3; i++) p.tap({ down: true });
-    expect(p.menu().rows[3]).toEqual({ label: 'MULTIPLAYER', value: '◀ HOST ▶' });
+    p.tap({ down: true });
+    expect(p.menu().rows[1]).toEqual({ label: 'MULTIPLAYER', value: '◀ HOST ▶' });
     p.tap({ right: true });
-    expect(p.menu().rows[3].value).toBe('◀ JOIN ▶');
+    expect(p.menu().rows[1].value).toBe('◀ JOIN ▶');
     expect(p.menu().selected).toBe(0); // the map is untouched
     p.tap({ confirm: true, device: 'pad' });
     expect(p.open).not.toHaveBeenCalled();
-    expect(p.menu().rows[3].value).toBe('USE KEYBOARD + MOUSE');
+    expect(p.menu().rows[1].value).toBe('USE KEYBOARD + MOUSE');
     p.tap({ confirm: true, device: 'kb' });
     expect(p.open).toHaveBeenCalledWith('join', expect.any(Function));
     expect(p.game.debug.phase).toBe('title'); // cancelled
 
     const solo = createGame([garage], audio, () => memBest());
-    for (const i of [{ down: true }, { down: true }, { down: true }, { confirm: true }])
-      solo.update({ ...IDLE, ...i }, DT);
-    expect(solo.view().hud.menu!.rows[3].value).toBe('USE KEYBOARD + MOUSE');
+    for (const i of [{ down: true }, { confirm: true }]) solo.update({ ...IDLE, ...i }, DT);
+    expect(solo.view().hud.menu!.rows[1].value).toBe('USE KEYBOARD + MOUSE');
+  });
+
+  it('M / pad Y opens multiplayer from any title row', () => {
+    const p = player('HOSTY', null, 'host');
+    p.tap({ up: true }); // SETTINGS
+    p.tap({ mp: true });
+    expect(p.open).toHaveBeenCalledWith('host', expect.any(Function));
+    expect(p.menu().row).toBe(1);
+    p.tap({ mp: true, device: 'pad' });
+    expect(p.menu().rows[1].value).toBe('USE KEYBOARD + MOUSE');
+    expect(p.open).toHaveBeenCalledTimes(1);
   });
 
   it('host and guest meet in the lobby, pick a map, ready up and start together', () => {
@@ -2111,11 +2185,11 @@ describe('multiplayer entry and lobby', () => {
     guest.tap({ pause: true });
     expect(guest.game.debug.phase).toBe('title');
     expect(guest.menu().toast).toBeUndefined();
-    expect(guest.menu().row).toBe(3);
+    expect(guest.menu().row).toBe(1);
     host.tap({});
     expect(host.game.debug.phase).toBe('title');
     expect(host.menu().toast).toBe('GUESTY LEFT');
-    expect(host.menu().row).toBe(3);
+    expect(host.menu().row).toBe(1);
   });
 
   describe('lobby garage', () => {
@@ -2187,7 +2261,7 @@ describe('multiplayer entry and lobby', () => {
       guest.tap({});
       expect(guest.game.debug.phase).toBe('title');
       expect(guest.menu().toast).toBe('HOSTY LEFT');
-      expect(guest.menu().row).toBe(3);
+      expect(guest.menu().row).toBe(1);
     });
   });
 
@@ -2389,7 +2463,7 @@ describe('multiplayer entry and lobby', () => {
       step({}, 40);
       step({ confirm: true });
       expect(host.game.debug.phase).toBe('title');
-      expect(host.menu().row).toBe(3);
+      expect(host.menu().row).toBe(1);
     });
 
     it('rematch: guest confirm waits, host confirm takes both back to the lobby', () => {
@@ -2470,6 +2544,33 @@ describe('multiplayer entry and lobby', () => {
       expect(at(guest)).toBe('READY');
     });
   });
+
+  describe('time-up edge cases (multiplayer)', () => {
+    it('no last-seconds beeps while paused', () => {
+      const p = pair();
+      const { host, guest } = p;
+      host.enter('host');
+      guest.enter('join');
+      host.tap({});
+      host.to('READY');
+      host.tap({ confirm: true });
+      guest.to('READY');
+      guest.tap({ confirm: true });
+      host.to('START');
+      host.game.update({ ...IDLE, confirm: true }, DT);
+      for (let i = 0; i < Math.round((START_DELAY_MS / 1000 + COUNTDOWN_SECONDS) / DT) + 2; i++) {
+        guest.game.update(IDLE, DT);
+        host.game.update(IDLE, DT);
+      }
+      guest.tap({ pause: true });
+      expect(guest.game.debug.phase).toBe('paused');
+      guest.game.debug.time = garage.parTime * 1.3 - 2.5;
+      const ui = vi.spyOn(audio, 'ui');
+      for (let i = 0; i < Math.ceil(3 / DT); i++) guest.game.update(IDLE, DT);
+      expect(ui).not.toHaveBeenCalled();
+      ui.mockRestore();
+    });
+  });
 });
 
 describe('time limit', () => {
@@ -2497,7 +2598,7 @@ describe('time limit', () => {
     const step = (input: Partial<InputState> = {}, frames = 1) => {
       for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
     };
-    step({ confirm: true });
+    step({ confirm: true }, 2); // PLAY, then START on the option step
     step({}, Math.round(COUNTDOWN_SECONDS / DT));
     const finishNow = () => {
       game.debug.floorIndex = map.finish.floor;
@@ -2643,5 +2744,120 @@ describe('time limit', () => {
     expect(ui.mock.calls.map((c) => c[0])).toEqual(['count', 'count', 'count', 'count', 'count']);
     expect(game.view().hud.phase).toBe('run');
     expect(game.view().hud.timeUp).toBe(true);
+  });
+});
+
+describe('top drifts with late (not counted) drifts', () => {
+  function rig() {
+    const kept = new Set<number>();
+    const clips: ClipRecorder = {
+      begin: vi.fn(),
+      mark: vi.fn((id: number) => void kept.add(id)),
+      keep: vi.fn(),
+      drop: vi.fn((id: number) => void kept.delete(id)),
+      pause: vi.fn(),
+      stop: vi.fn(),
+      clear: vi.fn(() => kept.clear()),
+      has: (id) => kept.has(id),
+      save: vi.fn(),
+    };
+    const game = createGame([garage], audio, () => memBest(), undefined, clips, undefined, {
+      ...defaultProgress(),
+      starterChosen: true,
+    });
+    const step = (frames = 1, confirm = false) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, confirm }, DT);
+    };
+    step(2, true); // PLAY, then START on the option step
+    step(Math.round(COUNTDOWN_SECONDS / DT));
+    const bank = (points: number) => {
+      game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
+      step(10);
+      return vi.mocked(clips.mark).mock.lastCall![0];
+    };
+    const lock = () => {
+      game.debug.time = garage.parTime * 1.3 + 1;
+      step(2);
+    };
+    const finish = () => {
+      game.debug.floorIndex = garage.finish.floor;
+      game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+      step();
+      return game.view().hud.results!.drifts.map((d) => [d.amount, d.late]);
+    };
+    return { clips, bank, lock, finish };
+  }
+
+  it('a bigger late drift never pushes out 3 counted ones', () => {
+    const { clips, bank, lock, finish } = rig();
+    bank(100);
+    bank(200);
+    bank(300);
+    lock();
+    const late = bank(900);
+    expect(clips.drop).toHaveBeenCalledWith(late);
+    expect(finish()).toEqual([
+      [300, false],
+      [200, false],
+      [100, false],
+    ]);
+  });
+
+  it('shows a late drift when fewer than 3 are counted', () => {
+    const { bank, lock, finish } = rig();
+    bank(100);
+    lock();
+    bank(900);
+    expect(finish()).toEqual([
+      [100, false],
+      [900, true],
+    ]);
+  });
+});
+
+describe('time-up edge cases', () => {
+  const LIMIT = garage.parTime * 1.3;
+  function rig() {
+    const game = createGame([garage], audio, () => memBest(), undefined, undefined, undefined, {
+      ...defaultProgress(),
+      starterChosen: true,
+    });
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true }, 2); // PLAY, then START on the option step
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    return { game, step };
+  }
+  /** car against the north wall, driving into it */
+  const slam = (game: ReturnType<typeof rig>['game']) => {
+    game.debug.car.pos = { x: 70, y: 5 };
+    game.debug.car.angle = -Math.PI / 2;
+    game.debug.car.vel = { x: 0, y: -12 };
+  };
+
+  it('a combo that banks in the frame the time runs out counts', () => {
+    const { game, step } = rig();
+    game.debug.scoring.combo = { points: 3000, multiplier: 1, tricks: ['DRIFT'], grace: 0.001 };
+    game.debug.time = LIMIT - DT / 2;
+    step();
+    expect(game.debug.scoring.banked).toBe(3000);
+    expect(game.view().hud).toMatchObject({ timeUp: true, score: 3000, late: 0 });
+    expect(game.view().hud.popups.find((p) => p.kind === 'bank')!.late).toBe(false);
+  });
+
+  it('wall hits after time up are not counted', () => {
+    const { game, step } = rig();
+    slam(game);
+    step({ throttle: 1 }, 20);
+    step();
+    expect(game.debug.wallHits).toBeGreaterThan(0); // the setup does hit
+    const n = game.debug.wallHits;
+    game.debug.time = LIMIT + 1;
+    step();
+    slam(game);
+    step({ throttle: 1 }, 20);
+    step();
+    expect(game.debug.wallHits).toBe(n);
   });
 });

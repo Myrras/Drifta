@@ -270,6 +270,15 @@ describe('createInput pad edge tracking', () => {
       [false, false],
     ]);
   });
+  it('mp edge fires once for M and pad Y (button 3)', () => {
+    const { w, buttons, state, input } = setup();
+    w.dispatchEvent(Object.assign(new Event('keydown'), { code: 'KeyM', repeat: false }));
+    w.dispatchEvent(Object.assign(new Event('keyup'), { code: 'KeyM' }));
+    expect([input.poll().mp, input.poll().mp]).toEqual([true, false]);
+    buttons[3].pressed = true;
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    expect([input.poll().mp, input.poll().mp]).toEqual([true, false]);
+  });
   it('pad B (button 1) fires pause once', () => {
     const { buttons, state, input } = setup();
     buttons[1].pressed = true;
