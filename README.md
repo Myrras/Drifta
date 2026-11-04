@@ -73,7 +73,7 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
   </tr>
   <tr>
     <td><img src="docs/screenshots/results.png" alt="Results"><br>Results summary</td>
-    <td><img src="docs/screenshots/lobby.png" alt="Multiplayer lobby"><br>Multiplayer lobby and map options</td>
+    <td><img src="docs/screenshots/lobby.png" alt="Map options"><br>Map options</td>
   </tr>
 </table>
 
