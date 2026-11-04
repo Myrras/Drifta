@@ -1032,7 +1032,7 @@ const EDGE = 'rgba(255,255,255,0.12)';
 
 /** Big numerals: Dela Gothic in arcade, the masthead face in VHS (as the menus do). */
 const disp = (th: Theme, px: number, italic = false): string =>
-  `${italic ? 'italic ' : ''}400 ${th.id === 'vhs' ? px * 1.12 : px}px ${th.id === 'vhs' ? MASTHEAD : DELA}`;
+  `${italic ? 'italic ' : ''}400 ${px}px ${th.id === 'vhs' ? MASTHEAD : DELA}`;
 
 /** m:ss.s */
 function fmtT1(sec: number): string {
@@ -1226,7 +1226,7 @@ function drawTally(
   ctx.save();
   ctx.translate(sx, sy);
 
-  const cw = Math.min(width - 12 * u, 166 * u);
+  const cw = Math.min(width - 12 * u, 156 * u); // clear of the theme vignette
   const x0 = (width - cw) / 2;
   const oy = Math.max(0, (height - 100 * u) / 2); // the layout is 100u tall; centre it
   const Y = (y: number) => oy + y * u;
@@ -1334,11 +1334,14 @@ function drawTally(
   ctx.letterSpacing = `${0.2 * 2.7 * u}px`;
   const timeW = cssWidth(ctx, 'TIME', th.font(700, 2.7 * u));
   ctx.restore();
-  text(ctx, sub, rx + timeW + 1.2 * u, timeY + 0.2 * u, 2.3 * u, th.dim, {
-    css: th.font(600, 2.3 * u),
-    stroke: null,
-    alpha: timeA,
-  });
+  const multW = cssWidth(ctx, `×${ti.mult.toFixed(2)}`, numF);
+  const subPx = fitPx(ctx, sub, (q) => th.font(600, q), 2.3 * u, rw - timeW - multW - 3.2 * u);
+  if (subPx > 1.2 * u)
+    text(ctx, sub, rx + timeW + 1.2 * u, timeY + 0.2 * u, subPx, th.dim, {
+      css: th.font(600, subPx),
+      stroke: null,
+      alpha: timeA,
+    });
   const multS = `×${f.mult.toFixed(2)}`;
   const ma = t - p.multEnd;
   const mk = clamp01((t - p.multStart) / (p.multEnd - p.multStart));
@@ -1350,7 +1353,7 @@ function drawTally(
     scale: ma >= 0 ? lerp(2.2, 1, easeOutBack(ma / 0.4)) : 1 + 0.35 * easeOutCubic(mk),
     glow: ma >= 0 ? glow(th.accent) : undefined,
   });
-  const multCx = rx + rw - cssWidth(ctx, `×${ti.mult.toFixed(2)}`, numF) / 2;
+  const multCx = rx + rw - multW / 2;
 
   // ---- dashed rule
   ctx.save();
@@ -1612,7 +1615,7 @@ function drawSummary(
       ctx,
       head,
       cx,
-      top + 1.2 * u,
+      top + (th.id === 'vhs' ? -0.4 : 1.2) * u, // the masthead face rides higher
       hp,
       r.timeUp ? RED : dl ? (dl.cleared ? GREEN : RED) : th.dim,
       th,
