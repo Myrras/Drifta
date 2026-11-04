@@ -10,6 +10,8 @@ import {
 import type { Link, LinkState, Msg } from './net/protocol';
 import { START_DELAY_MS } from './net/session';
 import { ghostKey, serialize } from './ghost';
+import { createInput } from './input';
+import { eventsBetween, planTally } from './tally';
 import { garage, garageRoute } from './maps/garage';
 import { CAR_LENGTH, collide } from './collision';
 import { testpad } from './maps/testpad';
@@ -31,6 +33,7 @@ import { ENGINE_PROFILES } from './engine';
 import { dailyFor, isLegendDay } from './daily';
 
 const noop = () => {};
+const LOCK = Math.ceil(0.5 / DT); // frames past the results lockout
 const audio: AudioLike = {
   resume: noop,
   update: noop,
@@ -62,6 +65,12 @@ const IDLE: InputState = {
   right: false,
   up: false,
   down: false,
+};
+
+/** run the tally out and continue to the summary (the lockout restarts) */
+const toSummary = (game: ReturnType<typeof createGame>) => {
+  game.update(IDLE, 20);
+  game.update({ ...IDLE, confirm: true }, DT);
 };
 
 function memBest(v = 0): BestStore {
@@ -126,12 +135,13 @@ describe('game', () => {
   it('finishes on the last floor and stores a new best', () => {
     const { game, step, toRun, best } = setup();
     toRun();
+    game.debug.scoring.banked = 100;
     game.debug.floorIndex = garage.finish.floor;
     game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
     const r = game.view().hud.results!;
     expect(game.view().hud.phase).toBe('results');
-    expect(r.total).toBeGreaterThanOrEqual(0);
+    expect(r.total).toBeGreaterThanOrEqual(100);
     expect(r.newBest).toBe(true);
     expect(best.get()).toBe(r.total);
   });
@@ -260,6 +270,7 @@ describe('game', () => {
     game.debug.floorIndex = garage.finish.floor;
     game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
+    toSummary(game);
     step({ confirm: true }, 10);
     expect(game.view().hud.phase).toBe('results');
     step({}, Math.ceil(0.5 / DT));
@@ -344,6 +355,7 @@ describe('top drift clips', () => {
     bank(300);
     const second = bank(200);
     finish();
+    toSummary(game);
     step({ save: true });
     expect(clips.save).not.toHaveBeenCalled();
     step({}, Math.ceil(0.5 / DT));
@@ -396,6 +408,7 @@ describe('finish awards and car pick', () => {
     game.debug.floorIndex = garage.finish.floor;
     game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
     step();
+    toSummary(game);
     step({}, Math.ceil(0.5 / DT));
     const r = () => game.view().hud.results!;
     return { game, step, r, prog: () => loadProgress(storage) };
@@ -1955,8 +1968,8 @@ describe('daily and legend runs', () => {
     const bad = finish(1e6);
     expect(bad.daily).toMatchObject({ kind: 'legend', cleared: false, wallHits: 1 });
     expect(prog.skins).toEqual([]);
+    toSummary(game);
     game.update(IDLE, 1); // past the results lockout
-    void 0;
     tap({ confirm: true }); // restart the same legend
     game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
     expect(game.debug.wallHits).toBe(0);
@@ -2460,10 +2473,36 @@ describe('multiplayer entry and lobby', () => {
       v = host.game.view();
       expect(v.hud.results!.rival!.total).toBeNull();
       expect(v.hud.mp!.waiting).toBe(false);
+      step({}, 600); // tally runs out
+      step({ confirm: true });
       step({}, 40);
       step({ confirm: true });
       expect(host.game.debug.phase).toBe('title');
       expect(host.menu().row).toBe(1);
+    });
+
+    it('finish sends the multiplied total; a rematch pulls a guest still in the tally to the lobby', () => {
+      const { host, guest, lockstep, toRun, atFinish } = race();
+      toRun();
+      for (const p of [host, guest]) {
+        p.game.debug.scoring.banked = 1000;
+        p.game.debug.time = garage.parTime / 2; // x1.5
+        atFinish(p);
+      }
+      lockstep(1);
+      const h = host.game.view().hud.results!;
+      expect(h).toMatchObject({ comboPoints: 1000, timeMult: 1.5, total: 1500, stage: 'tally' });
+      expect(guest.game.view().hud.results!.rival).toMatchObject({ total: 1500 });
+      // host leaves its tally, then the rematch; the guest never left its own
+      for (let i = 0; i < 600; i++) host.game.update(IDLE, DT);
+      host.tap({ confirm: true });
+      expect(host.game.view().hud.results!.stage).toBe('summary');
+      for (let i = 0; i < Math.ceil(0.5 / DT) + 1; i++) host.game.update(IDLE, DT);
+      host.tap({ confirm: true });
+      expect(host.game.debug.phase).toBe('mplobby');
+      guest.tap({});
+      expect(guest.game.debug.phase).toBe('mplobby');
+      expect(guest.game.view().hud.results).toBeNull();
     });
 
     it('rematch: guest confirm waits, host confirm takes both back to the lobby', () => {
@@ -2472,6 +2511,8 @@ describe('multiplayer entry and lobby', () => {
       atFinish(host);
       atFinish(guest);
       lockstep(1);
+      lockstep(600); // tallies run out
+      lockstep(1, { confirm: true }, { confirm: true });
       lockout();
       expect(guest.game.view().hud.results!.carPick).toBe(false);
       guest.tap({ confirm: true });
@@ -2859,5 +2900,257 @@ describe('time-up edge cases', () => {
     step({ throttle: 1 }, 20);
     step();
     expect(game.debug.wallHits).toBe(n);
+  });
+});
+
+describe('results tally flow', () => {
+  const SOUND = {
+    row: 'tick',
+    land: 'thud',
+    slam: 'slam',
+    build: 'riser',
+    place: 'place',
+    final: 'thud',
+  };
+  function rig(opts: { timeUp?: boolean } = {}) {
+    const ui = vi.fn();
+    const game = createGame(
+      [garage],
+      { ...audio, ui },
+      () => memBest(),
+      undefined,
+      undefined,
+      undefined,
+      { ...defaultProgress(), starterChosen: true },
+    );
+    const step = (input: Partial<InputState> = {}, frames = 1) => {
+      for (let i = 0; i < frames; i++) game.update({ ...IDLE, ...input }, DT);
+    };
+    step({ confirm: true }, 2);
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    const bank = (points: number) => {
+      game.debug.scoring.combo = { points, multiplier: 1, tricks: ['DRIFT'], grace: 0.05 };
+      step({}, 10);
+    };
+    for (const p of [300, 200, 100, 50]) bank(p);
+    if (opts.timeUp) {
+      game.debug.time = garage.parTime * 1.3 + 1;
+      step(); // run locks the score
+      bank(900); // late
+    } else game.debug.time = garage.parTime * 0.8; // x1.2
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+    step();
+    const r = () => game.view().hud.results!;
+    const plan = () => planTally(r().tally);
+    return { game, step, ui, r, plan };
+  }
+
+  it('opens in the tally with the multiplied total and the real tally input', () => {
+    const { game, r } = rig();
+    expect(game.view().hud.phase).toBe('results');
+    expect(r()).toMatchObject({
+      stage: 'tally',
+      tallyT: 0,
+      comboPoints: 650,
+      timeMult: 1.2,
+      total: Math.round(650 * 1.2),
+      timeBonus: 0,
+    });
+    expect(r().tally).toMatchObject({
+      drifts: [300, 200, 100],
+      rest: 50,
+      restCount: 1,
+      combo: 650,
+      mult: 1.2,
+      total: 780,
+      position: null,
+    });
+  });
+
+  it('confirm: ignored in the lockout, then skip, continue, lockout again, retry', () => {
+    const { game, step, r, plan } = rig();
+    step({ confirm: true }, 10);
+    expect(r()).toMatchObject({ stage: 'tally' });
+    expect(r().tallyT).toBeCloseTo(10 * DT);
+    step({}, LOCK);
+    step({ confirm: true }); // skip
+    expect(r()).toMatchObject({ stage: 'tally', tallyT: plan().duration });
+    step({ confirm: true }); // continue
+    expect(r()).toMatchObject({ stage: 'summary', summaryT: 0 });
+    step({ confirm: true }, 10); // lockout restarted
+    expect(game.view().hud.phase).toBe('results');
+    expect(r().summaryT).toBeCloseTo(10 * DT);
+    step({}, LOCK);
+    step({ confirm: true }); // retry
+    expect(game.view().hud.phase).toBe('countdown');
+    // the next run starts clean
+    step({}, Math.round(COUNTDOWN_SECONDS / DT));
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+    step();
+    expect(r()).toMatchObject({ stage: 'tally', tallyT: 0 });
+    expect(r().tally.restCount).toBe(0);
+  });
+
+  it('pause in the tally goes back to the title', () => {
+    const { game, step } = rig();
+    step({ pause: true });
+    expect(game.view().hud.phase).toBe('title');
+  });
+
+  it('save, direction and the chooser wait for the summary', () => {
+    const { game, step, r } = rig();
+    step({}, LOCK);
+    step({ right: true });
+    step({ save: true });
+    expect(r().driftRow).toBe(0);
+    expect(r().stage).toBe('tally');
+    expect(game.view().hud.phase).toBe('results');
+  });
+
+  it('the tally ends on its own, then confirm goes to the summary', () => {
+    const { step, r, plan } = rig();
+    step({}, Math.ceil(plan().duration / DT) + 2);
+    expect(r()).toMatchObject({ stage: 'tally', tallyT: plan().duration });
+    step({ confirm: true });
+    expect(r().stage).toBe('summary');
+  });
+
+  it('plays each tally sound once, in order, when it runs to the end', () => {
+    const { step, ui, plan } = rig();
+    ui.mockClear();
+    step({}, Math.ceil(plan().duration / DT) + 2);
+    expect(ui.mock.calls.map((c) => c[0])).toEqual(plan().events.map((e) => SOUND[e.kind]));
+    expect(ui.mock.calls.length).toBeGreaterThan(5);
+  });
+
+  it('a skip plays nothing for the skipped part', () => {
+    const { step, ui, r, plan } = rig();
+    ui.mockClear();
+    step({}, LOCK + 20);
+    const played = eventsBetween(plan(), 0, r().tallyT).map((e) => SOUND[e.kind]);
+    expect(played.length).toBeGreaterThan(0);
+    expect(played.length).toBeLessThan(plan().events.length);
+    expect(ui.mock.calls.map((c) => c[0])).toEqual(played);
+    step({ confirm: true });
+    step({}, Math.ceil(plan().duration / DT));
+    expect(ui.mock.calls.map((c) => c[0])).toEqual(played);
+  });
+
+  it('time up: no multiplier, late drifts stay out of the tally', () => {
+    const { r } = rig({ timeUp: true });
+    expect(r()).toMatchObject({
+      timeUp: true,
+      timeMult: 1,
+      comboPoints: 650,
+      total: 650,
+      late: 900,
+    });
+    expect(r().tally).toMatchObject({ drifts: [300, 200, 100], rest: 50, restCount: 1, mult: 1 });
+    expect(r().drifts.some((d) => d.late)).toBe(false); // 3 counted ones fill the list
+  });
+});
+
+describe('results input from the real input layer', () => {
+  type Pad = { connected: boolean; buttons: { pressed: boolean; value: number }[]; axes: number[] };
+  function rig() {
+    const w = new EventTarget() as unknown as Window;
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+    const pad: Pad = { connected: true, buttons, axes: [0, 0] };
+    let held = false; // a pad is plugged in only once a button is used
+    (w as unknown as { navigator: unknown }).navigator = { getGamepads: () => [held ? pad : null] };
+    let clock = 0;
+    const input = createInput(w, () => (clock += 16));
+    const game = createGame([garage], audio, () => memBest(), undefined, undefined, undefined, {
+      ...defaultProgress(),
+      starterChosen: true,
+    });
+    const frame = (n = 1) => {
+      for (let i = 0; i < n; i++) game.update(input.poll(), DT);
+    };
+    const key = (code: string) => {
+      w.dispatchEvent(Object.assign(new Event('keydown'), { code, repeat: false }));
+      w.dispatchEvent(Object.assign(new Event('keyup'), { code }));
+    };
+    const press = (i: number, on: boolean) => {
+      held = true;
+      buttons[i].pressed = on;
+      buttons[i].value = on ? 1 : 0;
+    };
+    frame(); // title
+    game.update({ ...IDLE, confirm: true }, DT);
+    game.update({ ...IDLE, confirm: true }, DT);
+    game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
+    game.debug.scoring.banked = 100;
+    game.debug.time = garage.parTime * 0.9;
+    return { game, frame, key, press, results: () => game.view().hud.results! };
+  }
+  const finishNow = (game: ReturnType<typeof createGame>) => {
+    game.debug.floorIndex = garage.finish.floor;
+    game.debug.car.pos = { x: garage.finish.zone.x + 1, y: garage.finish.zone.y + 1 };
+  };
+
+  it('pad A held (handbrake) across the finish does not skip; release and press does', () => {
+    const { game, frame, press, results } = rig();
+    expect(game.view().hud.phase).toBe('run');
+    press(0, true);
+    frame(5);
+    finishNow(game);
+    frame(LOCK + 40);
+    expect(game.view().hud.phase).toBe('results');
+    expect(results().stage).toBe('tally');
+    expect(results().tallyT).toBeLessThan(planTally(results().tally).duration);
+    press(0, false);
+    frame();
+    press(0, true);
+    frame();
+    expect(results().tallyT).toBe(planTally(results().tally).duration);
+  });
+
+  it('keyboard: Enter skips, continues and retries; Esc goes back', () => {
+    const { game, frame, key, results } = rig();
+    finishNow(game);
+    frame(LOCK + 1);
+    key('Enter');
+    frame();
+    expect(results().tallyT).toBe(planTally(results().tally).duration);
+    key('Enter');
+    frame();
+    expect(results().stage).toBe('summary');
+    frame(LOCK + 1);
+    key('Enter');
+    frame();
+    expect(game.view().hud.phase).toBe('countdown');
+    game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
+    finishNow(game);
+    frame();
+    key('Escape');
+    frame();
+    expect(game.view().hud.phase).toBe('title');
+  });
+
+  it('gamepad: A skips, continues and retries; B goes back', () => {
+    const { game, frame, press, results } = rig();
+    const tap = (b: number) => {
+      press(b, true);
+      frame();
+      press(b, false);
+      frame();
+    };
+    finishNow(game);
+    frame(LOCK + 1);
+    tap(0);
+    expect(results().tallyT).toBe(planTally(results().tally).duration);
+    tap(0);
+    expect(results().stage).toBe('summary');
+    frame(LOCK + 1);
+    tap(0);
+    expect(game.view().hud.phase).toBe('countdown');
+    game.update(IDLE, COUNTDOWN_SECONDS + 0.1);
+    finishNow(game);
+    frame();
+    tap(1);
+    expect(game.view().hud.phase).toBe('title');
   });
 });

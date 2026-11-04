@@ -13,7 +13,6 @@ import {
   RAMP_DRIFT_BONUS,
   SPIN_BONUS,
   SWITCHBACK_BONUS,
-  TIME_BONUS_PER_SEC,
 } from './config';
 
 const SWITCHBACK_WINDOW = 0.5; // s of non-drift gap that still counts as a switchback
@@ -55,10 +54,6 @@ export function createScoring(): Scoring {
 
 export function comboValue(c: Combo): number {
   return Math.round(c.points * c.multiplier);
-}
-
-export function timeBonus(time: number, par: number): number {
-  return Math.max(0, Math.round((par - time) * TIME_BONUS_PER_SEC));
 }
 
 export const MEDAL_NAMES = ['', 'BRONZE', 'SILVER', 'GOLD'];

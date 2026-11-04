@@ -24,7 +24,7 @@ import type {
   RivalView,
   UiContext,
 } from './view';
-import { boomCars, type createAudio } from './audio';
+import { boomCars, type createAudio, type UiSound } from './audio';
 import { TRACKS, TRACK_LABELS } from './music';
 import { COUNTDOWN_SECONDS } from './config';
 import { createRecorder, loadGhost, sample, saveGhost, type Ghost } from './ghost';
@@ -74,7 +74,8 @@ import {
   type SettingsStorage,
   type Tune,
 } from './settings';
-import { comboValue, createScoring, forceBank, stepScoring, timeBonus, zoneAt } from './scoring';
+import { comboValue, createScoring, forceBank, stepScoring, zoneAt } from './scoring';
+import { eventsBetween, planTally, timeMult, type TallyEventKind, type TallyPlan } from './tally';
 import type { Link, PlayerInfo } from './net/protocol';
 import { createSession, type Session } from './net/session';
 
@@ -148,6 +149,14 @@ const NEAR_RANGE = 8; // m
 const EPS = 1e-6; // absorbs float drift from summing fixed dt
 const RESULTS_LOCKOUT = 0.5; // s; gamepad A is also the handbrake
 const TOP_DRIFTS = 3;
+const TALLY_SOUND: Record<TallyEventKind, UiSound> = {
+  row: 'tick',
+  land: 'thud',
+  slam: 'slam',
+  build: 'riser',
+  place: 'place',
+  final: 'thud',
+};
 const MODEL_IDS = Object.keys(PLAYER_MODELS) as PlayerModel[];
 const statRange = (k: keyof CarStats) => {
   const v = MODEL_IDS.map((m) => PLAYER_MODELS[m].stats[k]);
@@ -368,6 +377,10 @@ export function createGame(
     carPick: false,
     chooser: null as { cars: PlayerModel[]; row: number } | null,
     resultsAge: 0,
+    /** tally timeline, computed once at the finish */
+    plan: null as TallyPlan | null,
+    /** counted (not late) banks this run */
+    banks: 0,
     stuck: 0,
     clip: null as Rect | null,
     /** live combo with its clip id */
@@ -447,6 +460,7 @@ export function createGame(
     const live = s.live;
     s.live = null;
     if (!live) return;
+    if (s.locked === null) s.banks++;
     const list = [
       ...s.drifts,
       { id: live.id, amount, tricks: live.combo.tricks, saved: false, late: s.locked !== null },
@@ -553,8 +567,8 @@ export function createGame(
     const timeUp = s.locked !== null;
     const comboPoints = s.locked ?? s.scoring.banked;
     const late = s.scoring.banked - comboPoints;
-    const bonus = timeBonus(s.time, map.parTime);
-    const total = comboPoints + bonus;
+    const mult = timeMult(s.time, map.parTime);
+    const total = Math.round(comboPoints * mult);
     const newBest = total > bests[sel];
     if (newBest) {
       stores[sel].set((bests[sel] = total));
@@ -569,21 +583,24 @@ export function createGame(
     const dr = daily ? finishDaily(prog, daily, dailyDate, total, s.wallHits) : undefined;
     persist();
     s.carPick = award.carPick || !!dr?.carPick;
+    const drifts = s.drifts.filter((d) => !d.late).map((d) => d.amount);
+    const tally = {
+      drifts,
+      rest: Math.max(0, comboPoints - drifts.reduce((a, b) => a + b, 0)),
+      restCount: Math.max(0, s.banks - drifts.length),
+      combo: comboPoints,
+      mult,
+      total,
+      medals: map.medals,
+      position: award.position,
+    };
+    s.plan = planTally(tally);
     s.results = {
       comboPoints,
-      timeBonus: bonus,
-      timeMult: 1,
-      tally: {
-        drifts: [],
-        rest: comboPoints,
-        restCount: 0,
-        combo: comboPoints,
-        mult: 1,
-        total,
-        medals: map.medals,
-        position: award.position,
-      },
-      stage: 'summary',
+      timeBonus: 0, // shortcut: remove once hud stops reading it
+      timeMult: mult,
+      tally,
+      stage: 'tally',
       tallyT: 0,
       summaryT: 0,
       total,
@@ -1420,6 +1437,27 @@ export function createGame(
         case 'results': {
           s.resultsAge += dt;
           const ready = s.resultsAge >= RESULTS_LOCKOUT;
+          const r = s.results;
+          const plan = s.plan;
+          if (r && plan && r.stage === 'tally') {
+            const prev = r.tallyT;
+            r.tallyT = Math.min(prev + dt, plan.duration);
+            for (const e of eventsBetween(plan, prev, r.tallyT)) audio.ui(TALLY_SOUND[e.kind]);
+            if (input.pause) {
+              if (mp) exitMp();
+              else toTitle();
+            } else if (input.confirm && ready) {
+              if (r.tallyT < plan.duration)
+                r.tallyT = plan.duration; // skip: no sounds for the rest
+              else {
+                r.stage = 'summary';
+                r.summaryT = 0;
+                s.resultsAge = 0; // lockout again before the next confirm
+              }
+            }
+            break;
+          }
+          if (r) r.summaryT += dt;
           const ch = s.chooser;
           if (ch) {
             // car pick overlay: LATER or ESC / B keep the pick for the garage
