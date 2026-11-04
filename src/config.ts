@@ -14,6 +14,5 @@ export const SPIN_BONUS = 1000; // per full 360 within a combo
 export const RAMP_DRIFT_BONUS = 750;
 export const CLIP_RATE = 2; // drift points multiplier inside a clipping zone
 export const CLIP_BONUS = 200; // first entry per zone per combo
-export const TIME_BONUS_PER_SEC = 100;
 export const COUNTDOWN_SECONDS = 3;
 export const BEST_SCORE_KEY = 'drifta.best';

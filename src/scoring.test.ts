@@ -6,15 +6,7 @@ import {
   COMBO_GRACE,
   DRIFT_POINT_SCALE,
 } from './config';
-import {
-  comboValue,
-  createScoring,
-  forceBank,
-  medalFor,
-  stepScoring,
-  timeBonus,
-  zoneAt,
-} from './scoring';
+import { comboValue, createScoring, forceBank, medalFor, stepScoring, zoneAt } from './scoring';
 import type { ScoreEvent, ScoreFrame } from './types';
 
 const DEG = Math.PI / 180;
@@ -143,15 +135,13 @@ describe('scoring', () => {
     expect(tricks(ev)).toEqual(['RAMP DRIFT']);
   });
 
-  it('forceBank and timeBonus', () => {
+  it('forceBank', () => {
     const s = createScoring();
     expect(forceBank(s)).toEqual([]);
     stepScoring(s, F({ drifting: true }), 1);
     const v = comboValue(s.combo!);
     expect(forceBank(s)).toEqual([{ type: 'bank', amount: v }]);
     expect(s.banked).toBe(v);
-    expect(timeBonus(100, 60)).toBe(0);
-    expect(timeBonus(50, 60)).toBe(1000);
   });
 
   it('drift flicker adds no trick or multiplier', () => {
