@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approach,
   comboString,
+  drawHud,
   easeOutBack,
   easeOutElastic,
   formatScore,
@@ -17,7 +18,8 @@ import {
   verdict,
   verdictText,
 } from './hud';
-import type { Results } from './view';
+import { planTally, SLIDE } from './tally';
+import type { HudView, Results } from './view';
 
 describe('hud formatting', () => {
   it('formatTime', () => {
@@ -151,7 +153,13 @@ describe('hint lines', () => {
   const drift = { amount: 100, tricks: [], clip: true, saved: false };
   const res: Results = {
     comboPoints: 0,
-    timeBonus: 0,
+    mapName: 'TOKYO DECK',
+    prevBest: 0,
+    timeMult: 1,
+    tally: { drifts: [], rest: 0, restCount: 0, combo: 0, mult: 1, total: 0, position: null },
+    stage: 'summary',
+    tallyT: 0,
+    summaryT: 0,
     total: 0,
     time: 0,
     best: 0,
@@ -196,5 +204,155 @@ describe('hint lines', () => {
     expect(resultsHint(kb, { ...r, carPick: true }, { ...guest, connected: false })).toBe(
       'ENTER choose car · ESC title',
     );
+  });
+});
+
+/** 2D context stand-in: no-op methods that reject non-finite numbers; records fillText strings. */
+function mockCtx() {
+  const props: Record<string | symbol, unknown> = { globalAlpha: 1 };
+  const stack: Record<string | symbol, unknown>[] = [];
+  const texts: string[] = [];
+  const ctx = new Proxy(props, {
+    get(t, k) {
+      if (k in t) return t[k];
+      if (k === 'save') return () => stack.push({ ...t });
+      if (k === 'restore') return () => Object.assign(t, stack.pop());
+      return (...args: unknown[]) => {
+        for (const a of args)
+          if (typeof a === 'number' && !Number.isFinite(a)) throw new Error(`${String(k)}(${a})`);
+        if (k === 'fillText') texts.push(String(args[0]));
+        return { width: 10, addColorStop() {} };
+      };
+    },
+    set(t, k, val) {
+      if (typeof val === 'number' && !Number.isFinite(val)) throw new Error(`${String(k)}=${val}`);
+      t[k] = val;
+      return true;
+    },
+  });
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, texts };
+}
+
+describe('results draw', () => {
+  const tally = {
+    drifts: [4840, 3480, 3036],
+    rest: 2060,
+    restCount: 2,
+    combo: 13416,
+    mult: 1.33,
+    total: 17843,
+    medals: [4500, 10000, 17500],
+    position: 1,
+  } as const;
+  const drift = { amount: 4840, tricks: ['DRIFT' as const], clip: true, saved: false };
+  const results: Results = {
+    comboPoints: 13416,
+    mapName: 'TOKYO DECK',
+    prevBest: 15200,
+    timeMult: 1.33,
+    tally,
+    stage: 'tally',
+    tallyT: 0,
+    summaryT: 0,
+    total: 17843,
+    time: 41.8,
+    best: 15200,
+    newBest: true,
+    medals: [4500, 10000, 17500],
+    position: 1,
+    newPaints: ['b2-violet'],
+    carPick: false,
+    chooser: null,
+    drifts: [
+      drift,
+      { ...drift, amount: 3480, saved: true },
+      { ...drift, amount: 3036, late: true },
+    ],
+    driftRow: 0,
+  };
+  const view = (r: Partial<Results>, extra: Partial<HudView> = {}): HudView =>
+    ({
+      phase: 'results',
+      time: 41.8,
+      par: 62,
+      limit: 80.6,
+      floorName: 'TOKYO DECK',
+      score: 0,
+      late: 0,
+      timeUp: false,
+      combo: null,
+      comboValue: 0,
+      popups: [],
+      speedKmh: 0,
+      countdown: 0,
+      best: 15200,
+      results: { ...results, ...r },
+      menu: null,
+      ui: { theme: 'arcade', device: 'kb', padStyle: 'xbox' },
+      rpm: 0,
+      redline: 0.9,
+      gear: 'N',
+      ...extra,
+    }) as HudView;
+  const draw = (v: HudView, w = 1280, h = 720) => {
+    const { ctx, texts } = mockCtx();
+    drawHud(ctx, v, w, h);
+    return texts;
+  };
+  const plan = planTally(tally);
+
+  it('draws the tally from start to done, CONTINUE only once done', () => {
+    const times = [0, (plan.buildStart + plan.buildEnd) / 2, plan.duration, plan.duration + 1];
+    for (const theme of ['arcade', 'vhs'] as const)
+      for (const tallyT of times) {
+        const texts = draw(view({ tallyT }, { ui: { theme, device: 'pad', padStyle: 'ps' } }));
+        expect(texts.includes('CONTINUE ▶')).toBe(tallyT >= plan.duration);
+        expect(texts.includes('✕ SKIP')).toBe(tallyT < plan.duration);
+      }
+    for (let t = 0; t < plan.duration; t += 0.05) draw(view({ tallyT: t }));
+  });
+  it('draws the slide and the summary, with and without places', () => {
+    const done = { tallyT: plan.duration, stage: 'summary' as const };
+    for (const summaryT of [0, SLIDE / 2, SLIDE, 3]) draw(view({ ...done, summaryT }));
+    const t = draw(view({ ...done, summaryT: 3 }));
+    expect(t).toContain('FINISHED · TOKYO DECK');
+    expect(t).toContain('1ST');
+    expect(t).toContain('▲ +2,643');
+    const plain = { ...tally, medals: undefined, position: null };
+    const none = draw(
+      view({
+        ...done,
+        summaryT: 3,
+        tally: plain,
+        medals: undefined,
+        position: null,
+        newBest: false,
+      }),
+    );
+    expect(none).not.toContain('NO PLACE');
+    draw(view({ ...done, tallyT: 0, tally: plain, stage: 'tally' }), 720, 1280);
+    draw(view({ ...done, summaryT: 3, drifts: [] }), 720, 1280);
+  });
+  it('draws a daily result and a multiplayer head-to-head', () => {
+    const done = { tallyT: plan.duration, stage: 'summary' as const, summaryT: 3 };
+    const daily = {
+      kind: 'legend',
+      target: 9000,
+      cleared: true,
+      wallHits: 2,
+      carPick: false,
+    } as const;
+    expect(draw(view({ ...done, daily, timeUp: true, late: 400 }))[0]).toMatch(/^TIME UP · LEGEND/);
+    const mp = {
+      role: 'host',
+      rival: 'guest1234',
+      rivalScore: 9000,
+      rivalTotal: 9000,
+      connected: true,
+      waiting: false,
+    } as const;
+    const rival = { name: 'guest1234', total: 9000, time: 50 };
+    expect(draw(view({ ...done, rival }, { mp }))).toContain('YOU WIN');
+    draw(view({ ...done, rival: undefined }, { mp: { ...mp, rivalTotal: null, waiting: true } }));
   });
 });

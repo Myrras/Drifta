@@ -150,6 +150,29 @@ describe('createInput pad edge tracking', () => {
     (w as unknown as { navigator: unknown }).navigator = { getGamepads: () => [state.pad] };
     return { w, buttons, state, input: createInput(w) };
   };
+  it('confirm/pause map: Enter, Esc, pad A (confirm), B (pause), Start (both); edge only', () => {
+    const { w, buttons, state, input } = setup();
+    const tap = (code: string) => {
+      w.dispatchEvent(Object.assign(new Event('keydown'), { code, repeat: false }));
+      w.dispatchEvent(Object.assign(new Event('keyup'), { code }));
+      return input.poll();
+    };
+    expect(tap('Enter')).toMatchObject({ confirm: true, pause: false });
+    expect(tap('Escape')).toMatchObject({ confirm: false, pause: true });
+    expect(tap('Space')).toMatchObject({ confirm: false, pause: false });
+    state.pad = { connected: true, buttons, axes: [0, 0] };
+    for (const [i, confirm, pause] of [
+      [0, true, false],
+      [1, false, true],
+      [9, true, true],
+    ] as const) {
+      buttons[i].pressed = true;
+      expect(input.poll()).toMatchObject({ confirm, pause });
+      expect(input.poll()).toMatchObject({ confirm: false, pause: false }); // held: no new edge
+      buttons[i].pressed = false;
+      input.poll();
+    }
+  });
   it('keyboard and pad edge in the same poll: pad tracker still updates', () => {
     const { w, buttons, state, input } = setup();
     // Escape tapped and pad Start pressed in the same poll

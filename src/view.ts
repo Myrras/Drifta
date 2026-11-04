@@ -1,3 +1,4 @@
+import type { TallyInput } from './tally';
 import type { Look } from './cosmetics';
 import type { DailyResult } from './daily';
 import type { CityGraph, Traffic } from './traffic';
@@ -83,7 +84,17 @@ export interface TopDrift {
 
 export interface Results {
   comboPoints: number;
-  timeBonus: number;
+  mapName: string;
+  /** best before this run */
+  prevBest: number;
+  timeMult: number;
+  tally: TallyInput;
+  /** results sub-screen */
+  stage: 'tally' | 'summary';
+  /** tally clock in s (game-owned; jumps to plan.duration on skip) */
+  tallyT: number;
+  /** s since CONTINUE, 0 while in the tally */
+  summaryT: number;
   total: number;
   time: number;
   best: number;
