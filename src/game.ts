@@ -1585,11 +1585,7 @@ export function createGame(
                         name: PLAYER_MODELS[m].name,
                         color: (look as { color?: string }).color ?? PLAYER_MODELS[m].colors[0],
                         look,
-                        stats: {
-                          power: normStat(m, 'street', 'power'),
-                          grip: normStat(m, 'street', 'grip'),
-                          weight: normStat(m, 'street', 'mass'),
-                        },
+                        stats: statsOf(m, 'street'),
                       };
                     }),
                     row: s.chooser.row,

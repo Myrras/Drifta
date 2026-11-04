@@ -997,7 +997,8 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
   }
   g.globalAlpha = 1;
   if (center.includes(m.row)) {
-    const t = cards ? clamp01(selPos(now)) : 0; // slides between PLAY and MULTIPLAYER only
+    // slides between PLAY and MULTIPLAYER only; a move from outside the column snaps
+    const t = cards ? (Math.max(A.from, A.to) > 1 ? m.row : clamp01(selPos(now))) : 0;
     highlight(g, w / 2, rowsTop + t * gap, pw, ph + (mph - ph) * t, enter(0, A.open));
   }
   const onLabel = vhs() ? th.text : '#ffffff';
