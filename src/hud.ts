@@ -889,7 +889,7 @@ export function drawHud(
 // ---------- results ----------
 
 const ORD = ['', '1ST', '2ND', '3RD'];
-const POS_COL = ['', '#ffd23f', '#dfe6ff', '#ff9a4a'];
+export const POS_COL = ['', '#ffd23f', '#dfe6ff', '#ff9a4a'];
 /** time limit factor per position, mirrors progress.positionFor */
 const POS_TIME = [0, 1, 1.15, 1.3];
 
