@@ -3,8 +3,17 @@ import { itemById } from './cosmetics';
 import type { HudView, MpHud, Popup } from './view';
 import { drawMenu, carImage } from './ui/menu';
 import { createTach } from './ui/tach';
-import { THEMES, drawOverlayFx, type Theme } from './ui/theme';
-import { hintLine, type Action } from './ui/prompts';
+import { THEMES, drawOverlayFx, linear, DISPLAY as DELA, MASTHEAD, type Theme } from './ui/theme';
+import { glyph, hintLine, type Action } from './ui/prompts';
+import {
+  planTally,
+  SLIDE,
+  tallyAt,
+  type TallyEvent,
+  type TallyEventKind,
+  type TallyInput,
+  type TallyPlan,
+} from './tally';
 
 // Night garage under sodium lamps: amber light, signal red, start-light green on blue-black ink.
 const DISPLAY = 'Impact, Haettenschweiler, "Arial Black", sans-serif';
@@ -135,7 +144,7 @@ function text(
   o: TextOpts = {},
 ): void {
   ctx.save();
-  ctx.globalAlpha = clamp01(o.alpha ?? 1);
+  ctx.globalAlpha *= clamp01(o.alpha ?? 1); // multiplies, so callers can fade groups
   ctx.translate(x, y);
   if (o.rot) ctx.rotate(o.rot);
   if (o.scale !== undefined) ctx.scale(o.scale, o.scale);
@@ -318,7 +327,6 @@ const anim = {
   combo: 0,
   score: 0,
   rival: 0,
-  resultsAt: 0,
 };
 
 let tachInst: ReturnType<typeof createTach> | undefined; // lazy: tach.ts imports hud.ts (cycle)
@@ -877,7 +885,6 @@ export function drawHud(
     return;
   }
 
-  if (lastPhase !== 'results') anim.resultsAt = nowS;
   lastPhase = v.phase;
   const r = v.results;
   if (!r) return;
@@ -976,7 +983,7 @@ function box(
   w: number,
   h: number,
   rad: number,
-  fill: string,
+  fill: string | CanvasGradient,
   stroke?: string,
   lw = 1,
   glow?: string,
@@ -1020,6 +1027,131 @@ function hintBar(
   });
 }
 
+const DARK = '#14121c'; // text on filled pills and buttons
+const EDGE = 'rgba(255,255,255,0.12)';
+
+/** Big numerals: Dela Gothic in arcade, the masthead face in VHS (as the menus do). */
+const disp = (th: Theme, px: number, italic = false): string =>
+  `${italic ? 'italic ' : ''}400 ${th.id === 'vhs' ? px * 1.12 : px}px ${th.id === 'vhs' ? MASTHEAD : DELA}`;
+
+/** m:ss.s */
+function fmtT1(sec: number): string {
+  const d = Math.floor(Math.max(0, sec) * 10 + 1e-6);
+  return `${Math.floor(d / 600)}:${String(Math.floor((d % 600) / 10)).padStart(2, '0')}.${d % 10}`;
+}
+
+const easeInOut = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2);
+
+/** Small tracked-out label. */
+function spaced(
+  ctx: CanvasRenderingContext2D,
+  s: string,
+  x: number,
+  y: number,
+  px: number,
+  col: string,
+  th: Theme,
+  o: { align?: CanvasTextAlign; weight?: number; em?: number; alpha?: number; glow?: string } = {},
+): void {
+  ctx.save();
+  ctx.letterSpacing = `${(o.em ?? 0.2) * px}px`;
+  text(ctx, s, x, y, px, col, {
+    align: o.align,
+    css: th.font(o.weight ?? 700, px),
+    stroke: null,
+    alpha: o.alpha,
+    glow: o.glow,
+  });
+  ctx.restore();
+}
+
+/** Box with its edge at a lower alpha than the fill. */
+function frame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  rad: number,
+  fill: string,
+  edge: string,
+  lw: number,
+  edgeAlpha: number,
+): void {
+  box(ctx, x, y, w, h, rad, fill);
+  ctx.save();
+  ctx.globalAlpha *= edgeAlpha;
+  box(ctx, x, y, w, h, rad, 'rgba(0,0,0,0)', edge, lw);
+  ctx.restore();
+}
+
+const pillW = (ctx: CanvasRenderingContext2D, s: string, font: string, h: number) =>
+  cssWidth(ctx, s, font) + 1.1 * h;
+
+/** Rounded pill, x = left edge; glow lights the fill. Returns its width. */
+function pill(
+  ctx: CanvasRenderingContext2D,
+  s: string,
+  x: number,
+  cy: number,
+  h: number,
+  font: string,
+  col: string,
+  fill: string,
+  edge?: string,
+  lw = 1,
+  glow?: string,
+): number {
+  const w = pillW(ctx, s, font, h);
+  ctx.save();
+  if (glow) {
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = h * 0.6;
+  }
+  box(ctx, x, cy - h / 2, w, h, h / 2, fill, edge, lw);
+  ctx.restore();
+  text(ctx, s, x + w / 2, cy, h / 2, col, { align: 'center', css: font, stroke: null });
+  return w;
+}
+
+type Seg = [s: string, font: string, col: string];
+
+/** Outlined pill holding coloured text runs, x = left edge. Returns its width; draws only if draw. */
+function segPill(
+  ctx: CanvasRenderingContext2D,
+  segs: Seg[],
+  x: number,
+  cy: number,
+  h: number,
+  edge: string,
+  th: Theme,
+  draw: boolean,
+): number {
+  const gap = h * 0.16;
+  const pad = h * 0.42;
+  const ws = segs.map(([s, f]) => cssWidth(ctx, s, f));
+  const w = ws.reduce((a, b) => a + b, 0) + gap * (segs.length - 1) + 2 * pad;
+  if (!draw) return w;
+  frame(ctx, x, cy - h / 2, w, h, h / 2, th.panel, edge, Math.max(1.5, h * 0.05), 0.45);
+  let tx = x + pad;
+  segs.forEach(([s, f, c], i) => {
+    text(ctx, s, tx, cy, h / 3, c, { css: f, stroke: null });
+    tx += ws[i] + gap;
+  });
+  return w;
+}
+
+/** Draw one results pane shifted by dx and clipped to the screen. */
+function pane(ctx: CanvasRenderingContext2D, dx: number, w: number, h: number, draw: () => void) {
+  ctx.save();
+  ctx.translate(dx, 0);
+  ctx.beginPath();
+  ctx.rect(0, 0, w, h);
+  ctx.clip();
+  draw();
+  ctx.restore();
+}
+
 function drawResults(
   ctx: CanvasRenderingContext2D,
   v: HudView,
@@ -1030,165 +1162,604 @@ function drawResults(
   th: Theme,
   now: number,
 ): void {
-  const age = now - anim.resultsAt;
-  const glow = th.glow ? th.accent : undefined;
-  const pulse = 0.5 + 0.5 * Math.sin(now * 4.2);
   overlay(ctx, width, height, 0.82);
-  const cx = width / 2;
-  const cw = Math.min(width - 6 * u, 150 * u);
-  const x0 = cx - cw / 2;
+  const sum = r.stage === 'summary';
+  const e = sum ? easeInOut(clamp01(r.summaryT / SLIDE)) : 0;
+  if (e < 1) pane(ctx, -e * width, width, height, () => drawTally(ctx, v, r, width, height, u, th));
+  if (sum)
+    pane(ctx, (1 - e) * width, width, height, () =>
+      drawSummary(ctx, v, r, width, height, u, th, now),
+    );
+}
 
-  // ---- headline: FINISHED (or TIME UP), big total
-  const dl = r.daily;
-  const verdictHead = dl
-    ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
-    : 'FINISHED';
-  const head = r.timeUp ? (dl ? `TIME UP · ${verdictHead}` : 'TIME UP') : verdictHead;
-  const headPx = fitPx(ctx, head, (p) => th.font(700, p, true), 3.2 * u, cw);
-  text(ctx, head, cx, 6 * u, headPx, r.timeUp ? RED : dl ? (dl.cleared ? GREEN : RED) : th.dim, {
-    align: 'center',
-    css: th.font(700, headPx, true),
+let tallyMemo: { input: TallyInput; plan: TallyPlan } | undefined;
+function planFor(i: TallyInput): TallyPlan {
+  if (tallyMemo?.input !== i) tallyMemo = { input: i, plan: planTally(i) };
+  return tallyMemo.plan;
+}
+
+/** shake magnitude (u) and length (s) per tally event */
+function shakeOf(e: TallyEvent, placed: boolean): [number, number] {
+  if (e.kind === 'land') return [0.25 + 0.08 * e.index, 0.18];
+  if (e.kind === 'slam') return [1.4, 0.38];
+  if (e.kind === 'place') return [0.6 + 0.4 * e.index, 0.26];
+  if (e.kind === 'final') return [placed ? 2.2 : 1, 0.52];
+  return [0, 0];
+}
+
+/** Pane 1: drifts count into COMBOS, the time multiplier slams, the total builds to a place. */
+function drawTally(
+  ctx: CanvasRenderingContext2D,
+  v: HudView,
+  r: NonNullable<HudView['results']>,
+  width: number,
+  height: number,
+  u: number,
+  th: Theme,
+): void {
+  const ti = r.tally;
+  const p = planFor(ti);
+  const t = r.tallyT;
+  const f = tallyAt(ti, p, t);
+  const pos = ti.position;
+  const pc = pos ? POS_COL[pos] : th.text;
+  const glow = (c: string) => (th.glow ? c : undefined);
+  const hair = Math.max(1, 0.15 * u);
+  /** s since the latest event of kind, Infinity if none yet */
+  const ago = (kind: TallyEventKind) => {
+    let a = Infinity;
+    for (const e of p.events) if (e.kind === kind && e.t <= t) a = t - e.t;
+    return a;
+  };
+
+  // decaying screen shake summed over recent events
+  let sx = 0;
+  let sy = 0;
+  for (const e of p.events) {
+    const a = t - e.t;
+    const [mag, dur] = shakeOf(e, !!pos);
+    if (a < 0 || a >= dur) continue;
+    const amp = mag * u * (1 - a / dur);
+    sx += amp * Math.sin(a * 95 + e.t * 7);
+    sy += amp * 0.6 * Math.cos(a * 77 + e.t * 5);
+  }
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  const cw = Math.min(width - 12 * u, 166 * u);
+  const x0 = (width - cw) / 2;
+  const oy = Math.max(0, (height - 100 * u) / 2); // the layout is 100u tall; centre it
+  const Y = (y: number) => oy + y * u;
+  const lw = (cw - 5 * u) * 0.49;
+  const rx = x0 + lw + 5 * u;
+  const rw = x0 + cw - rx;
+
+  // ---- header: RESULTS, map, place pill + NEW BEST
+  spaced(ctx, 'RESULTS', x0, Y(7), 2.6 * u, th.accent2, th, { em: 0.25 });
+  const mapF = disp(th, 5 * u, true);
+  text(ctx, ellipsize(ctx, v.floorName, mapF, cw - 40 * u), x0, Y(12), 5 * u, th.text, {
+    css: mapF,
     stroke: null,
   });
-  const total = formatScore(r.total);
-  const totalPx = fitPx(ctx, total, (p) => th.font(800, p, true), 12 * u, cw);
-  text(ctx, total, cx, 16 * u, totalPx, th.text, {
-    align: 'center',
-    css: th.font(800, totalPx, true),
-    scale: lerp(1.25, 1, easeOutBack(age / 0.4)),
-    glow,
-  });
+  const pillF = disp(th, 3.6 * u);
+  const pillH = 7 * u;
+  const pw = pos ? pillW(ctx, ORD[pos], pillF, pillH) : 0;
+  const fa = t - p.buildEnd; // since the total landed
+  const da = fa - 0.22; // the pill drops a beat later
+  if (pos && da > 0) {
+    const k = easeOutBack(da / 0.6);
+    const sc = lerp(3, 1, k);
+    ctx.save();
+    ctx.globalAlpha = clamp01(da / 0.15);
+    ctx.translate(x0 + cw - pw / 2, Y(11) - (1 - k) * 10 * u);
+    ctx.scale(sc, sc);
+    pill(ctx, ORD[pos], -pw / 2, 0, pillH, pillF, '#1a1030', pc, undefined, 1, glow(pc));
+    ctx.restore();
+    streaks(ctx, x0 + cw - pw / 2, Y(11), 3 * u, 14 * u, (da - 0.36) / 0.6, 18, pc, 0.5 * u);
+  }
+  if (r.newBest && fa >= 0 && (fa > 2.4 || Math.floor(fa / 0.3) % 2 === 0))
+    spaced(ctx, 'NEW BEST!', x0 + cw - pw - (pos ? 2.5 * u : 0), Y(11), 2.8 * u, GREEN, th, {
+      align: 'right',
+      em: 0.12,
+      glow: glow(GREEN),
+    });
 
-  // ---- multiplayer: side panels flanking the total
+  // ---- left: one row per counted drift, then the lump of the rest
+  spaced(ctx, 'DRIFTS', x0, Y(21.5), 2.5 * u, th.accent, th);
+  const counted = r.drifts.filter((d) => !d.late);
+  const amts = ti.restCount > 0 ? [...ti.drifts, ti.rest] : [...ti.drifts];
+  const rowH = 8.4 * u;
+  const rowY = (i: number) => Y(25) + i * 10 * u;
+  const valF = disp(th, 3.6 * u);
+  const valW = amts.map((a) => cssWidth(ctx, formatScore(a), valF));
+  const countEnd = (i: number) => p.rowStart[i] + (p.rowLand[i] - p.rowStart[i]) / 2.4;
+  for (let i = 0; i < p.rows; i++) {
+    const a = t - p.rowStart[i];
+    if (a < 0) break;
+    const x = x0 - 5 * u * (1 - easeOutBack(a / 0.22));
+    const y = rowY(i);
+    ctx.save();
+    ctx.globalAlpha *= clamp01(a / 0.18);
+    const done = t >= countEnd(i);
+    frame(ctx, x, y, lw, rowH, u, th.panel, done ? th.accent2 : EDGE, hair, done ? 0.45 : 1);
+    text(ctx, formatScore(f.rowValue[i]), x + lw - 2 * u, y + rowH / 2, 3.6 * u, th.text, {
+      align: 'right',
+      css: valF,
+      stroke: null,
+    });
+    const name =
+      i < ti.drifts.length
+        ? counted[i]
+          ? comboString(counted[i].tricks)
+          : 'DRIFT'
+        : `+${ti.restCount} MORE`;
+    const tf = th.font(600, 2 * u);
+    text(
+      ctx,
+      ellipsize(ctx, name, tf, lw - valW[i] - 6 * u),
+      x + 2 * u,
+      y + rowH / 2,
+      2 * u,
+      th.dim,
+      {
+        css: tf,
+        stroke: null,
+      },
+    );
+    ctx.restore();
+  }
+
+  // ---- right: COMBOS
+  const numF = disp(th, 6.4 * u);
+  const comboY = Y(25);
+  const lit = (t0: number) => (t >= t0 ? 1 : 0.25);
+  const comboA = lit(0.35);
+  spaced(ctx, 'COMBOS', rx, comboY, 2.7 * u, th.dim, th, { alpha: comboA });
+  const la = ago('land');
+  text(ctx, formatScore(f.combo), rx + rw, comboY, 6.4 * u, th.accent2, {
+    align: 'right',
+    css: numF,
+    stroke: null,
+    alpha: comboA,
+    scale: la < 0.18 ? 1 + 0.12 * Math.sin((Math.PI * la) / 0.18) : 1,
+  });
+  const comboCx = rx + rw - cssWidth(ctx, formatScore(ti.combo), numF) / 2;
+
+  // ---- TIME / PAR and the multiplier: swells while rolling, then slams
+  const timeY = Y(36.5);
+  const timeA = lit(p.multStart - 0.2);
+  spaced(ctx, 'TIME', rx, timeY, 2.7 * u, th.dim, th, { alpha: timeA });
+  const sub = v.par > 0 ? `${fmtT1(r.time)} / PAR ${fmtT1(v.par)}` : fmtT1(r.time);
+  ctx.save();
+  ctx.letterSpacing = `${0.2 * 2.7 * u}px`;
+  const timeW = cssWidth(ctx, 'TIME', th.font(700, 2.7 * u));
+  ctx.restore();
+  text(ctx, sub, rx + timeW + 1.2 * u, timeY + 0.2 * u, 2.3 * u, th.dim, {
+    css: th.font(600, 2.3 * u),
+    stroke: null,
+    alpha: timeA,
+  });
+  const multS = `×${f.mult.toFixed(2)}`;
+  const ma = t - p.multEnd;
+  const mk = clamp01((t - p.multStart) / (p.multEnd - p.multStart));
+  text(ctx, multS, rx + rw, timeY, 6.4 * u, th.accent, {
+    align: 'right',
+    css: numF,
+    stroke: null,
+    alpha: ma >= 0 ? lerp(0.3, 1, clamp01(ma / 0.4)) : timeA,
+    scale: ma >= 0 ? lerp(2.2, 1, easeOutBack(ma / 0.4)) : 1 + 0.35 * easeOutCubic(mk),
+    glow: ma >= 0 ? glow(th.accent) : undefined,
+  });
+  const multCx = rx + rw - cssWidth(ctx, `×${ti.mult.toFixed(2)}`, numF) / 2;
+
+  // ---- dashed rule
+  ctx.save();
+  ctx.strokeStyle = EDGE;
+  ctx.lineWidth = hair;
+  ctx.setLineDash([0.8 * u, 0.8 * u]);
+  ctx.beginPath();
+  ctx.moveTo(rx, Y(43.5));
+  ctx.lineTo(rx + rw, Y(43.5));
+  ctx.stroke();
+  ctx.restore();
+
+  // ---- TOTAL: builds from the combos, swelling and jittering, lands in the place colour
+  const totalA = lit(p.buildStart - 0.35);
+  const totalY = Y(54.5);
+  spaced(ctx, 'TOTAL', rx, Y(57), 2.7 * u, th.dim, th, { alpha: totalA });
+  if (t >= p.buildStart - 0.35)
+    text(ctx, `${formatScore(ti.combo)} × ${ti.mult.toFixed(2)}`, rx, Y(61), 2.5 * u, th.dim, {
+      css: th.font(600, 2.5 * u),
+      stroke: null,
+    });
+  const shown = t >= p.buildStart ? f.total : t >= p.buildStart - 0.35 ? ti.combo : 0;
+  const totalS = formatScore(Math.max(ti.total, ti.combo));
+  const tpx = fitPx(ctx, totalS, (q) => disp(th, q), 11.4 * u, rw - 18 * u);
+  const totalF = disp(th, tpx);
+  const bk = clamp01((t - p.buildStart) / (p.buildEnd - p.buildStart));
+  const building = t >= p.buildStart && fa < 0;
+  const j = building ? bk ** 3 * 0.6 * u : 0;
+  text(
+    ctx,
+    formatScore(shown),
+    rx + rw + j * Math.sin(t * 137),
+    totalY + j * Math.cos(t * 151),
+    tpx,
+    fa >= 0 && pos ? pc : th.text,
+    {
+      align: 'right',
+      css: totalF,
+      stroke: null,
+      alpha: totalA,
+      scale: building ? 1 + 0.3 * bk : fa >= 0 ? lerp(1.6, 1, easeOutBack(fa / 0.55)) : 1,
+      glow: fa >= 0 && pos ? glow(pc) : undefined,
+    },
+  );
+  const totalCx = rx + rw - cssWidth(ctx, formatScore(ti.total), totalF) / 2;
+
+  // ---- place bar: 3RD / 2ND / 1ST ticks light as their tier fires
+  const medals = ti.medals;
+  const barY = Y(71.5);
+  const barMax = medals ? medals[2] * 1.2 : 1;
+  const tickX = (k: number) => rx + (rw * (medals?.[k] ?? 0)) / barMax;
+  if (medals) {
+    const bh = 2 * u;
+    box(ctx, rx, barY - bh / 2, rw, bh, bh / 2, 'rgba(255,255,255,0.08)');
+    const fw = rw * clamp01(Math.max(f.combo, f.total) / barMax);
+    if (fw > 0) {
+      const grad = linear(ctx, rx, 0, rx + rw, 0, [
+        [0, th.accent2],
+        [1, th.accent],
+      ]);
+      box(ctx, rx, barY - bh / 2, fw, bh, bh / 2, grad);
+    }
+    for (let k = 0; k < 3; k++) {
+      const hit = f.tier >= k;
+      const c = hit ? POS_COL[3 - k] : th.dim;
+      spaced(ctx, ORD[3 - k], tickX(k), Y(68), 2.1 * u, c, th, {
+        align: 'center',
+        em: 0.1,
+        glow: hit ? glow(c) : undefined,
+      });
+      ctx.save();
+      ctx.globalAlpha *= 0.6;
+      ctx.fillStyle = c;
+      ctx.fillRect(tickX(k) - hair, Y(69.4), 2 * hair, 3 * u);
+      ctx.restore();
+    }
+  }
+
+  // ---- each counted amount flies from its row up to COMBOS
+  for (let i = 0; i < p.rows; i++) {
+    const c0 = countEnd(i);
+    const c1 = p.rowLand[i];
+    if (t < c0 || t >= c1) continue;
+    const k = ((t - c0) / (c1 - c0)) ** 2; // eases in, like a throw
+    const ax = x0 + lw - 2 * u - valW[i] / 2;
+    const ay = rowY(i) + rowH / 2;
+    const mx = ax + (comboCx - ax) * 0.35;
+    const my = ay + (comboY - ay) * 0.35 - 0.06 * width;
+    const q = k < 0.4 ? k / 0.4 : (k - 0.4) / 0.6;
+    const [x, y, sc] =
+      k < 0.4
+        ? [lerp(ax, mx, q), lerp(ay, my, q), lerp(1, 1.5, q)]
+        : [lerp(mx, comboCx, q), lerp(my, comboY, q), lerp(1.5, 0.5, q)];
+    text(ctx, `+${formatScore(amts[i])}`, x, y, 4.3 * u, th.accent2, {
+      align: 'center',
+      css: disp(th, 4.3 * u),
+      stroke: null,
+      scale: sc,
+      alpha: k < 0.4 ? 1 : lerp(1, 0.8, q),
+      glow: glow(th.accent2),
+    });
+  }
+
+  // ---- sparks + flash per event
+  let flashA = 0;
+  let flashC = '';
+  const flash = (c: string, peak: number, a: number) => {
+    const fa2 = peak * (1 - easeOutCubic(a / 0.42));
+    if (fa2 > flashA) [flashA, flashC] = [fa2, c];
+  };
+  for (const e of p.events) {
+    const a = t - e.t;
+    if (a < 0 || a > 1) continue;
+    if (e.kind === 'land')
+      streaks(
+        ctx,
+        comboCx,
+        comboY,
+        2 * u,
+        (10 + 1.5 * e.index) * u,
+        a / 0.5,
+        12 + 3 * e.index,
+        th.accent2,
+        0.5 * u,
+      );
+    else if (e.kind === 'slam') {
+      streaks(ctx, multCx, timeY, 3 * u, 18 * u, a / 0.6, 24, th.accent, 0.6 * u);
+      flash(th.accent, 0.35, a);
+    } else if (e.kind === 'place' && medals) {
+      const c = POS_COL[3 - e.index];
+      streaks(
+        ctx,
+        tickX(e.index),
+        barY,
+        u,
+        (9 + 3 * e.index) * u,
+        a / 0.6,
+        16 + 6 * e.index,
+        c,
+        0.5 * u,
+      );
+      flash(c, 0.2 + 0.08 * e.index, a);
+    } else if (e.kind === 'final') {
+      const c = pos ? pc : '#ffffff';
+      streaks(ctx, totalCx, totalY, 4 * u, 30 * u, a / 0.8, 32, c, 0.8 * u);
+      flash(c, pos ? 0.55 : 0.2, a);
+    }
+  }
+  ctx.restore(); // shake
+
+  // ---- SKIP hint, then CONTINUE
+  const g = glyph('confirm', v.ui.device, v.ui.padStyle);
+  const bx = x0 + cw;
+  if (!f.done)
+    spaced(ctx, `${g} SKIP`, bx, height - 4 * u, 2.1 * u, th.dim, th, {
+      align: 'right',
+      weight: 600,
+      em: 0.1,
+    });
+  else {
+    const rise = (1 - easeOutBack((t - p.duration) / 0.35)) * 2.7 * u;
+    const by = height - 7.5 * u + rise;
+    const lab = 'CONTINUE ▶';
+    const labF = disp(th, 3 * u);
+    const keyF = th.font(700, 2 * u);
+    const kw = cssWidth(ctx, g, keyF);
+    const w = cssWidth(ctx, lab, labF) + 1.4 * u + kw + 7.8 * u;
+    const h = 7.6 * u;
+    ctx.save();
+    if (th.glow) {
+      ctx.shadowColor = th.accent2;
+      ctx.shadowBlur = 3 * u;
+    }
+    box(ctx, bx - w, by - h / 2, w, h, 0.7 * u, th.accent2);
+    ctx.restore();
+    text(ctx, lab, bx - w + 3.9 * u, by, 3 * u, DARK, { css: labF, stroke: null });
+    text(ctx, g, bx - 3.9 * u, by, 2 * u, DARK, {
+      align: 'right',
+      css: keyF,
+      stroke: null,
+      alpha: 0.7,
+    });
+  }
+
+  if (flashA > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = flashA;
+    ctx.fillStyle = flashC;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+}
+
+/** Pane 2: hero total and pills, stat pills, then the top drift cards. */
+function drawSummary(
+  ctx: CanvasRenderingContext2D,
+  v: HudView,
+  r: NonNullable<HudView['results']>,
+  width: number,
+  height: number,
+  u: number,
+  th: Theme,
+  now: number,
+): void {
+  const s = r.summaryT;
+  const pulse = 0.5 + 0.5 * Math.sin(now * 4.2);
+  const cx = width / 2;
+  const cw = Math.min(width - 12 * u, 150 * u);
+  const x0 = cx - cw / 2;
+  const hair = Math.max(1, 0.15 * u);
+  const lw2 = Math.max(1.5, 0.3 * u);
+  const pos = r.position;
+  const pc = pos ? POS_COL[pos] : th.text;
+  /** fade + rise of stagger slot d, timed off summaryT */
+  const enter = (d: number, draw: () => void) => {
+    const k = clamp01((s - 0.42 - d * 0.09) / 0.5);
+    if (k <= 0) return;
+    ctx.save();
+    ctx.globalAlpha *= k;
+    ctx.translate(0, (1 - easeOutBack(k)) * 3 * u);
+    draw();
+    ctx.restore();
+  };
+
+  // ---- vertical layout: cards at the bottom, hero centred in the space above
+  const dl = r.daily;
+  const pillsRow = !!r.medals || r.newBest;
+  const lateMsg = r.timeUp
+    ? r.late
+      ? `+${formatScore(r.late)} after time not counted`
+      : 'score locked at the time limit'
+    : '';
+  const msg = lateMsg || nextTarget(pos, r.medals, v.par);
+  const statsDy = (pillsRow ? 30.4 : 23.8) * u;
+  const heroH = statsDy + 3.1 * u + (msg ? 4 * u : 0);
+  const cGap = 2 * u;
+  const cardW = (cw - 2 * cGap) / 3;
+  const bottom = height - 8 * u;
+  const imgH = Math.max(6 * u, Math.min((cardW * 9) / 16, bottom - 17.4 * u - heroH));
+  const cardsTop = bottom - 3.2 * u - imgH;
+  const labelY = cardsTop - 2.5 * u;
+  const top = 4 * u + Math.max(0, (labelY - 7.9 * u - heroH) / 2);
+  const totalY = top + 10.55 * u;
+
+  // ---- headline + total
+  const verdictHead = dl
+    ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
+    : `FINISHED · ${v.floorName}`;
+  const head = r.timeUp ? (dl ? `TIME UP · ${verdictHead}` : 'TIME UP') : verdictHead;
   const rv = r.rival;
   const h2h = !!rv && (rv.total !== null || !v.mp?.connected);
-  if (h2h || v.mp?.waiting) {
-    const totalW = cssWidth(ctx, total, th.font(800, totalPx, true));
+  const side = h2h || !!v.mp?.waiting;
+  const totalS = formatScore(r.total);
+  const totalPx = fitPx(ctx, totalS, (q) => disp(th, q, true), 13.5 * u, cw - (side ? 38 * u : 0));
+  enter(0, () => {
+    const hp = fitPx(ctx, head, (q) => th.font(700, q), 2.4 * u, cw - 10 * u);
+    spaced(
+      ctx,
+      head,
+      cx,
+      top + 1.2 * u,
+      hp,
+      r.timeUp ? RED : dl ? (dl.cleared ? GREEN : RED) : th.dim,
+      th,
+      {
+        align: 'center',
+        em: 0.3,
+      },
+    );
+    text(ctx, totalS, cx, totalY, totalPx, pc, {
+      align: 'center',
+      css: disp(th, totalPx, true),
+      stroke: null,
+      glow: th.glow ? pc : undefined,
+    });
+    if (!pillsRow) return;
+    // place pill (or NO PLACE) + NEW BEST
+    const ph = 5.2 * u;
+    const pf = disp(th, 2.8 * u);
+    const nf = th.font(700, 1.9 * u);
+    const place = r.medals ? positionLabel(pos) : '';
+    const w1 = place ? pillW(ctx, place, pf, ph) : 0;
+    const w2 = r.newBest ? pillW(ctx, 'NEW BEST', nf, ph) : 0;
+    let x = cx - (w1 + w2 + (w1 && w2 ? 1.2 * u : 0)) / 2;
+    const py = top + 21.3 * u;
+    if (place) {
+      if (pos) pill(ctx, place, x, py, ph, pf, DARK, pc, undefined, 1, th.glow ? pc : undefined);
+      else pill(ctx, place, x, py, ph, pf, th.dim, 'rgba(0,0,0,0)', EDGE, lw2);
+      x += w1 + 1.2 * u;
+    }
+    if (r.newBest) {
+      ctx.save();
+      ctx.globalAlpha *= Math.floor(s / 0.33) % 2 ? 0.2 : 1;
+      pill(ctx, 'NEW BEST', x, py, ph, nf, GREEN, 'rgba(0,0,0,0)', GREEN, lw2);
+      ctx.restore();
+    }
+  });
+
+  // ---- stats: [COMBOS] × [TIME ×mult] | [BEST delta], shrunk to fit
+  const sy = top + statsDy;
+  const d = r.total - r.best;
+  const up = d > 0 || r.newBest;
+  const delta =
+    d > 0 ? `▲ +${formatScore(d)}` : r.newBest ? '▲ NEW' : d < 0 ? `-${formatScore(-d)}` : '±0';
+  const statRow = (uu: number, x: number | null): number => {
+    const h = 6.2 * uu;
+    const lab = th.font(700, 1.8 * uu);
+    const val = disp(th, 3.4 * uu);
+    const draw = x !== null;
+    let at = x ?? 0;
+    const step = (w: number) => (at += w + 1.2 * uu);
+    step(
+      segPill(
+        ctx,
+        [
+          ['COMBOS', lab, th.dim],
+          [formatScore(r.tally.combo), val, th.accent2],
+        ],
+        at,
+        sy,
+        h,
+        th.accent2,
+        th,
+        draw,
+      ),
+    );
+    const opF = disp(th, 2.8 * uu);
+    if (draw) text(ctx, '×', at, sy, 2.8 * uu, th.dim, { css: opF, stroke: null });
+    step(cssWidth(ctx, '×', opF));
+    step(
+      segPill(
+        ctx,
+        [
+          ['TIME', lab, th.dim],
+          [fmtT1(r.time), lab, th.text],
+          [`×${r.tally.mult.toFixed(2)}`, val, th.accent],
+        ],
+        at,
+        sy,
+        h,
+        th.accent,
+        th,
+        draw,
+      ),
+    );
+    if (draw) {
+      ctx.fillStyle = EDGE;
+      ctx.fillRect(at + 1.6 * uu, sy - 1.7 * uu, 2, 3.4 * uu);
+    }
+    step(2 + 2 * uu);
+    step(
+      segPill(
+        ctx,
+        [
+          ['BEST', lab, th.dim],
+          [formatScore(Math.max(r.best, r.total)), val, th.text],
+          [delta, th.font(700, 1.6 * uu), up ? GREEN : th.dim],
+        ],
+        at,
+        sy,
+        h,
+        th.text,
+        th,
+        draw,
+      ),
+    );
+    return at - (x ?? 0) - 1.2 * uu;
+  };
+  const rowW = statRow(u, null);
+  const k = Math.min(1, cw / rowW);
+  enter(1.5, () => statRow(u * k, cx - (rowW * k) / 2));
+  if (msg)
+    enter(2, () => {
+      const px = fitPx(ctx, msg, (q) => th.font(600, q), 1.9 * u, cw);
+      spaced(ctx, msg, cx, sy + 6.05 * u, px, lateMsg ? RED : th.dim, th, {
+        align: 'center',
+        weight: 600,
+        em: 0.08,
+      });
+    });
+
+  // ---- multiplayer: YOU / rival panels flanking the total
+  if (side) {
+    const totalW = cssWidth(ctx, totalS, disp(th, totalPx, true));
     const sw = Math.max(16 * u, Math.min(34 * u, (cw - totalW) / 2 - 3 * u));
-    const fade = clamp01((age - 0.4) / 0.15);
+    const py = totalY - 6.75 * u;
+    const fade = clamp01((s - 0.6) / 0.15);
     if (rv && h2h) {
       const res = verdict(r.total, rv.total);
       const vt = verdictText(res, rv.name);
       const vc = res === 'win' ? GREEN : res === 'lose' ? RED : AMBER;
-      const vs = easeOutBack((age - 0.6) / 0.35);
-      sidePanel(
-        ctx,
-        x0,
-        sw,
-        u,
-        th,
-        'YOU',
-        formatScore(r.total),
-        res !== 'lose' ? vt : '',
-        vc,
-        vs,
-        fade,
-      );
+      const vs = easeOutBack((s - 0.8) / 0.35);
+      sidePanel(ctx, x0, py, sw, u, th, 'YOU', totalS, res !== 'lose' ? vt : '', vc, vs, fade);
       const rn = rv.name.toUpperCase();
-      sidePanel(
-        ctx,
-        x0 + cw - sw,
-        sw,
-        u,
-        th,
-        rn,
-        rivalTotalText(rv.total),
-        res !== 'win' ? vt : '',
-        vc,
-        vs,
-        fade,
-      );
+      const rt = rivalTotalText(rv.total);
+      sidePanel(ctx, x0 + cw - sw, py, sw, u, th, rn, rt, res !== 'win' ? vt : '', vc, vs, fade);
     } else if (v.mp) {
       const label = `WAITING FOR ${v.mp.rival.toUpperCase()}`;
-      sidePanel(
-        ctx,
-        x0 + cw - sw,
-        sw,
-        u,
-        th,
-        label,
-        formatScore(anim.rival),
-        '',
-        AMBER,
-        1,
-        fade * (0.55 + 0.45 * pulse),
-      );
+      const a = fade * (0.55 + 0.45 * pulse);
+      sidePanel(ctx, x0 + cw - sw, py, sw, u, th, label, formatScore(anim.rival), '', AMBER, 1, a);
     }
   }
 
-  // ---- position badge + NEW BEST + next target
-  const by = 27 * u;
-  const bh = 6 * u;
-  const flash = r.newBest && Math.floor(now * 3) % 2 === 0;
-  const nbFont = th.font(800, 3.4 * u, true);
-  if (r.medals) {
-    const label = positionLabel(r.position);
-    const col = r.position ? POS_COL[r.position] : th.dim;
-    const font = th.font(800, 4.2 * u, true);
-    const bw = cssWidth(ctx, label, font) + 7 * u;
-    const nbW = r.newBest ? cssWidth(ctx, 'NEW BEST!', nbFont) + 3 * u : 0;
-    const bx = cx - (bw + nbW) / 2;
-    plate(ctx, bx, by - bh / 2, bw, bh, th.panel, col, 1 * u);
-    text(ctx, label, bx + 1.5 * u + (bw - 1 * u) / 2, by, 4.2 * u, col, {
-      align: 'center',
-      css: font,
-      stroke: null,
-      glow: th.glow && r.position ? col : undefined,
-      scale: lerp(1.6, 1, easeOutBack((age - 0.25) / 0.35)),
-      alpha: clamp01((age - 0.25) / 0.1),
-    });
-    if (flash)
-      text(ctx, 'NEW BEST!', bx + bw + 3 * u, by, 3.4 * u, GREEN, { css: nbFont, glow: GREEN });
-    const next = r.timeUp ? '' : nextTarget(r.position, r.medals, v.par);
-    if (r.timeUp) {
-      const msg = r.late
-        ? `+${formatScore(r.late)} after time not counted`
-        : 'score locked at the time limit';
-      const px = fitPx(ctx, msg, (p) => th.font(600, p), 2.6 * u, cw);
-      text(ctx, msg, cx, 33 * u, px, RED, { align: 'center', css: th.font(600, px), stroke: null });
-    }
-    if (next) {
-      const px = fitPx(ctx, next, (p) => th.font(600, p), 2.4 * u, cw);
-      text(ctx, next, cx, 33 * u, px, th.dim, {
-        align: 'center',
-        css: th.font(600, px),
-        stroke: null,
-      });
-    }
-  } else if (flash)
-    text(ctx, 'NEW BEST!', cx, by, 3.4 * u, GREEN, { align: 'center', css: nbFont, glow: GREEN });
-
-  // ---- stat chips
-  const chips: [string, string][] = [
-    ['COMBO', formatScore(r.comboPoints)],
-    ['TIME', formatTime(r.time)],
-    ['TIME BONUS', `+${formatScore(r.timeBonus)}`],
-    ['BEST', formatScore(r.best)],
-  ];
-  const gap = 2 * u;
-  const hair = Math.max(1, 0.15 * u);
-  const chipW = (cw - gap * (chips.length - 1)) / chips.length;
-  chips.forEach(([k, val], i) => {
-    const x = x0 + i * (chipW + gap);
-    box(ctx, x, 37 * u, chipW, 7 * u, 1 * u, th.panel, 'rgba(255,255,255,0.12)', hair);
-    const kp = fitPx(ctx, k, (p) => th.font(700, p), 1.7 * u, chipW - 2 * u);
-    text(ctx, k, x + chipW / 2, 39.1 * u, kp, th.dim, {
-      align: 'center',
-      css: th.font(700, kp),
-      stroke: null,
-    });
-    const px = fitPx(ctx, val, (p) => th.font(700, p), 3 * u, chipW - 2 * u);
-    text(ctx, val, x + chipW / 2, 41.9 * u, px, th.text, {
-      align: 'center',
-      css: th.font(700, px),
-      stroke: null,
-    });
-  });
-
   // ---- TOP DRIFTS label, unlock toasts on the right
-  const ly = 48.5 * u;
-  const labelFont = th.font(800, 2.4 * u, true);
-  text(ctx, 'TOP DRIFTS', x0, ly, 2.4 * u, th.accent2, { css: labelFont, stroke: null });
+  const labelFont = th.font(800, 2.2 * u, true);
+  enter(2.5, () =>
+    text(ctx, 'TOP DRIFTS', x0, labelY, 2.2 * u, th.accent2, { css: labelFont, stroke: null }),
+  );
   const toasts = r.newPaints.map((id) => `NEW PAINT · ${paintName(id)}`);
   if (dl?.reward) toasts.push(`NEW · ${itemById(dl.reward)?.name ?? paintName(dl.reward)}`);
   if (r.carPick) toasts.push('CAR PICK EARNED');
@@ -1196,146 +1767,136 @@ function drawResults(
     const room = cw - cssWidth(ctx, 'TOP DRIFTS', labelFont) - 3 * u;
     const tPad = 1.4 * u;
     const need = toasts.reduce(
-      (a, t) => a + cssWidth(ctx, t, th.font(700, 1.9 * u)) + 2 * tPad + gap,
+      (a, t) => a + cssWidth(ctx, t, th.font(700, 1.9 * u)) + 2 * tPad + cGap,
       0,
     );
-    const k = Math.min(1, room / need);
-    const px = 1.9 * u * k;
+    const tk = Math.min(1, room / need);
+    const px = 1.9 * u * tk;
     let x = x0 + cw;
     toasts.forEach((t, i) => {
-      const tw = cssWidth(ctx, t, th.font(700, px)) + 2 * tPad * k;
+      const tw = cssWidth(ctx, t, th.font(700, px)) + 2 * tPad * tk;
       x -= tw;
-      const t0 = age - 0.6 - i * 0.12;
+      const t0 = s - 0.9 - i * 0.12;
       ctx.save();
       ctx.globalAlpha = clamp01(t0 / 0.1);
       const tg = th.glow ? GREEN : undefined;
-      box(ctx, x, ly - 1.8 * u, tw, 3.6 * u, 1.8 * u, 'rgba(43,245,140,0.16)', GREEN, hair, tg);
+      box(ctx, x, labelY - 1.8 * u, tw, 3.6 * u, 1.8 * u, 'rgba(43,245,140,0.16)', GREEN, hair, tg);
       ctx.restore();
-      text(ctx, t, x + tw / 2, ly, px, GREEN, {
+      text(ctx, t, x + tw / 2, labelY, px, GREEN, {
         align: 'center',
         css: th.font(700, px),
         stroke: null,
         scale: easeOutBack(t0 / 0.3),
         alpha: clamp01(t0 / 0.1),
       });
-      x -= gap * k;
+      x -= cGap * tk;
     });
   }
 
-  // ---- snapshot cards
-  const top = 51.5 * u;
-  const textH = 8.5 * u;
-  const cGap = 2.5 * u;
-  const cardW = (cw - 2 * cGap) / 3;
-  const imgH = Math.min((cardW * 9) / 16, height - 7 * u - top - textH);
+  // ---- cards: rounded snapshot, #n, REPLAY on the selected one, amount pill, tricks under
   const n = r.drifts.length;
   if (!n)
-    text(ctx, 'NO DRIFTS BANKED', cx, top + imgH / 2, 2.6 * u, th.dim, {
-      align: 'center',
-      css: th.font(600, 2.6 * u, true),
-      stroke: null,
-    });
-  const sx = cx - (n * cardW + (n - 1) * cGap) / 2;
-  r.drifts.forEach((d, i) => {
-    const sel = i === r.driftRow;
-    const x = sx + i * (cardW + cGap);
-    const y = top - (sel ? 0.6 * u : 0);
-    box(
-      ctx,
-      x,
-      y,
-      cardW,
-      imgH + textH,
-      1.2 * u,
-      th.panel,
-      sel ? th.accent : 'rgba(255,255,255,0.12)',
-      sel ? 0.45 * u : hair,
-      sel && th.glow ? th.accent : undefined,
+    enter(3, () =>
+      text(ctx, 'NO DRIFTS BANKED', cx, cardsTop + imgH / 2, 2.6 * u, th.dim, {
+        align: 'center',
+        css: th.font(600, 2.6 * u, true),
+        stroke: null,
+      }),
     );
-    // image area, clipped to rounded corners
-    const ix = x + 0.6 * u;
-    const iy = y + 0.6 * u;
-    const iw = cardW - 1.2 * u;
-    const ih = imgH - 0.6 * u;
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(ix, iy, iw, ih, 0.8 * u);
-    ctx.clip();
-    ctx.fillStyle = '#05060d';
-    ctx.fillRect(ix, iy, iw, ih);
-    const st = d.still;
-    if (st && st.width && st.height) {
-      const k = Math.max(iw / st.width, ih / st.height); // cover
-      ctx.drawImage(
-        st,
-        ix + (iw - st.width * k) / 2,
-        iy + (ih - st.height * k) / 2,
-        st.width * k,
-        st.height * k,
-      );
-    } else {
-      // placeholder: faint diagonal stripes
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      ctx.lineWidth = 1.2 * u;
+  const sx = cx - (n * cardW + (n - 1) * cGap) / 2;
+  const tagH = 3.6 * u;
+  const tagF = th.font(700, 1.6 * u);
+  const ink = 'rgba(0,0,0,0.6)';
+  r.drifts.forEach((dr, i) =>
+    enter(3 + i * 0.5, () => {
+      const sel = i === r.driftRow;
+      const x = sx + i * (cardW + cGap);
+      const y = cardsTop;
+      ctx.save();
       ctx.beginPath();
-      for (let k = -ih; k < iw; k += 3.5 * u) {
-        ctx.moveTo(ix + k, iy + ih);
-        ctx.lineTo(ix + k + ih, iy);
+      ctx.roundRect(x, y, cardW, imgH, 1.2 * u);
+      ctx.clip();
+      ctx.fillStyle = '#05060d';
+      ctx.fillRect(x, y, cardW, imgH);
+      const st = dr.still;
+      if (st && st.width && st.height) {
+        const c = Math.max(cardW / st.width, imgH / st.height); // cover
+        ctx.drawImage(
+          st,
+          x + (cardW - st.width * c) / 2,
+          y + (imgH - st.height * c) / 2,
+          st.width * c,
+          st.height * c,
+        );
+      } else {
+        // placeholder: faint diagonal stripes
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1.2 * u;
+        ctx.beginPath();
+        for (let q = -imgH; q < cardW; q += 3.5 * u) {
+          ctx.moveTo(x + q, y + imgH);
+          ctx.lineTo(x + q + imgH, y);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
-      text(ctx, 'NO SNAPSHOT', ix + iw / 2, iy + ih / 2, 1.8 * u, th.dim, {
-        align: 'center',
-        css: th.font(600, 1.8 * u),
+      if (!sel) {
+        ctx.fillStyle = 'rgba(4,5,12,0.35)';
+        ctx.fillRect(x, y, cardW, imgH);
+        text(ctx, '▶', x + cardW / 2, y + imgH / 2, 5 * u, 'rgba(255,255,255,0.7)', {
+          align: 'center',
+          css: th.font(700, 5 * u),
+          stroke: null,
+        });
+      }
+      ctx.restore();
+      const g = sel && th.glow ? th.accent2 : undefined;
+      const edge = sel ? th.accent2 : EDGE;
+      box(ctx, x, y, cardW, imgH, 1.2 * u, 'rgba(0,0,0,0)', edge, sel ? lw2 : hair, g);
+      const pad = 1.2 * u;
+      const ty = y + pad + tagH / 2;
+      pill(ctx, `#${i + 1}`, x + pad, ty, tagH, tagF, th.text, ink);
+      let tr = x + cardW - pad; // right-hand tags, laid out leftwards
+      if (sel)
+        tr -=
+          pill(ctx, '● REPLAY', tr - pillW(ctx, '● REPLAY', tagF, tagH), ty, tagH, tagF, RED, ink) +
+          pad;
+      if (dr.saved)
+        pill(
+          ctx,
+          'SAVED',
+          tr - pillW(ctx, 'SAVED', tagF, tagH),
+          ty,
+          tagH,
+          tagF,
+          GREEN,
+          ink,
+          GREEN,
+          hair,
+        );
+      const by = y + imgH - pad - tagH / 2;
+      const amtF = disp(th, 2.2 * u);
+      ctx.save();
+      if (sel) ctx.globalAlpha *= 0.85 + 0.15 * pulse;
+      const aw = pill(
+        ctx,
+        formatScore(dr.amount),
+        x + pad,
+        by,
+        tagH,
+        amtF,
+        DARK,
+        dr.late ? th.dim : sel ? th.accent2 : th.text,
+      );
+      ctx.restore();
+      if (dr.late) pill(ctx, 'NOT COUNTED', x + 2 * pad + aw, by, tagH, tagF, RED, ink, RED, hair);
+      const cf = th.font(600, 1.6 * u);
+      const tricks = ellipsize(ctx, comboString(dr.tricks), cf, cardW - 1.2 * u);
+      text(ctx, tricks, x + 0.6 * u, y + imgH + 2.2 * u, 1.6 * u, th.dim, {
+        css: cf,
         stroke: null,
       });
-    }
-    if (!sel) {
-      ctx.fillStyle = 'rgba(4,5,12,0.35)';
-      ctx.fillRect(ix, iy, iw, ih);
-    }
-    ctx.restore();
-    // rank tag, saved tag
-    plate(ctx, ix, iy + 0.8 * u, 6 * u, 3.6 * u, sel ? th.accent : 'rgba(4,5,12,0.8)');
-    text(ctx, `#${i + 1}`, ix + 3.4 * u, iy + 2.6 * u, 2.4 * u, sel ? '#ffffff' : th.text, {
-      align: 'center',
-      css: th.font(800, 2.4 * u, true),
-      stroke: null,
-    });
-    if (d.saved) {
-      const tf = th.font(700, 1.8 * u);
-      const sw = cssWidth(ctx, 'SAVED', tf) + 2.4 * u;
-      const tx = ix + iw - sw - 0.8 * u;
-      box(ctx, tx, iy + 0.8 * u, sw, 3.2 * u, 1.6 * u, 'rgba(4,5,12,0.8)', GREEN, hair);
-      text(ctx, 'SAVED', tx + sw / 2, iy + 2.4 * u, 1.8 * u, GREEN, {
-        align: 'center',
-        css: tf,
-        stroke: null,
-      });
-    }
-    if (d.late) {
-      const tf = th.font(700, 1.8 * u);
-      const nw = cssWidth(ctx, 'NOT COUNTED', tf) + 2.4 * u;
-      box(ctx, ix + 0.8 * u, iy + ih - 4 * u, nw, 3.2 * u, 1.6 * u, 'rgba(4,5,12,0.8)', RED, hair);
-      text(ctx, 'NOT COUNTED', ix + 0.8 * u + nw / 2, iy + ih - 2.4 * u, 1.8 * u, RED, {
-        align: 'center',
-        css: tf,
-        stroke: null,
-      });
-    }
-    // score + combo name
-    const ty = y + imgH;
-    const score = formatScore(d.amount);
-    const sPx = fitPx(ctx, score, (p) => th.font(800, p, true), 3.8 * u, cardW - 3 * u);
-    text(ctx, score, x + 1.5 * u, ty + 3.2 * u, sPx, d.late ? th.dim : sel ? th.accent : th.text, {
-      css: th.font(800, sPx, true),
-      stroke: null,
-      glow: sel && th.glow ? th.accent : undefined,
-      alpha: sel ? 0.85 + 0.15 * pulse : 1,
-    });
-    const cFont = th.font(600, 1.9 * u);
-    const combo = ellipsize(ctx, comboString(d.tricks), cFont, cardW - 3 * u);
-    text(ctx, combo, x + 1.5 * u, ty + 6.6 * u, 1.9 * u, th.dim, { css: cFont, stroke: null });
-  });
+    }),
+  );
 
   if (r.chooser) drawChooser(ctx, r.chooser, width, height, u, th, pulse);
   hintBar(ctx, resultsHint(v.ui, r, v.mp), width, height, u, th);
@@ -1345,6 +1906,7 @@ function drawResults(
 function sidePanel(
   ctx: CanvasRenderingContext2D,
   x: number,
+  y: number,
   w: number,
   u: number,
   th: Theme,
@@ -1355,7 +1917,6 @@ function sidePanel(
   tagScale: number,
   alpha: number,
 ): void {
-  const y = 9.5 * u;
   const h = 13.5 * u;
   const cx = x + w / 2;
   ctx.save();
