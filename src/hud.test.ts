@@ -152,6 +152,11 @@ describe('hint lines', () => {
   const res: Results = {
     comboPoints: 0,
     timeBonus: 0,
+    timeMult: 1,
+    tally: { drifts: [], rest: 0, restCount: 0, combo: 0, mult: 1, total: 0, position: null },
+    stage: 'summary',
+    tallyT: 0,
+    summaryT: 0,
     total: 0,
     time: 0,
     best: 0,

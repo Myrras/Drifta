@@ -8,7 +8,19 @@ import type { Tune } from './settings';
 const FILES = { squeal: 'squeal.mp3', hit: 'hit.ogg', bank: 'bank.ogg' };
 type Name = keyof typeof FILES;
 
-export type UiSound = 'move' | 'adjust' | 'confirm' | 'back' | 'tab' | 'count' | 'go';
+export type UiSound =
+  | 'move'
+  | 'adjust'
+  | 'confirm'
+  | 'back'
+  | 'tab'
+  | 'count'
+  | 'go'
+  | 'tick'
+  | 'thud'
+  | 'slam'
+  | 'riser'
+  | 'place';
 /** menu blips: wave, start Hz, end Hz, seconds, peak gain */
 const UI_BLIPS: Record<UiSound, [OscillatorType, number, number, number, number]> = {
   move: ['square', 880, 880, 0.035, 0.05],
@@ -18,6 +30,11 @@ const UI_BLIPS: Record<UiSound, [OscillatorType, number, number, number, number]
   tab: ['triangle', 520, 780, 0.06, 0.12],
   count: ['square', 440, 440, 0.12, 0.07],
   go: ['square', 880, 880, 0.45, 0.08],
+  tick: ['square', 1000, 1000, 0.035, 0.04],
+  thud: ['sine', 140, 40, 0.25, 0.12],
+  slam: ['sawtooth', 220, 60, 0.3, 0.09],
+  riser: ['sawtooth', 90, 700, 2.2, 0.05],
+  place: ['triangle', 700, 1400, 0.15, 0.1],
 };
 
 /** Loop window [startSec, endSec] of `seconds` with high, steady RMS (50 ms blocks). */
