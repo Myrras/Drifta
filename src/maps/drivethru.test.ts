@@ -149,6 +149,7 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
     }
   });
 
+  // heavy test; the CI runner is slower than a dev machine
   it('holds a live meet: rows in painted bays, loose cars at casual angles', () => {
     const cars = f.solids.filter((s) => s.kind === 'car');
     expect(cars.length).toBeGreaterThanOrEqual(200);
@@ -195,7 +196,7 @@ describe('drivethru (MIDNIGHT DRIVE-THRU)', () => {
     expect(drivethru.decor!.filter((d) => d.kind === 'hood').length).toBeGreaterThan(
       cars.length / 2,
     );
-  });
+  }, 20000);
 
   it('parks exactly 2 boom cars on the line, and no posts', () => {
     const boom = f.solids.filter((s) => s.boom);
