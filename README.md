@@ -4,14 +4,17 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
 
 **[Play now: myrras.github.io/Drifta](https://myrras.github.io/Drifta/)**
 
-![Tokyo Nights](docs/screenshots/tokyo.png)
+<img src="docs/screenshots/gameplay.webp" alt="Drifta gameplay montage" width="720">
 
 ## Features
 
 - **Combos:** chain drifts, build a multiplier, bank it before the grace timer runs out. A wall hit loses the combo.
 - **Tricks:** Close Call, Switchback, Long Drift, 360, Ramp Drift, near-miss chains.
-- **Scoring:** banked combos plus a bonus per second under par. Best scores and top-3 positions per map.
-- **Cars and tuning:** 13 cars (MX-5, Supra, RX-7, Skyline, Silvia, AE86 and more). Street or performance tune.
+- **Scoring:** total = banked combos x time multiplier. Best scores and 3RD / 2ND / 1ST places per map. See [Scoring](#scoring).
+- **Score tally:** after a run, drifts fly into COMBOS, the TIME multiplier lands and TOTAL counts up past the place marks, then a results summary with BEST, the next place target and your top-3 drift replays.
+- **Title menu:** DAILY and GARAGE side cards, MULTIPLAYER card, settings gear, key shortcuts, map position as a pill on the PLAY plate.
+- **Map options:** TRAFFIC on Tokyo, PILLARS on B2 MEET and Wangan Docks, in single player and multiplayer.
+- **Cars and tuning:** 13 cars (MX-5, Supra, RX-7, Skyline, Silvia, AE86 and more). Street or performance tune. The car chooser shows POWER, GRIP and WEIGHT.
 - **Garage looks:** paint, underglow, smoke colours, spoilers, carbon hood, window tint. Cosmetic only, unlocked by finishing maps and daily clears.
 - **Daily challenge:** a date-seeded run, same for everyone. LEGEND days add a special car and skin.
 - **Ghosts:** race your best run on each map.
@@ -22,6 +25,15 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
 - **Live maps:** traffic with lights, pedestrians, police and boom cars playing loud bass.
 - **Menu themes:** ARCADE or VHS.
 - **Gamepad:** full menu and driving support, PS or Xbox glyphs follow the last-used device.
+
+## Scoring
+
+<img src="docs/screenshots/scoring.webp" alt="Score tally: drifts add up to the combo total, the time multiplier lands, the total climbs to 1ST" width="720">
+
+- A combo is worth its points x its multiplier (each trick adds +1). It banks when the grace timer (1.5 s) runs out; a wall hit loses it.
+- Total = combos x time multiplier. Multiplier = 1 + (par - time) / par, never below x1.00. Half the par time is about x1.50.
+- 3RD / 2ND / 1ST are score thresholds per map (the next one is shown on the results screen).
+- Time limit: par x 1.3 on maps with places. The run goes on past it, but only points banked before it count.
 
 ## Maps
 
@@ -56,12 +68,12 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/title.png" alt="Title menu"><br>Title</td>
-    <td width="50%"><img src="docs/screenshots/garage.png" alt="Car garage"><br>Garage</td>
+    <td width="50%"><img src="docs/screenshots/title.png" alt="Title menu"><br>Title with map position</td>
+    <td width="50%"><img src="docs/screenshots/garage.png" alt="Car garage"><br>Garage and car stats</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/results.png" alt="Results"><br>Results</td>
-    <td><img src="docs/screenshots/lobby.png" alt="Multiplayer lobby"><br>Multiplayer lobby</td>
+    <td><img src="docs/screenshots/results.png" alt="Results"><br>Results summary</td>
+    <td><img src="docs/screenshots/lobby.png" alt="Multiplayer lobby"><br>Multiplayer lobby and map options</td>
   </tr>
 </table>
 
@@ -82,6 +94,9 @@ Top-down 2D drift game with Tony Hawk-style combos. Runs in the browser. Vite + 
 | Results: pick a drift   | Left / Right  | D-pad               |
 | Results: save clip      | S             | X                   |
 | Photo mode              | P             | R3                  |
+| Title: daily            | Q             | LB                  |
+| Title: garage           | E             | RB                  |
+| Title: multiplayer      | M             | Y                   |
 
 ## Multiplayer
 
