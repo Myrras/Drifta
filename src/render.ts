@@ -1413,7 +1413,8 @@ function glowLight(ctx: Ctx, look: Look | undefined, alpha: number, frame: (g: C
   for (let i = 0; i < 5; i++) {
     ctx.beginPath();
     ctx.ellipse(0, 0, hl + 0.35 - i * 0.12, hw - 0.1 + 0.35 - i * 0.1, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.rect(-hl, -hw, hl * 2, hw * 2); // punch the body out so the glow doesn't tint it
+    ctx.fill('evenodd');
   }
   ctx.restore();
 }
