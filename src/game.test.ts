@@ -2698,7 +2698,6 @@ describe('time limit', () => {
     finishNow();
     const r = game.view().hud.results!;
     expect(r).toMatchObject({ timeUp: true, comboPoints: 5000, late: 3000, total: 5000 });
-    expect(r.timeBonus).toBe(0);
     expect(r.position).toBeNull();
     expect(r.newBest).toBe(true); // the locked score is still a best
     expect(set).toHaveBeenCalledWith(5000);
@@ -2955,7 +2954,6 @@ describe('results tally flow', () => {
       comboPoints: 650,
       timeMult: 1.2,
       total: Math.round(650 * 1.2),
-      timeBonus: 0,
     });
     expect(r().tally).toMatchObject({
       drifts: [300, 200, 100],
@@ -3012,7 +3010,8 @@ describe('results tally flow', () => {
   it('the tally ends on its own, then confirm goes to the summary', () => {
     const { step, r, plan } = rig();
     step({}, Math.ceil(plan().duration / DT) + 2);
-    expect(r()).toMatchObject({ stage: 'tally', tallyT: plan().duration });
+    expect(r().stage).toBe('tally');
+    expect(r().tallyT).toBeGreaterThanOrEqual(plan().duration);
     step({ confirm: true });
     expect(r().stage).toBe('summary');
   });
@@ -3141,7 +3140,7 @@ describe('results input from the real input layer', () => {
     finishNow(game);
     frame(LOCK + 1);
     tap(0);
-    expect(results().tallyT).toBe(planTally(results().tally).duration);
+    expect(results().tallyT).toBeGreaterThanOrEqual(planTally(results().tally).duration);
     tap(0);
     expect(results().stage).toBe('summary');
     frame(LOCK + 1);

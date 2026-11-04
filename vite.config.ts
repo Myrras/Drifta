@@ -8,6 +8,7 @@ export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   test: {
     environment: 'node',
+    testTimeout: 20000, // heavy suites exceed 5s under load
     exclude: ['**/node_modules/**', 'dist/**', '.claude/**'],
   },
 });

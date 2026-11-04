@@ -1237,7 +1237,7 @@ function drawTally(
   // ---- header: RESULTS, map, place pill + NEW BEST
   spaced(ctx, 'RESULTS', x0, Y(7), 2.6 * u, th.accent2, th, { em: 0.25 });
   const mapF = disp(th, 5 * u, true);
-  text(ctx, ellipsize(ctx, v.floorName, mapF, cw - 40 * u), x0, Y(12), 5 * u, th.text, {
+  text(ctx, ellipsize(ctx, r.mapName, mapF, cw - 40 * u), x0, Y(12), 5 * u, th.text, {
     css: mapF,
     stroke: null,
   });
@@ -1602,7 +1602,7 @@ function drawSummary(
   // ---- headline + total
   const verdictHead = dl
     ? `${dl.kind.toUpperCase()} ${dl.cleared ? 'CLEARED' : 'FAILED'} · TARGET ${formatScore(dl.target)}${dl.kind === 'legend' ? ` · WALL HITS ${dl.wallHits}` : ''}`
-    : `FINISHED · ${v.floorName}`;
+    : `FINISHED · ${r.mapName}`;
   const head = r.timeUp ? (dl ? `TIME UP · ${verdictHead}` : 'TIME UP') : verdictHead;
   const rv = r.rival;
   const h2h = !!rv && (rv.total !== null || !v.mp?.connected);
@@ -1655,10 +1655,9 @@ function drawSummary(
 
   // ---- stats: [COMBOS] × [TIME ×mult] | [BEST delta], shrunk to fit
   const sy = top + statsDy;
-  const d = r.total - r.best;
-  const up = d > 0 || r.newBest;
-  const delta =
-    d > 0 ? `▲ +${formatScore(d)}` : r.newBest ? '▲ NEW' : d < 0 ? `-${formatScore(-d)}` : '±0';
+  const d = r.total - r.prevBest;
+  const up = d > 0;
+  const delta = d > 0 ? `▲ +${formatScore(d)}` : d < 0 ? `-${formatScore(-d)}` : '±0';
   const statRow = (uu: number, x: number | null): number => {
     const h = 6.2 * uu;
     const lab = th.font(700, 1.8 * uu);

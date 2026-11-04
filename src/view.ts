@@ -84,7 +84,9 @@ export interface TopDrift {
 
 export interface Results {
   comboPoints: number;
-  timeBonus: number;
+  mapName: string;
+  /** best before this run */
+  prevBest: number;
   timeMult: number;
   tally: TallyInput;
   /** results sub-screen */

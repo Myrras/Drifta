@@ -153,7 +153,8 @@ describe('hint lines', () => {
   const drift = { amount: 100, tricks: [], clip: true, saved: false };
   const res: Results = {
     comboPoints: 0,
-    timeBonus: 0,
+    mapName: 'TOKYO DECK',
+    prevBest: 0,
     timeMult: 1,
     tally: { drifts: [], rest: 0, restCount: 0, combo: 0, mult: 1, total: 0, position: null },
     stage: 'summary',
@@ -246,7 +247,8 @@ describe('results draw', () => {
   const drift = { amount: 4840, tricks: ['DRIFT' as const], clip: true, saved: false };
   const results: Results = {
     comboPoints: 13416,
-    timeBonus: 0,
+    mapName: 'TOKYO DECK',
+    prevBest: 15200,
     timeMult: 1.33,
     tally,
     stage: 'tally',

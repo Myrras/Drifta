@@ -569,7 +569,8 @@ export function createGame(
     const late = s.scoring.banked - comboPoints;
     const mult = timeMult(s.time, map.parTime);
     const total = Math.round(comboPoints * mult);
-    const newBest = total > bests[sel];
+    const prevBest = bests[sel];
+    const newBest = total > prevBest;
     if (newBest) {
       stores[sel].set((bests[sel] = total));
       saveGhost(map.name, {
@@ -597,7 +598,8 @@ export function createGame(
     s.plan = planTally(tally);
     s.results = {
       comboPoints,
-      timeBonus: 0, // shortcut: remove once hud stops reading it
+      mapName: map.name,
+      prevBest,
       timeMult: mult,
       tally,
       stage: 'tally',
@@ -1441,8 +1443,9 @@ export function createGame(
           const plan = s.plan;
           if (r && plan && r.stage === 'tally') {
             const prev = r.tallyT;
-            r.tallyT = Math.min(prev + dt, plan.duration);
-            for (const e of eventsBetween(plan, prev, r.tallyT)) audio.ui(TALLY_SOUND[e.kind]);
+            r.tallyT = prev + dt; // keeps growing: hud animates CONTINUE in after done
+            for (const e of eventsBetween(plan, prev, Math.min(r.tallyT, plan.duration)))
+              audio.ui(TALLY_SOUND[e.kind]);
             if (input.pause) {
               if (mp) exitMp();
               else toTitle();
