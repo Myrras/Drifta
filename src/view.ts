@@ -133,6 +133,8 @@ export interface MenuRow {
   value?: string;
   /** 0..1 slider fill */
   bar?: number;
+  /** title PLAY row: best position on the map, drawn as a corner pill */
+  pos?: 1 | 2 | 3;
 }
 
 /** Title, garage and settings screens. */

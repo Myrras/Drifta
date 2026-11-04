@@ -5,6 +5,7 @@ import { drawSlot } from './garage';
 import { PLAYER_MODELS } from '../models';
 import { cachedGrad, DISPLAY, drawBackdrop, drawOverlayFx, MASTHEAD, OSD, THEMES } from './theme';
 import { drawLogo } from './logo';
+import { POS_COL, positionLabel } from '../hud';
 import { glyph, hintLine, type Action } from './prompts';
 
 const CAR_HALF = 3; // m, half-size of the cached preview square (fits the longest car rotated)
@@ -1014,8 +1015,23 @@ function drawTitle(g: CanvasRenderingContext2D, v: HudView, m: MenuView, hk: typ
     const lf = labelFont(i === MP ? 2.8 * u : 3.6 * u);
     text(g, r.label, x0, ys[i], lf, on ? onLabel : th.text);
     if (i === MP) chip(g, hk.mp, x0 + g.measureText(r.label).width + 2 * u, ys[i], on, 'left');
-    const vf = valueFont(i === MP ? 2.6 * u : 3 * u);
-    if (r.value) text(g, r.value, x1, ys[i], vf, on ? onLabel : offVal, 'right');
+    const vpx = i === MP ? 2.6 * u : 3 * u;
+    const lw = g.measureText(r.label).width; // lf is still set
+    const px = r.value ? fitPx(g, r.value, valueFont(vpx), vpx, x1 - x0 - lw - 3 * u) : vpx;
+    if (r.value) text(g, r.value, x1, ys[i], valueFont(px), on ? onLabel : offVal, 'right');
+    if (r.pos) {
+      // small pill in the plate's top-right corner, clear of the map name
+      const pf = th.font(800, 2 * u, true);
+      g.font = pf;
+      const pw2 = g.measureText(positionLabel(r.pos)).width + 2 * u;
+      const ph2 = 2.6 * u;
+      const py = ys[i] - hs[i] / 2 + 0.4 * u + ph2 / 2;
+      g.fillStyle = POS_COL[r.pos];
+      g.beginPath();
+      g.roundRect(x1 - pw2, py - ph2 / 2, pw2, ph2, ph2 / 2);
+      g.fill();
+      text(g, positionLabel(r.pos), x1 - pw2 / 2, py, pf, '#14121c', 'center');
+    }
   }
   g.globalAlpha = 1;
   if (v.par > 0) {

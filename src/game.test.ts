@@ -1903,7 +1903,7 @@ describe('daily and legend runs', () => {
     });
     expect(m.rows[0].value).toBe('◀ B2 MEET ▶');
     prog.results['B2 MEET'] = { position: 2, score: 1, time: 1 };
-    expect(game.view().hud.menu!.rows[0].value).toBe('◀ B2 MEET ▶ 2ND');
+    expect(game.view().hud.menu!.rows[0]).toMatchObject({ value: '◀ B2 MEET ▶', pos: 2 });
   });
 
   it('clearing the daily pays once, then the title says CLEARED', () => {

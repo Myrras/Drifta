@@ -159,7 +159,6 @@ const TITLE_IDS = ['play', 'mp', 'daily', 'garage', 'settings'] as const;
 type TitleId = (typeof TITLE_IDS)[number];
 const titleRow = (id: TitleId) => TITLE_IDS.indexOf(id);
 type LobbyId = 'map' | 'option' | 'ready' | 'garage' | 'start' | 'leave';
-const ORD = ['', '1ST', '2ND', '3RD'];
 /** settings tabs and their rows (BACK is always the last row; row 0 is the tab strip) */
 const TABS = [
   { name: 'AUDIO', ids: ['master', 'music', 'sfx', 'engine', 'track', 'import', 'clear'] },
@@ -1065,11 +1064,6 @@ export function createGame(
     }
   }
 
-  const posTag = (name: string) => {
-    const n = prog.results[name]?.position;
-    return n ? ` ${ORD[n]}` : '';
-  };
-
   function menuView(): MenuView | null {
     const base = {
       ui: { theme: cfg.menuTheme, ...ui },
@@ -1092,7 +1086,11 @@ export function createGame(
       const target = dl.target.toLocaleString('en-US');
       const mpNote = TITLE_IDS[row] === 'mp' && noteT > 0 && note;
       const rows: MenuRow[] = [
-        { label: 'PLAY', value: `◀ ${map.name} ▶${posTag(map.name)}` },
+        {
+          label: 'PLAY',
+          value: `◀ ${map.name} ▶`,
+          pos: prog.results[map.name]?.position ?? undefined,
+        },
         { label: 'MULTIPLAYER', value: mpNote || `◀ ${mpMode.toUpperCase()} ▶` },
         { label, value: `${dl.map.name} · ${target}` },
         { label: 'GARAGE', value: PLAYER_MODELS[cfg.car].name },
